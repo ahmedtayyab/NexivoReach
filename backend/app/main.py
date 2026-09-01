@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import onboarding, discovery, products, icp
+from app.api import onboarding, discovery, products, icp, prospects
 from app.database.session import init_db
 
 app = FastAPI(
@@ -25,6 +25,7 @@ app.include_router(onboarding.router)
 app.include_router(discovery.router)
 app.include_router(products.router)
 app.include_router(icp.router)
+app.include_router(prospects.router)
 
 @app.get("/")
 def read_root():
