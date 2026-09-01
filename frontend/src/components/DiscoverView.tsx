@@ -22,76 +22,48 @@ export default function DiscoverView({ onAddProspect, onAddLog }: Props) {
     { id: 'run-2', startedAt: new Date(Date.now() - 86400000 * 1.4), foundCount: 1, durationSec: 74 },
   ]);
 
-  const handleRun = () => {
+  const handleRun = async () => {
     if (!query.trim() || isRunning) return;
     setIsRunning(true);
-    setStatusText('Scanning GCC market...');
+    setStatusText('Starting discovery...');
 
     const runId = `run-${Date.now()}`;
     const startedAt = new Date();
 
-    setTimeout(() => setStatusText('Reading company sites & press releases...'), 2000);
-    setTimeout(() => setStatusText('Matching catalog items against facility specs...'), 4000);
+    try {
+      setStatusText('Sending query to discovery agent...');
+      const resp = await fetch('/api/discovery/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_prompt: query, products: [], icp: {} }),
+      });
 
-    setTimeout(() => {
-      const newProspect: Prospect = {
-        id: `prospect-urban-${Date.now()}`,
-        companyName: 'Urban Strength Gym Dubai',
-        website: 'https://urbanstrength-dubai.example.com',
-        location: 'Al Quoz, Dubai, UAE',
-        industry: 'Commercial Fitness Club',
-        companySize: '20–50 Employees',
-        fitScore: 92,
-        fitBreakdown: { industryFit: 25, locationFit: 20, productMatch: 19, buyingSignals: 18, companyFit: 10 },
-        whyThisProspect:
-          'Urban Strength is signing a lease for a 5,000 sq ft expansion zone in Al Quoz and is actively hiring a head strength coach. Their current equipment list shows only cardio machines — no strength rack inventory. They are the ideal first outreach for commercial power racks.',
-        buyingSignals: [
-          {
-            signal: 'Al Quoz Facility Expansion (5,000 sq ft)',
-            whyItMatters: 'New floor space requires immediate heavy equipment procurement.',
-            sourceUrl: 'https://urbanstrength-dubai.example.com/expansion',
-            sourceExcerpt: 'Adding 5,000 sq ft of dedicated strength equipment in our Al Quoz location opening Q4.',
-          },
-        ],
-        productFit: [
-          { productName: 'Apex Force Power Rack', fitLevel: 'High', reasoning: 'Anchor equipment for functional strength floor plan.' },
-          { productName: 'Urethane Dumbbell Set (2.5–50 kg)', fitLevel: 'High', reasoning: 'Replaces rubber hex dumbbells in expanded area.' },
-        ],
-        recommendedApproach: 'Lead with Al Quoz expansion. Offer factory-direct GCC pricing with 14-day delivery.',
-        outreachDraft: {
-          id: `out-${Date.now()}`,
-          subject: 'Power racks for Urban Strength Al Quoz expansion',
-          body: `Hi Alex,\n\nSaw the news about Urban Strength's 5,000 sq ft expansion in Al Quoz — congrats on scaling.\n\nWe manufacture 11-gauge commercial power racks and urethane dumbbells directly for GCC strength clubs. We can ship custom-branded equipment to Dubai in 14 days at factory pricing.\n\nWould you be open to a quick call this week?\n\nBest,\nApex Fitness Equipment`,
-          personalizedReason: "Urban Strength Al Quoz 5,000 sq ft expansion announcement.",
-          status: 'Draft',
-          createdAt: new Date().toISOString(),
-        },
-        stage: 'Researched',
-        discoveredAt: new Date().toISOString(),
-        agentTimeline: [],
-      };
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Discovery API error: ${resp.status} ${text}`);
+      }
 
-      const newLog: AgentRunLog = {
-        id: runId,
-        timestamp: startedAt.toISOString().replace('T', ' ').substring(0, 19),
-        task: query,
-        durationMs: 6000,
-        toolsUsed: ['WebSearchTool', 'SiteScraperTool', 'ProductMatcherTool', 'ScoreCalculatorTool'],
-        sourcesCount: 7,
-        status: 'Completed',
-        decisions: [],
-      };
+      setStatusText('Processing agent results...');
+      const data = await resp.json();
 
-      onAddProspect(newProspect);
-      onAddLog(newLog);
+      // Expecting { prospect, agent_log }
+      if (data.prospect) {
+        onAddProspect(data.prospect as Prospect);
+      }
+      if (data.agent_log) {
+        onAddLog(data.agent_log as AgentRunLog);
+      }
 
-      setRunHistory(prev => [
-        { id: runId, startedAt, foundCount: 1, durationSec: 6 },
-        ...prev,
-      ]);
+      const durationSec = Math.max(1, Math.round((Date.now() - startedAt.getTime()) / 1000));
+      setRunHistory(prev => [{ id: runId, startedAt, foundCount: data.prospect ? 1 : 0, durationSec }, ...prev]);
+      setStatusText('Completed');
+    } catch (err: any) {
+      console.error('Discovery failed', err);
+      setStatusText(err?.message || 'Discovery failed');
+    } finally {
       setIsRunning(false);
-      setStatusText('');
-    }, 6000);
+      setTimeout(() => setStatusText(''), 2000);
+    }
   };
 
   const lastRun = runHistory[0];
