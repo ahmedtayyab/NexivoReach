@@ -66,9 +66,9 @@ Goal Specification (ICP & Catalog)
 | **Business Onboarding** | ✅ Completed | Natural language business summary & AI profile extraction API |
 | **Product Catalog Management** | ✅ Completed | Multi-source product import (URL scraper, PDF, CSV, Excel, Manual) & AI verification tagging |
 | **Ideal Customer Profile (ICP)** | ✅ Completed | Target buyer personas, geographic markets, deal sizes & custom buying signal rules |
-| **Autonomous Prospecting Agent** | 🚧 In progress | Multi-step agent workflow (`Observe -> Decide -> Tool -> Inspect`) |
-| **Web Research Engine** | ⬜ Planned | Search & public site scraping with source attribution |
-| **Transparent Prospect Scoring** | ⬜ Planned | Configurable 100-point scoring formula with evidence explanations |
+| **Autonomous Prospecting Agent** | ✅ Completed | Multi-step agent execution engine (`Observe -> Decide -> Tool -> Inspect -> Complete`) |
+| **Web Research Engine** | ✅ Completed | Search & public website scraper with source links and excerpt attributions |
+| **Transparent Prospect Scoring** | 🚧 In progress | Configurable 100-point scoring formula with evidence explanations |
 | **Prospect Research Detail View** | ⬜ Planned | 94% fit banner, buying signals, product fit matrix, agent activity timeline |
 | **Personalized Outreach Engine** | ⬜ Planned | AI personalized messaging based on verified company evidence |
 | **Human Approval System** | ⬜ Planned | Explicit permission barrier for message dispatch |
