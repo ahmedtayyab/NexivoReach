@@ -62,6 +62,7 @@ Goal Specification (ICP & Catalog)
 | Feature | Status | Description |
 | :--- | :---: | :--- |
 | **Initial Setup & Architecture** | ✅ Completed | GitHub repo, modular FastAPI backend & Vite frontend scaffold |
+| **Application Shell & Design System** | ✅ Completed | Professional SaaS design system (Linear/Attio inspired, zero AI tropes), responsive navigation tabs, and dark mode palette |
 | **Business Onboarding** | 🚧 In progress | Natural language business summary & AI extraction |
 | **Product Catalog Management** | ⬜ Planned | Multi-source product import (URL, PDF, CSV, Manual) |
 | **Ideal Customer Profile (ICP)** | ⬜ Planned | Target market, deal size, custom buying signals configuration |
