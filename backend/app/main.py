@@ -1,8 +1,7 @@
-"""
-NexivoReach FastAPI Main Application Entrypoint
-"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.api import onboarding, discovery
+from app.database.session import init_db
 
 app = FastAPI(
     title="NexivoReach API",
@@ -17,6 +16,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
+
+app.include_router(onboarding.router)
+app.include_router(discovery.router)
 
 @app.get("/")
 def read_root():
