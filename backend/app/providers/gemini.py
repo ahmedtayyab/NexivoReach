@@ -52,13 +52,63 @@ class GeminiProvider(AIProvider):
         if not self.available:
             from app.providers.fallback import FallbackProvider
             return await FallbackProvider().extract_products(content, source_type)
-        return []
+
+        try:
+            from google import genai
+            client = genai.Client(api_key=self.api_key)
+            prompt = f"Extract an array of products as JSON from the following {source_type} content: {content}"
+            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            resp_text = getattr(response, 'text', None) or getattr(response, 'content', None)
+            if resp_text:
+                try:
+                    prods = json.loads(resp_text)
+                    return prods if isinstance(prods, list) else []
+                except Exception:
+                    pass
+            as_dict = getattr(response, 'to_dict', None)
+            if callable(as_dict):
+                data = as_dict()
+                if isinstance(data, list):
+                    return data
+            data = getattr(response, 'data', None)
+            if isinstance(data, list):
+                return data
+        except Exception:
+            pass
+
+        from app.providers.fallback import FallbackProvider
+        return await FallbackProvider().extract_products(content, source_type)
 
     async def analyze_buying_signals(self, company_text: str, custom_signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not self.available:
             from app.providers.fallback import FallbackProvider
             return await FallbackProvider().analyze_buying_signals(company_text, custom_signals)
-        return []
+
+        try:
+            from google import genai
+            client = genai.Client(api_key=self.api_key)
+            prompt = f"Identify buying signals in the following company text. Return a JSON array of signals with keys (signal, whyItMatters, sourceExcerpt): {company_text}\nCustomSignals:{custom_signals}"
+            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            resp_text = getattr(response, 'text', None) or getattr(response, 'content', None)
+            if resp_text:
+                try:
+                    sigs = json.loads(resp_text)
+                    return sigs if isinstance(sigs, list) else []
+                except Exception:
+                    pass
+            as_dict = getattr(response, 'to_dict', None)
+            if callable(as_dict):
+                data = as_dict()
+                if isinstance(data, list):
+                    return data
+            data = getattr(response, 'data', None)
+            if isinstance(data, list):
+                return data
+        except Exception:
+            pass
+
+        from app.providers.fallback import FallbackProvider
+        return await FallbackProvider().analyze_buying_signals(company_text, custom_signals)
 
     async def generate_personalized_outreach(
         self, 
@@ -70,4 +120,32 @@ class GeminiProvider(AIProvider):
         if not self.available:
             from app.providers.fallback import FallbackProvider
             return await FallbackProvider().generate_personalized_outreach(company_name, why_prospect, signals, matched_products)
-        return {}
+
+        try:
+            from google import genai
+            client = genai.Client(api_key=self.api_key)
+            prompt = (
+                f"Draft a personalized outreach email subject, body, and personalizedReason as JSON for {company_name}. "
+                f"Context: {why_prospect}. Signals: {signals}. MatchedProducts: {matched_products}"
+            )
+            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            resp_text = getattr(response, 'text', None) or getattr(response, 'content', None)
+            if resp_text:
+                try:
+                    out = json.loads(resp_text)
+                    return out if isinstance(out, dict) else {}
+                except Exception:
+                    pass
+            as_dict = getattr(response, 'to_dict', None)
+            if callable(as_dict):
+                data = as_dict()
+                if isinstance(data, dict):
+                    return data
+            data = getattr(response, 'data', None)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+
+        from app.providers.fallback import FallbackProvider
+        return await FallbackProvider().generate_personalized_outreach(company_name, why_prospect, signals, matched_products)
