@@ -1,11 +1,10 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap');
 @import "tailwindcss";
 
 @layer base {
   :root {
-    /* Light mode — the "boring is beautiful" palette */
     --bg-app: #F8FAFC;
-    --bg-sidebar: #FFFFFF;
-    --bg-surface: #FFFFFF;
+    --bg-white: #FFFFFF;
     --border: #E2E8F0;
     --border-subtle: #F1F5F9;
     --text-primary: #0F172A;
@@ -13,47 +12,65 @@
     --text-muted: #94A3B8;
     --accent: #2563EB;
     --accent-hover: #1D4ED8;
-    --success: #16A34A;
-    --warning: #D97706;
-    --danger: #DC2626;
-    --dot-new: #2563EB;
-    --dot-reviewed: #94A3B8;
+    --green: #16A34A;
+    --amber: #D97706;
+    --row-hover: #F8FAFC;
   }
 
-  * {
-    box-sizing: border-box;
-  }
+  * { box-sizing: border-box; }
 
   body {
     background-color: var(--bg-app);
     color: var(--text-primary);
-    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    font-size: 14px;
-    line-height: 1.5;
+    font-size: 13.5px;
+    line-height: 1.55;
     margin: 0;
     padding: 0;
   }
 }
 
-/* Thin scrollbar */
-::-webkit-scrollbar { width: 4px; height: 4px; }
+/* ─── Thin scrollbar ─── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
 
-/* Drawer overlay */
-.drawer-overlay {
-  background: rgba(15, 23, 42, 0.3);
-}
+/* ─── Queue rows ─── */
+.queue-row { cursor: pointer; transition: background-color 120ms ease; }
+.queue-row:hover { background-color: #F8FAFC; }
 
-/* Row hover state — no background by default, only subtle tint on hover */
-.queue-row:hover {
-  background-color: #F8FAFC;
-}
+/* ─── Drawer overlay ─── */
+.drawer-overlay { background: rgba(15, 23, 42, 0.25); backdrop-filter: blur(2px); }
 
-/* Input focus */
+/* ─── Focus ring ─── */
 input:focus, textarea:focus, select:focus {
   outline: 2px solid #2563EB;
   outline-offset: -1px;
+}
+
+/* ─── Score color utility ─── */
+.score-high  { color: #16A34A; }
+.score-mid   { color: #2563EB; }
+.score-low   { color: #D97706; }
+
+/* ─── Blockquote excerpt ─── */
+.source-quote {
+  border-left: 2px solid #CBD5E1;
+  padding-left: 10px;
+  color: #64748B;
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.6;
+}
+
+/* ─── Section label ─── */
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94A3B8;
 }

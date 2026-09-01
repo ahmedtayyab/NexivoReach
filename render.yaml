@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: nexivoreach
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: DATABASE_URL
+        value: sqlite:///./nexivoreach.db
+      - key: PYTHON_ENV
+        value: production
+      # Optional — auto-detected from RENDER_EXTERNAL_URL if omitted:
+      - key: APP_URL
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false

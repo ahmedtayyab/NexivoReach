@@ -1,4 +1,5 @@
 import time
+import asyncio
 import json
 from typing import Dict, Any, List
 from app.tools.web_search import WebSearchTool
@@ -24,6 +25,42 @@ class ProspectingAgent:
         start_time = time.time()
         decisions_log = []
 
+        async def _retry_async(callable_coro, tool_name: str, step: int, max_attempts: int = 3, base_delay: float = 0.5):
+            attempts = 0
+            last_exc = None
+            while attempts < max_attempts:
+                try:
+                    attempts += 1
+                    res = await callable_coro
+                    if attempts > 1:
+                        decisions_log.append({
+                            "step": step,
+                            "observation": f"{tool_name} succeeded on attempt {attempts}.",
+                            "decision": f"Retry succeeded for {tool_name}",
+                            "toolCalled": tool_name,
+                            "toolResultSnippet": str(res)[:200]
+                        })
+                    return res
+                except Exception as e:
+                    last_exc = e
+                    decisions_log.append({
+                        "step": step,
+                        "observation": f"{tool_name} attempt {attempts} failed.",
+                        "decision": f"Retry {attempts}/{max_attempts} for {tool_name}",
+                        "toolCalled": tool_name,
+                        "toolError": repr(e)
+                    })
+                    await asyncio.sleep(base_delay * attempts)
+            # all attempts failed
+            decisions_log.append({
+                "step": step,
+                "observation": f"{tool_name} failed after {max_attempts} attempts.",
+                "decision": f"Marking partial failure for {tool_name}",
+                "toolCalled": tool_name,
+                "toolError": repr(last_exc)
+            })
+            raise last_exc
+
         # Step 1: Observe Goal
         decisions_log.append({
             "step": 1,
@@ -34,7 +71,23 @@ class ProspectingAgent:
         })
 
         # Step 2: Web Search & Company Discovery Tool
-        companies = await self.web_search.search_companies(user_prompt, target_location="UAE")
+        try:
+            companies = await _retry_async(self.web_search.search_companies(user_prompt, target_location="UAE"),
+                                           tool_name="WebSearchTool", step=2)
+        except Exception:
+            # if search fails completely, return a failed agent log
+            duration_ms = int((time.time() - start_time) * 1000)
+            agent_log = {
+                "id": f"run-{int(time.time())}",
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "task": user_prompt,
+                "durationMs": duration_ms,
+                "toolsUsed": ["WebSearchTool"],
+                "sourcesCount": 0,
+                "status": "Failed",
+                "decisions": decisions_log,
+            }
+            return {"prospect": None, "agent_log": agent_log}
         decisions_log.append({
             "step": 2,
             "observation": f"Found {len(companies)} candidate companies matching search criteria.",
@@ -44,8 +97,27 @@ class ProspectingAgent:
         })
 
         # Step 3: Deep Research & Signal Detection
+        if not companies:
+            # no companies found — return partial result
+            duration_ms = int((time.time() - start_time) * 1000)
+            agent_log = {
+                "id": f"run-{int(time.time())}",
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "task": user_prompt,
+                "durationMs": duration_ms,
+                "toolsUsed": ["WebSearchTool"],
+                "sourcesCount": 0,
+                "status": "CompletedWithNoCandidates",
+                "decisions": decisions_log,
+            }
+            return {"prospect": None, "agent_log": agent_log}
+
         target_co = companies[0]
-        site_text = await self.web_search.scrape_site_content(target_co['website'])
+        try:
+            site_text = await _retry_async(self.web_search.scrape_site_content(target_co['website']),
+                                           tool_name="SiteScraperTool", step=3)
+        except Exception:
+            site_text = ""
         
         detected_signals = [
           {
@@ -104,12 +176,26 @@ class ProspectingAgent:
 
         # Step 6: Personalized Outreach Generation
         why_prospect_text = f"{target_co['company_name']} operates commercial facilities in Dubai and recently announced a 15,000 sq ft flagship expansion in Business Bay, creating immediate demand for heavy-duty commercial strength equipment."
-        outreach_data = await self.ai_provider.generate_personalized_outreach(
-            company_name=target_co['company_name'],
-            why_prospect=why_prospect_text,
-            signals=detected_signals,
-            matched_products=product_fit_matrix
-        )
+        try:
+            outreach_data = await _retry_async(self.ai_provider.generate_personalized_outreach(
+                company_name=target_co['company_name'],
+                why_prospect=why_prospect_text,
+                signals=detected_signals,
+                matched_products=product_fit_matrix
+            ), tool_name="OutreachEngine", step=6)
+        except Exception:
+            # fallback to a minimal outreach draft
+            outreach_data = {
+                "subject": "Commercial equipment inquiry",
+                "body": "Hello, we noticed your expansion and can help supply equipment.",
+                "personalizedReason": why_prospect_text
+            }
+            decisions_log.append({
+                "step": 6,
+                "observation": "Outreach generation failed and fallback was used.",
+                "decision": "Used conservative fallback outreach draft.",
+                "toolCalled": "OutreachEngine",
+            })
 
         decisions_log.append({
             "step": 6,

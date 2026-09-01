@@ -127,6 +127,29 @@ npm run dev
 
 ---
 
+## 🧪 Docker & CI
+
+Quick start with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+This builds a `backend` image (runs uvicorn) and a `frontend` image (serves built assets via nginx).
+
+Frontend CI: `.github/workflows/frontend-ci.yml` builds the frontend on pushes and PRs.
+
+Backend tests run in `.github/workflows/backend-tests.yml`.
+
+API endpoints (selected):
+- `POST /api/discovery/run` — run discovery agent (returns `{ prospect, agent_log }` and persists results)
+- `GET /api/prospects/` — list persisted prospects
+- `GET /api/prospects/{id}` — get prospect detail
+- `POST /api/prospects/save` — save/update a prospect record
+
+
+---
+
 ## 💡 Important Design Decisions
 
 1. **No Fake Chatbot / No Hardcoded Pipelines**: The agent evaluates search results dynamically and invokes tools based on observation steps.

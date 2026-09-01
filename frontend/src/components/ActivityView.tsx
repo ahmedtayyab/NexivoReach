@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import type { AgentRunLog } from '../types';
-import { Activity } from 'lucide-react';
 
 interface Props {
   agentLogs: AgentRunLog[];
@@ -11,121 +10,94 @@ export default function ActivityView({ agentLogs }: Props) {
   const selectedLog = agentLogs.find(l => l.id === selectedRunId) || agentLogs[0];
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-2">
-        <div className="flex items-center space-x-2 text-indigo-400 text-xs font-semibold uppercase tracking-wider">
-          <Activity className="w-4 h-4" />
-          <span>Step 7: Agent Operational Activity & Audit Log</span>
-        </div>
-        <h1 className="text-xl font-bold text-white">Inspect Agent Decisions & Tool Traces</h1>
-        <p className="text-xs text-slate-300">
-          Full operational execution transparency. Review tools invoked, sources inspected, buying signal triggers detected, and execution duration.
+    <div className="max-w-5xl">
+      <div className="mb-7">
+        <h1 className="text-[15px] font-semibold text-slate-900 tracking-tight">Activity</h1>
+        <p className="text-[13px] text-slate-500 mt-0.5">
+          Tool traces, source inspections, and scoring decisions for each discovery run.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left List of Agent Runs */}
-        <div className="lg:col-span-4 bg-[#121929] border border-slate-800 rounded-xl p-4 space-y-3">
-          <h2 className="text-xs font-semibold text-slate-200 border-b border-slate-800 pb-2">
-            Execution Runs ({agentLogs.length})
-          </h2>
-
-          <div className="space-y-2">
+      {agentLogs.length === 0 ? (
+        <div className="bg-white border border-slate-200 rounded-lg px-5 py-10 text-center">
+          <p className="text-[13.5px] font-medium text-slate-600">No runs yet</p>
+          <p className="text-[13px] text-slate-400 mt-1">Run a discovery scan to populate the operational log.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-4 bg-white border border-slate-200 rounded-lg p-3 space-y-1">
+            <p className="section-label px-2 py-2">Runs ({agentLogs.length})</p>
             {agentLogs.map(log => {
-              const isSelected = log.id === selectedRunId;
+              const isSelected = log.id === selectedLog?.id;
               return (
-                <div
+                <button
                   key={log.id}
                   onClick={() => setSelectedRunId(log.id)}
-                  className={`p-3 rounded-lg border text-xs cursor-pointer transition-all space-y-1 ${
-                    isSelected 
-                      ? 'bg-indigo-950/60 border-indigo-500/50' 
-                      : 'bg-[#0b101c] border-slate-800 hover:border-slate-700'
+                  className={`w-full text-left px-3 py-2.5 rounded-md transition-colors ${
+                    isSelected ? 'bg-slate-100' : 'hover:bg-slate-50'
                   }`}
                 >
-                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                  <div className="flex items-center justify-between text-[11px] text-slate-400">
                     <span>{log.timestamp}</span>
-                    <span className="text-emerald-400 font-bold">{(log.durationMs / 1000).toFixed(1)}s</span>
+                    <span className="tabular-nums">{(log.durationMs / 1000).toFixed(1)}s</span>
                   </div>
-                  <p className="font-medium text-slate-200 line-clamp-2">{log.task}</p>
-                  <div className="flex items-center space-x-2 text-[10px] text-slate-400 pt-1">
-                    <span>{log.toolsUsed.length} Tools</span>
-                    <span>•</span>
-                    <span>{log.sourcesCount} Sources</span>
-                  </div>
-                </div>
+                  <p className="text-[13px] font-medium text-slate-800 mt-1 line-clamp-2">{log.task}</p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    {log.toolsUsed.length} tools · {log.sourcesCount} sources · {log.status}
+                  </p>
+                </button>
               );
             })}
           </div>
-        </div>
 
-        {/* Right Run Trace Detail */}
-        {selectedLog && (
-          <div className="lg:col-span-8 bg-[#121929] border border-slate-800 rounded-xl p-5 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-              <div>
-                <span className="text-[10px] font-mono text-indigo-400 bg-indigo-950 px-2 py-0.5 rounded border border-indigo-800">
-                  RUN ID: {selectedLog.id}
-                </span>
-                <h3 className="font-bold text-white text-sm mt-1">{selectedLog.task}</h3>
+          {selectedLog && (
+            <div className="lg:col-span-8 bg-white border border-slate-200 rounded-lg p-5 space-y-4">
+              <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                <div>
+                  <p className="text-[11px] font-mono text-slate-400">{selectedLog.id}</p>
+                  <h3 className="text-[14px] font-semibold text-slate-900 mt-1">{selectedLog.task}</h3>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-[13px] font-medium text-slate-800">{selectedLog.status}</p>
+                  <p className="text-[11px] text-slate-400">{(selectedLog.durationMs / 1000).toFixed(2)}s</p>
+                </div>
               </div>
 
-              <div className="text-right">
-                <span className="text-xs text-emerald-400 font-bold font-mono">STATUS: {selectedLog.status}</span>
-                <span className="block text-[10px] text-slate-400">Duration: {(selectedLog.durationMs / 1000).toFixed(2)}s</span>
-              </div>
-            </div>
-
-            {/* Tools Used Badge Pills */}
-            <div className="space-y-1.5">
-              <span className="text-[11px] text-slate-400 font-medium block">Tools Executed:</span>
               <div className="flex flex-wrap gap-1.5">
                 {selectedLog.toolsUsed.map((tool, idx) => (
-                  <span key={idx} className="text-[10px] font-mono bg-[#0b101c] text-indigo-300 border border-slate-700 px-2 py-0.5 rounded">
+                  <span key={idx} className="text-[11px] bg-slate-50 text-slate-600 border border-slate-200 px-2 py-0.5 rounded">
                     {tool}
                   </span>
                 ))}
               </div>
-            </div>
 
-            {/* Decision Steps Trace */}
-            <div className="space-y-3 pt-2">
-              <h4 className="text-xs font-semibold text-slate-200">Execution Decision Sequence</h4>
-              
-              <div className="space-y-3 font-sans">
+              <div className="space-y-3">
                 {selectedLog.decisions.map((dec, idx) => (
-                  <div key={idx} className="bg-[#0b101c] border border-slate-800 rounded-lg p-3.5 space-y-2 text-xs">
+                  <div key={idx} className="border border-slate-200 rounded-lg p-3.5 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="font-mono text-blue-400 font-bold">Step {dec.step}</span>
+                      <span className="text-[12px] font-semibold text-slate-700">Step {dec.step}</span>
                       {dec.toolCalled && (
-                        <span className="font-mono text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded">
-                          Invoked: {dec.toolCalled}
-                        </span>
+                        <span className="text-[11px] text-slate-500">{dec.toolCalled}</span>
                       )}
                     </div>
-
-                    <div className="space-y-1">
-                      <p className="text-slate-300">
-                        <strong className="text-slate-400">Observation: </strong>{dec.observation}
-                      </p>
-                      <p className="text-white font-medium">
-                        <strong className="text-slate-400">Decision: </strong>{dec.decision}
-                      </p>
-                    </div>
-
+                    <p className="text-[13px] text-slate-600">
+                      <span className="text-slate-400">Observation · </span>{dec.observation}
+                    </p>
+                    <p className="text-[13px] text-slate-800">
+                      <span className="text-slate-400">Decision · </span>{dec.decision}
+                    </p>
                     {dec.toolResultSnippet && (
-                      <div className="bg-[#070a12] p-2.5 rounded border border-slate-800 font-mono text-[11px] text-slate-300">
-                        <span className="text-slate-500 block mb-0.5">Tool Output Snippet:</span>
+                      <p className="text-[12px] text-slate-500 bg-slate-50 rounded px-2.5 py-2">
                         {dec.toolResultSnippet}
-                      </div>
+                      </p>
                     )}
                   </div>
                 ))}
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

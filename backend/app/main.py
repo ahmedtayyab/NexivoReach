@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import onboarding, discovery, products, icp, prospects
+import app.models.schemas  # ensure SQLModel models are imported so metadata is registered
 from app.database.session import init_db
 
 app = FastAPI(

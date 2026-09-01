@@ -1,37 +1,42 @@
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 from app.providers.base import AIProvider
 from app.providers.json_util import parse_json_payload
 from app.config import settings
 
 
-class GeminiProvider(AIProvider):
+class GroqProvider(AIProvider):
     def __init__(self):
-        self.api_key = settings.GEMINI_API_KEY
+        self.api_key = settings.GROQ_API_KEY
         self.available = bool(self.api_key)
+        self.model = "llama-3.3-70b-versatile"
 
     def name(self) -> str:
-        return "Google Gemini API Provider"
+        return "Groq API Provider"
 
-    def _generate(self, prompt: str) -> str:
-        from google import genai
-        client = genai.Client(api_key=self.api_key)
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
+    def _client(self):
+        from groq import Groq
+        return Groq(api_key=self.api_key)
+
+    def _complete(self, prompt: str) -> str:
+        client = self._client()
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
         )
-        return getattr(response, "text", None) or getattr(response, "content", None) or ""
+        return (response.choices[0].message.content or "").strip()
 
     async def extract_business_profile(self, text: str) -> Dict[str, Any]:
         if not self.available:
             from app.providers.fallback import FallbackProvider
             return await FallbackProvider().extract_business_profile(text)
-
         try:
             prompt = (
-                "Extract structured JSON with keys name, website, target_markets (array), "
-                f"primary_categories (array) from: {text}"
+                "Extract a business profile as JSON with keys "
+                "name, website, target_markets (array), primary_categories (array) from:\n"
+                f"{text}"
             )
-            parsed = parse_json_payload(self._generate(prompt))
+            parsed = parse_json_payload(self._complete(prompt))
             if isinstance(parsed, dict) and parsed.get("name"):
                 parsed["extracted_by_ai"] = True
                 return parsed
@@ -44,14 +49,13 @@ class GeminiProvider(AIProvider):
         if not self.available:
             from app.providers.fallback import FallbackProvider
             return await FallbackProvider().extract_products(content, source_type)
-
         try:
             prompt = (
-                f"Extract an array of products as JSON from the following {source_type} content. "
+                f"Extract an array of products as JSON from this {source_type} content. "
                 "Each item must include name, category, description, price, moq, specs (array), target_buyer.\n"
                 f"{content[:6000]}"
             )
-            parsed = parse_json_payload(self._generate(prompt))
+            parsed = parse_json_payload(self._complete(prompt))
             if isinstance(parsed, list):
                 return parsed
             if isinstance(parsed, dict) and isinstance(parsed.get("products"), list):
@@ -65,14 +69,13 @@ class GeminiProvider(AIProvider):
         if not self.available:
             from app.providers.fallback import FallbackProvider
             return await FallbackProvider().analyze_buying_signals(company_text, custom_signals)
-
         try:
             prompt = (
-                "Identify buying signals in the following company text. Return a JSON array of signals "
-                "with keys signal, whyItMatters, sourceExcerpt, sourceUrl (optional).\n"
-                f"CustomSignals: {custom_signals}\n\n{company_text[:5000]}"
+                "Identify buying signals in the company text. Return a JSON array with keys "
+                "signal, whyItMatters, sourceExcerpt, sourceUrl (optional).\n"
+                f"Custom signal rules: {custom_signals}\n\nCompany text:\n{company_text[:5000]}"
             )
-            parsed = parse_json_payload(self._generate(prompt))
+            parsed = parse_json_payload(self._complete(prompt))
             if isinstance(parsed, list) and parsed:
                 return parsed
         except Exception:
@@ -89,7 +92,6 @@ class GeminiProvider(AIProvider):
         if not self.available:
             from app.providers.fallback import FallbackProvider
             return await FallbackProvider().match_catalog_products(products, company_text, company_name)
-
         try:
             catalog = [
                 {
@@ -100,11 +102,11 @@ class GeminiProvider(AIProvider):
                 for p in products
             ]
             prompt = (
-                f"Match catalog products to {company_name}. Return a JSON array of objects with "
-                "productName, fitLevel (High, Medium, or Low), and reasoning.\n"
+                f"Match catalog products to {company_name}. Return a JSON array of "
+                "{productName, fitLevel (High|Medium|Low), reasoning}.\n"
                 f"Catalog: {catalog}\n\nCompany materials:\n{company_text[:4000]}"
             )
-            parsed = parse_json_payload(self._generate(prompt))
+            parsed = parse_json_payload(self._complete(prompt))
             if isinstance(parsed, list) and parsed:
                 return parsed
         except Exception:
@@ -125,14 +127,13 @@ class GeminiProvider(AIProvider):
             return await FallbackProvider().generate_personalized_outreach(
                 company_name, why_prospect, signals, matched_products, seller_name
             )
-
         try:
             prompt = (
-                f"You represent {seller_name}. Draft a personalized B2B outreach email as JSON with keys "
-                f"subject, body, personalizedReason for {company_name}. Sign the email as {seller_name}. "
-                f"Context: {why_prospect}. Signals: {signals}. MatchedProducts: {matched_products}"
+                f"You represent {seller_name}. Draft a B2B outreach email as JSON with keys "
+                f"subject, body, personalizedReason for {company_name}. Sign as {seller_name}. "
+                f"Context: {why_prospect}. Signals: {signals}. Matched products: {matched_products}"
             )
-            parsed = parse_json_payload(self._generate(prompt))
+            parsed = parse_json_payload(self._complete(prompt))
             if isinstance(parsed, dict) and parsed.get("subject") and parsed.get("body"):
                 return parsed
         except Exception:

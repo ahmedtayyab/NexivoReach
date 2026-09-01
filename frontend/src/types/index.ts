@@ -98,7 +98,7 @@ export interface AgentRunLog {
   durationMs: number;
   toolsUsed: string[];
   sourcesCount: number;
-  status: 'Completed' | 'In Progress' | 'Failed';
+  status: 'Completed' | 'In Progress' | 'Failed' | 'CompletedWithNoCandidates';
   decisions: {
     step: number;
     observation: string;
@@ -106,4 +106,16 @@ export interface AgentRunLog {
     toolCalled?: string;
     toolResultSnippet?: string;
   }[];
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  picture?: string;
+}
+
+export interface AuthState {
+  configured: boolean;
+  user: AuthUser | null;
 }

@@ -24,6 +24,7 @@ class ProductItem(SQLModel, table=True):
     image_url: Optional[str] = None
     ai_extracted: bool = True
     verified_by_user: bool = False
+    user_id: Optional[str] = Field(default=None, index=True)
 
 class ICPConfig(SQLModel, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
@@ -52,6 +53,7 @@ class ProspectRecord(SQLModel, table=True):
     stage: str = "Qualified"
     discovered_at: str
     agent_timeline: List[dict] = Field(default=[], sa_type=JSON)
+    user_id: Optional[str] = Field(default=None, index=True)
 
 class AgentRunRecord(SQLModel, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
@@ -62,3 +64,13 @@ class AgentRunRecord(SQLModel, table=True):
     sources_count: int
     status: str
     decisions: List[dict] = Field(default=[], sa_type=JSON)
+    user_id: Optional[str] = Field(default=None, index=True)
+
+
+class User(SQLModel, table=True):
+    id: Optional[str] = Field(default=None, primary_key=True)
+    google_id: str = Field(index=True, unique=True)
+    email: str
+    name: str = ""
+    picture: str = ""
+    created_at: str = ""
