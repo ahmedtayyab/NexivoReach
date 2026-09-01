@@ -64,8 +64,8 @@ Goal Specification (ICP & Catalog)
 | **Initial Setup & Architecture** | ✅ Completed | GitHub repo, modular FastAPI backend & Vite frontend scaffold |
 | **Application Shell & Design System** | ✅ Completed | Professional SaaS design system (Linear/Attio inspired, zero AI tropes), responsive navigation tabs, and dark mode palette |
 | **Business Onboarding** | ✅ Completed | Natural language business summary & AI profile extraction API |
-| **Product Catalog Management** | 🚧 In progress | Multi-source product import (URL, PDF, CSV, Manual) |
-| **Ideal Customer Profile (ICP)** | ⬜ Planned | Target market, deal size, custom buying signals configuration |
+| **Product Catalog Management** | ✅ Completed | Multi-source product import (URL scraper, PDF, CSV, Excel, Manual) & AI verification tagging |
+| **Ideal Customer Profile (ICP)** | 🚧 In progress | Target market, deal size, custom buying signals configuration |
 | **Autonomous Prospecting Agent** | ⬜ Planned | Multi-step agent workflow (`Observe -> Decide -> Tool -> Inspect`) |
 | **Web Research Engine** | ⬜ Planned | Search & public site scraping with source attribution |
 | **Transparent Prospect Scoring** | ⬜ Planned | Configurable 100-point scoring formula with evidence explanations |
