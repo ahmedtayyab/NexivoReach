@@ -45,7 +45,10 @@ class FallbackProvider(AIProvider):
         signals: List[Dict[str, Any]], 
         matched_products: List[Dict[str, Any]]
     ) -> Dict[str, str]:
-        product_name = matched_products[0]["productName"] if matched_products else "commercial strength equipment"
+        product_name = "commercial strength equipment"
+        if matched_products:
+            first = matched_products[0]
+            product_name = first.get("productName") or first.get("name") or product_name
         return {
             "subject": f"Custom {product_name} Solutions for {company_name}",
             "body": f"Hi Procurement Team,\n\nNoticed {company_name}'s recent growth and focus on commercial fitness facilities.\n\nWe manufacture heavy-duty 11-gauge commercial power racks and cable crossover stations directly for GCC commercial operators. Because we ship directly from our factory, we provide factory pricing and custom logo branding.\n\nWould you be open to reviewing a spec sheet?\n\nBest regards,\nApex Sales Team",

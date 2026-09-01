@@ -24,7 +24,26 @@ class GeminiProvider(AIProvider):
                 model='gemini-2.5-flash',
                 contents=prompt
             )
-            return json.loads(response.text)
+            # Try multiple ways to extract JSON from the provider response
+            resp_text = getattr(response, 'text', None) or getattr(response, 'content', None)
+            if resp_text:
+                try:
+                    return json.loads(resp_text)
+                except Exception:
+                    pass
+            # Fallback: try dict/obj conversion if available
+            try:
+                as_dict = getattr(response, 'to_dict', None)
+                if callable(as_dict):
+                    return as_dict()
+                data = getattr(response, 'data', None)
+                if data:
+                    return data
+            except Exception:
+                pass
+            # If parsing fails, defer to fallback provider
+            from app.providers.fallback import FallbackProvider
+            return await FallbackProvider().extract_business_profile(text)
         except Exception:
             from app.providers.fallback import FallbackProvider
             return await FallbackProvider().extract_business_profile(text)
