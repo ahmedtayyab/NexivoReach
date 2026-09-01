@@ -6,6 +6,8 @@ import {
   MapPin
 } from 'lucide-react';
 
+
+
 interface Props {
   prospects: Prospect[];
   products?: Product[];
