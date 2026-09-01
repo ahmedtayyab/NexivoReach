@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import type { BusinessInfo, Product, IdealCustomerProfile } from '../types';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
@@ -25,6 +25,10 @@ export default function SettingsView({
   onSaveICP,
 }: Props) {
   const [section, setSection] = useState<SettingsTab>(initialSection);
+
+  useEffect(() => {
+    setSection(initialSection);
+  }, [initialSection]);
 
   return (
     <div className="max-w-3xl">

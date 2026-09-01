@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
 
 from app.config import settings, effective_app_url, effective_google_redirect_uri
@@ -132,7 +132,10 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
         session.refresh(user)
         user_id = user.id
 
-    response = RedirectResponse(f"{app_url}/")
+    response = HTMLResponse(
+        """<!DOCTYPE html><html><head><meta charset="utf-8"></head>"""
+        """<body><script>window.location.replace("/#queue");</script></body></html>"""
+    )
     response.set_cookie(
         SESSION_COOKIE,
         create_session_token(user_id),

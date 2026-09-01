@@ -87,6 +87,13 @@ export default function App() {
         if (!data.configured || data.user) {
           await loadWorkspace();
         }
+        if (data.user) {
+          const tab = window.location.hash.replace('#', '') as TabId;
+          const valid: TabId[] = ['queue', 'discover', 'catalog', 'settings', 'activity'];
+          const initialTab = valid.includes(tab) ? tab : 'queue';
+          setActiveTab(initialTab);
+          window.history.replaceState({ tab: initialTab }, '', `#${initialTab}`);
+        }
       } catch {
         setAuthConfigured(false);
         setUser(null);
@@ -94,6 +101,24 @@ export default function App() {
         setAuthLoading(false);
       }
     })();
+  }, []);
+
+  const handleTabChange = (tab: string) => {
+    const next = tab as TabId;
+    setActiveTab(next);
+    window.history.pushState({ tab: next }, '', `#${next}`);
+  };
+
+  useEffect(() => {
+    const onPopState = () => {
+      const tab = (window.history.state?.tab || window.location.hash.replace('#', '')) as TabId;
+      const valid: TabId[] = ['queue', 'discover', 'catalog', 'settings', 'activity'];
+      if (valid.includes(tab)) {
+        setActiveTab(tab);
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
   const persistProspect = async (prospect: Prospect) => {
@@ -198,7 +223,7 @@ export default function App() {
     <div className="min-h-screen bg-canvas text-ink flex">
       <Sidebar
         activeTab={activeTab}
-        onTabChange={tab => setActiveTab(tab as TabId)}
+        onTabChange={handleTabChange}
         pendingCount={pendingCount}
         workspaceName={businessInfo.name || 'Workspace'}
         user={user}
@@ -223,6 +248,8 @@ export default function App() {
         )}
         {(activeTab === 'catalog' || activeTab === 'settings') && (
           <SettingsView
+            key={activeTab}
+            initialSection={activeTab === 'catalog' ? 'catalog' : 'company'}
             businessInfo={businessInfo}
             products={products}
             icp={icp}
