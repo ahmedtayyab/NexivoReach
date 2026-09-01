@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog } from './types';
 
 import { initialBusinessInfo, initialProducts, initialICP, initialProspects, initialAgentLogs } from './data/mockData';
@@ -55,6 +55,23 @@ export default function App() {
   const handleAddLog = (log: AgentRunLog) => {
     setAgentLogs(prev => [log, ...prev]);
   };
+
+  useEffect(() => {
+    // Load persisted prospects from backend
+    (async () => {
+      try {
+        const resp = await fetch('/api/prospects/');
+        if (resp.ok) {
+          const list = await resp.json();
+          if (Array.isArray(list) && list.length) {
+            setProspects(list as Prospect[]);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to load prospects', e);
+      }
+    })();
+  }, []);
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab as TabId);
