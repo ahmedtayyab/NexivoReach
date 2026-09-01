@@ -70,10 +70,10 @@ Goal Specification (ICP & Catalog)
 | **Web Research Engine** | ✅ Completed | Search & public website scraper with source links and excerpt attributions |
 | **Transparent Prospect Scoring** | ✅ Completed | Transparent 100-point fit formula (Industry, Location, Overlap, Signals, Scale) with evidence |
 | **Prospect Research Detail View** | ✅ Completed | 94% fit match hero, score breakdown table, buying signals, product matrix, agent timeline |
-| **Personalized Outreach Engine** | 🚧 In progress | AI personalized messaging based on verified company evidence |
-| **Human Approval System** | ⬜ Planned | Explicit permission barrier for message dispatch |
-| **Agent Operational Log** | ⬜ Planned | Full tool execution trace history and decision inspection |
-| **Sales Command Dashboard** | ⬜ Planned | Pipeline board, priority leads, real-time agent metrics |
+| **Personalized Outreach Engine** | ✅ Completed | AI personalized messaging based on verified company evidence & expansion news |
+| **Human Approval System** | ✅ Completed | Explicit permission barrier for message dispatch (Default: Sending requires human approval) |
+| **Agent Operational Log** | ✅ Completed | Full tool execution trace history, step decisions, and source inspection |
+| **Sales Command Dashboard** | ✅ Completed | Pipeline board, priority leads, real-time agent metrics & Apex Fitness demo mode |
 
 ---
 
