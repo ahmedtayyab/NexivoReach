@@ -8,6 +8,7 @@ import {
   emptyAgentLogs,
 } from './data/defaults';
 import { apiFetch } from './lib/api';
+import { parseIcpResponse, parseProfileResponse } from './lib/workspace';
 import {
   type AppRoute,
   type SettingsSection,
@@ -75,16 +76,14 @@ export default function App() {
       if (Array.isArray(logs)) setAgentLogs(logs as AgentRunLog[]);
     }
     if (profileResp.ok) {
-      const profile = await profileResp.json();
-      if (profile && typeof profile === 'object') setBusinessInfo(profile as BusinessInfo);
+      setBusinessInfo(parseProfileResponse(await profileResp.json()));
     }
     if (productsResp.ok) {
       const catalog = await productsResp.json();
       if (Array.isArray(catalog)) setProducts(catalog as Product[]);
     }
     if (icpResp.ok) {
-      const icpData = await icpResp.json();
-      if (icpData && typeof icpData === 'object') setIcp(icpData as IdealCustomerProfile);
+      setIcp(parseIcpResponse(await icpResp.json()));
     }
   };
 
@@ -121,6 +120,11 @@ export default function App() {
 
   useEffect(() => {
     const syncRoute = () => {
+      if (window.location.pathname.startsWith('/api/')) {
+        const route = resolveRouteFromLocation();
+        window.location.replace(`/#${route}`);
+        return;
+      }
       setActiveRoute(resolveRouteFromLocation());
     };
     window.addEventListener('popstate', syncRoute);

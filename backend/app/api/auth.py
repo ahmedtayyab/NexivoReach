@@ -134,7 +134,7 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
 
     response = HTMLResponse(
         """<!DOCTYPE html><html><head><meta charset="utf-8"></head>"""
-        """<body><script>window.location.replace("/#queue");</script></body></html>"""
+        """<body><script>sessionStorage.setItem('nr_post_login','1');window.location.replace('/#queue');</script></body></html>"""
     )
     response.set_cookie(
         SESSION_COOKIE,

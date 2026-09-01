@@ -63,19 +63,23 @@ export default function SettingsView({
         ))}
       </div>
 
-      {section === 'company' && <CompanySection businessInfo={businessInfo} onSave={onSaveBusiness} />}
+      {section === 'company' && (
+        <CompanySection key={businessInfo.id ?? 'company'} businessInfo={businessInfo} onSave={onSaveBusiness} />
+      )}
       {section === 'catalog' && <CatalogSection products={products} onSave={onSaveProducts} />}
-      {section === 'icp' && <ICPSection icp={icp} onSave={onSaveICP} />}
+      {section === 'icp' && (
+        <ICPSection key={icp.companySize + icp.targetCountries.join('|')} icp={icp} onSave={onSaveICP} />
+      )}
     </div>
   );
 }
 
 function CompanySection({ businessInfo, onSave }: { businessInfo: BusinessInfo; onSave: (b: BusinessInfo) => void }) {
-  const [name, setName] = useState(businessInfo.name);
-  const [website, setWebsite] = useState(businessInfo.website);
-  const [description, setDescription] = useState(businessInfo.description);
-  const [markets, setMarkets] = useState(businessInfo.targetMarkets.join(', '));
-  const [categories, setCategories] = useState(businessInfo.primaryCategories.join(', '));
+  const [name, setName] = useState(businessInfo.name ?? '');
+  const [website, setWebsite] = useState(businessInfo.website ?? '');
+  const [description, setDescription] = useState(businessInfo.description ?? '');
+  const [markets, setMarkets] = useState((businessInfo.targetMarkets ?? []).join(', '));
+  const [categories, setCategories] = useState((businessInfo.primaryCategories ?? []).join(', '));
   const [extracting, setExtracting] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -386,11 +390,11 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
 }
 
 function ICPSection({ icp, onSave }: { icp: IdealCustomerProfile; onSave: (i: IdealCustomerProfile) => void }) {
-  const [buyerTypes, setBuyerTypes] = useState(icp.targetBuyerTypes.join(', '));
-  const [countries, setCountries] = useState(icp.targetCountries.join(', '));
-  const [companySize, setCompanySize] = useState(icp.companySize);
+  const [buyerTypes, setBuyerTypes] = useState((icp.targetBuyerTypes ?? []).join(', '));
+  const [countries, setCountries] = useState((icp.targetCountries ?? []).join(', '));
+  const [companySize, setCompanySize] = useState(icp.companySize ?? 'Any');
   const [minDealSize, setMinDealSize] = useState(icp.minDealSize || '');
-  const [signals] = useState(icp.buyingSignals);
+  const [signals] = useState(icp.buyingSignals ?? []);
   const [saved, setSaved] = useState(false);
 
   const handleSave = () => {
