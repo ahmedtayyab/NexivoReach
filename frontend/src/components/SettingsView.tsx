@@ -1,40 +1,42 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState } from 'react';
 import type { BusinessInfo, Product, IdealCustomerProfile } from '../types';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+
+import type { SettingsSection } from '../lib/navigation';
 
 interface Props {
   businessInfo: BusinessInfo;
   products: Product[];
   icp: IdealCustomerProfile;
-  initialSection?: SettingsTab;
+  section: SettingsSection;
+  onSectionChange: (section: SettingsSection) => void;
   onSaveBusiness: (info: BusinessInfo) => void;
   onSaveProducts: (products: Product[]) => void;
   onSaveICP: (icp: IdealCustomerProfile) => void;
 }
 
-type SettingsTab = 'company' | 'catalog' | 'icp';
-
 export default function SettingsView({
   businessInfo,
   products,
   icp,
-  initialSection = 'company',
+  section,
+  onSectionChange,
   onSaveBusiness,
   onSaveProducts,
   onSaveICP,
 }: Props) {
-  const [section, setSection] = useState<SettingsTab>(initialSection);
-
-  useEffect(() => {
-    setSection(initialSection);
-  }, [initialSection]);
+  const titles: Record<SettingsSection, string> = {
+    company: 'Company Profile',
+    catalog: 'Product Catalog',
+    icp: 'ICP & Signals',
+  };
 
   return (
     <div className="max-w-3xl">
       <div className="mb-7">
         <h1 className="text-[15px] font-semibold text-ink tracking-tight">
-          {section === 'catalog' ? 'Catalog' : 'Settings'}
+          {titles[section]}
         </h1>
         <p className="text-[13px] text-ink-secondary mt-0.5">
           Configure your workspace, product catalog, and targeting rules.
@@ -46,10 +48,10 @@ export default function SettingsView({
           ['company', 'Company Profile'],
           ['catalog', 'Product Catalog'],
           ['icp', 'ICP & Signals'],
-        ] as [SettingsTab, string][]).map(([id, label]) => (
+        ] as [SettingsSection, string][]).map(([id, label]) => (
           <button
             key={id}
-            onClick={() => setSection(id)}
+            onClick={() => onSectionChange(id)}
             className={`pb-2.5 text-[13px] border-b-2 -mb-px transition-colors ${
               section === id
                 ? 'border-accent text-accent font-medium'

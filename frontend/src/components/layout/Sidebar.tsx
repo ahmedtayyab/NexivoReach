@@ -1,8 +1,11 @@
 import { Search, Settings, Database, LayoutList, Activity, LogOut } from 'lucide-react';
 import type { AuthUser } from '../../types';
 
+import type { AppRoute } from '../../lib/navigation';
+
 interface Props {
   activeTab: string;
+  activeRoute: AppRoute;
   onTabChange: (tab: string) => void;
   pendingCount: number;
   workspaceName?: string;
@@ -10,7 +13,7 @@ interface Props {
   onLogout?: () => void;
 }
 
-export default function Sidebar({ activeTab, onTabChange, pendingCount, workspaceName, user, onLogout }: Props) {
+export default function Sidebar({ activeTab, activeRoute, onTabChange, pendingCount, workspaceName, user, onLogout }: Props) {
   const primary = [
     { id: 'queue', label: 'Queue', icon: LayoutList },
     { id: 'discover', label: 'Discover', icon: Search },
@@ -35,7 +38,7 @@ export default function Sidebar({ activeTab, onTabChange, pendingCount, workspac
 
       <nav className="flex-1 px-2 pt-3 pb-2 space-y-px">
         {primary.map(({ id, label, icon: Icon }) => {
-          const active = activeTab === id;
+          const active = id === 'catalog' ? activeRoute === 'catalog' : activeTab === id;
           return (
             <button
               key={id}
@@ -67,7 +70,9 @@ export default function Sidebar({ activeTab, onTabChange, pendingCount, workspac
 
       <div className="px-2 py-2 space-y-px">
         {secondary.map(({ id, label, icon: Icon }) => {
-          const active = activeTab === id;
+          const active = id === 'settings'
+            ? activeRoute === 'company' || activeRoute === 'icp'
+            : activeTab === id;
           return (
             <button
               key={id}

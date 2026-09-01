@@ -8,6 +8,14 @@ import {
   emptyAgentLogs,
 } from './data/defaults';
 import { apiFetch } from './lib/api';
+import {
+  type AppRoute,
+  type SettingsSection,
+  isSettingsRoute,
+  parseRoute,
+  routeFromSidebarTab,
+  sidebarTabForRoute,
+} from './lib/navigation';
 
 import Sidebar from './components/layout/Sidebar';
 import QueueView from './components/QueueView';
@@ -17,15 +25,13 @@ import ReviewDrawer from './components/prospects/ReviewDrawer';
 import ActivityView from './components/ActivityView';
 import LoginView from './components/LoginView';
 
-type TabId = 'queue' | 'discover' | 'catalog' | 'settings' | 'activity';
-
 export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authConfigured, setAuthConfigured] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<TabId>('queue');
+  const [activeRoute, setActiveRoute] = useState<AppRoute>('queue');
   const [businessInfo, setBusinessInfo] = useState<BusinessInfo>(emptyBusinessInfo);
   const [products, setProducts] = useState<Product[]>(emptyProducts);
   const [icp, setIcp] = useState<IdealCustomerProfile>(emptyICP);
@@ -38,6 +44,16 @@ export default function App() {
   const pendingCount = prospects.filter(
     p => !p.outreachDraft || p.outreachDraft.status === 'Draft'
   ).length;
+
+  const navigate = (route: AppRoute, replace = false) => {
+    setActiveRoute(route);
+    const url = `#${route}`;
+    if (replace) {
+      window.history.replaceState({ route }, '', url);
+    } else {
+      window.history.pushState({ route }, '', url);
+    }
+  };
 
   const loadWorkspace = async () => {
     const [prospectsResp, logsResp, profileResp, productsResp, icpResp] = await Promise.all([
@@ -88,11 +104,9 @@ export default function App() {
           await loadWorkspace();
         }
         if (data.user) {
-          const tab = window.location.hash.replace('#', '') as TabId;
-          const valid: TabId[] = ['queue', 'discover', 'catalog', 'settings', 'activity'];
-          const initialTab = valid.includes(tab) ? tab : 'queue';
-          setActiveTab(initialTab);
-          window.history.replaceState({ tab: initialTab }, '', `#${initialTab}`);
+          const initialRoute = parseRoute(window.location.hash);
+          setActiveRoute(initialRoute);
+          window.history.replaceState({ route: initialRoute }, '', `#${initialRoute}`);
         }
       } catch {
         setAuthConfigured(false);
@@ -103,23 +117,22 @@ export default function App() {
     })();
   }, []);
 
-  const handleTabChange = (tab: string) => {
-    const next = tab as TabId;
-    setActiveTab(next);
-    window.history.pushState({ tab: next }, '', `#${next}`);
-  };
-
   useEffect(() => {
     const onPopState = () => {
-      const tab = (window.history.state?.tab || window.location.hash.replace('#', '')) as TabId;
-      const valid: TabId[] = ['queue', 'discover', 'catalog', 'settings', 'activity'];
-      if (valid.includes(tab)) {
-        setActiveTab(tab);
-      }
+      const route = (window.history.state?.route as AppRoute | undefined) ?? parseRoute(window.location.hash);
+      setActiveRoute(route);
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
+
+  const handleSidebarChange = (tab: string) => {
+    navigate(routeFromSidebarTab(tab));
+  };
+
+  const handleSettingsSectionChange = (section: SettingsSection) => {
+    navigate(section);
+  };
 
   const persistProspect = async (prospect: Prospect) => {
     try {
@@ -205,6 +218,7 @@ export default function App() {
     setBusinessInfo(emptyBusinessInfo);
     setProducts(emptyProducts);
     setIcp(emptyICP);
+    navigate('queue', true);
   };
 
   if (authLoading) {
@@ -222,8 +236,9 @@ export default function App() {
   return (
     <div className="min-h-screen bg-canvas text-ink flex">
       <Sidebar
-        activeTab={activeTab}
-        onTabChange={handleTabChange}
+        activeTab={sidebarTabForRoute(activeRoute)}
+        activeRoute={activeRoute}
+        onTabChange={handleSidebarChange}
         pendingCount={pendingCount}
         workspaceName={businessInfo.name || 'Workspace'}
         user={user}
@@ -231,14 +246,14 @@ export default function App() {
       />
 
       <main className="flex-1 min-w-0 px-10 py-8">
-        {activeTab === 'queue' && (
+        {activeRoute === 'queue' && (
           <QueueView
             prospects={prospects}
             agentLogs={agentLogs}
             onReviewProspect={id => setSelectedProspectId(id)}
           />
         )}
-        {activeTab === 'discover' && (
+        {activeRoute === 'discover' && (
           <DiscoverView
             businessInfo={businessInfo}
             icp={icp}
@@ -246,10 +261,10 @@ export default function App() {
             onAddLog={handleAddLog}
           />
         )}
-        {(activeTab === 'catalog' || activeTab === 'settings') && (
+        {isSettingsRoute(activeRoute) && (
           <SettingsView
-            key={activeTab}
-            initialSection={activeTab === 'catalog' ? 'catalog' : 'company'}
+            section={activeRoute}
+            onSectionChange={handleSettingsSectionChange}
             businessInfo={businessInfo}
             products={products}
             icp={icp}
@@ -258,7 +273,7 @@ export default function App() {
             onSaveICP={handleSaveICP}
           />
         )}
-        {activeTab === 'activity' && <ActivityView agentLogs={agentLogs} />}
+        {activeRoute === 'activity' && <ActivityView agentLogs={agentLogs} />}
       </main>
 
       <ReviewDrawer
