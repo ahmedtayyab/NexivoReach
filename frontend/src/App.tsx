@@ -38,11 +38,24 @@ export default function App() {
     setProspects(prev =>
       prev.map(p => {
         if (p.id !== prospectId || !p.outreachDraft) return p;
-        return {
+        const updated = {
           ...p,
           stage: status === 'Approved' ? 'Qualified' : status === 'Sent' ? 'Contacted' : p.stage,
           outreachDraft: { ...p.outreachDraft, status },
         };
+        // Persist status change to backend
+        (async () => {
+          try {
+            await fetch('/api/prospects/save', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(updated),
+            });
+          } catch (e) {
+            console.warn('Failed to persist prospect status', e);
+          }
+        })();
+        return updated;
       })
     );
   };
