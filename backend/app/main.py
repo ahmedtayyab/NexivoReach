@@ -1,15 +1,16 @@
+import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from app.api import onboarding, discovery, products, icp, prospects, auth
 import app.models.schemas  # ensure SQLModel models are imported so metadata is registered
 from app.database.session import init_db
 from app.config import settings, effective_app_url
 
-STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+STATIC_DIR = Path(os.getenv("STATIC_DIR", str(Path(__file__).resolve().parent.parent / "static")))
 
 app = FastAPI(
     title="NexivoReach API",
@@ -30,10 +31,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.on_event("startup")
-def on_startup():
-    init_db()
-
 app.include_router(auth.router)
 app.include_router(onboarding.router)
 app.include_router(discovery.router)
@@ -41,42 +38,30 @@ app.include_router(products.router)
 app.include_router(icp.router)
 app.include_router(prospects.router)
 
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
+    if STATIC_DIR.is_dir():
+        print(f"Serving frontend from {STATIC_DIR}")
+    else:
+        print(f"No frontend build at {STATIC_DIR} — API-only mode")
+
+
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "service": "NexivoReach Backend"}
+    return {"status": "healthy", "service": "NexivoReach Backend", "static": STATIC_DIR.is_dir()}
 
 
-def _mount_frontend():
-    if not STATIC_DIR.is_dir():
-        return
-
-    assets_dir = STATIC_DIR / "assets"
-    if assets_dir.is_dir():
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
-
-    @app.get("/")
-    async def spa_index():
-        return FileResponse(STATIC_DIR / "index.html")
-
-    @app.get("/{full_path:path}")
-    async def spa_fallback(full_path: str):
-        if full_path.startswith("api/") or full_path == "health":
-            raise HTTPException(status_code=404)
-        candidate = STATIC_DIR / full_path
-        if full_path and candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(STATIC_DIR / "index.html")
-
-
-_mount_frontend()
-
-
-if not STATIC_DIR.is_dir():
+if STATIC_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="frontend")
+else:
 
     @app.get("/")
     def read_root():
-        return {
+        return JSONResponse({
             "status": "online",
             "app": "NexivoReach API",
             "tagline": "Turn products into prospects.",
-        }
+            "hint": "Frontend static files not found. Redeploy with Docker (Dockerfile).",
+        })
