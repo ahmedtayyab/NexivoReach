@@ -71,30 +71,30 @@ export default function DiscoverView({ onAddProspect, onAddLog }: Props) {
   return (
     <div className="max-w-2xl">
       <div className="mb-6">
-        <h1 className="text-lg font-semibold text-slate-900">Discover</h1>
-        <p className="text-sm text-slate-500 mt-0.5">
+        <h1 className="text-lg font-semibold text-ink">Discover</h1>
+        <p className="text-sm text-ink-secondary mt-0.5">
           Describe the type of buyer you are looking for. Results appear in your Queue.
         </p>
       </div>
 
       {/* Prompt area */}
-      <div className="border border-slate-200 rounded-md p-4 space-y-3">
+      <div className="bg-panel border border-border rounded-md p-4 space-y-3">
         <textarea
           value={query}
           onChange={e => setQuery(e.target.value)}
           disabled={isRunning}
           rows={3}
           placeholder="Find commercial fitness centers expanding in the GCC region..."
-          className="w-full text-sm text-slate-800 placeholder-slate-400 resize-none focus:outline-none border-none p-0 bg-transparent"
+          className="w-full text-sm text-ink-secondary placeholder-ink-muted resize-none focus:outline-none border-none p-0 bg-transparent"
         />
-        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+        <div className="flex items-center justify-between pt-2 border-t border-border-subtle">
           {isRunning ? (
-            <span className="flex items-center space-x-2 text-sm text-slate-500">
+            <span className="flex items-center space-x-2 text-sm text-ink-secondary">
               <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.75} />
               <span>{statusText}</span>
             </span>
           ) : (
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-ink-muted">
               {lastRun
                 ? `Last run ${formatRelative(lastRun.startedAt)}`
                 : 'No runs yet'}
@@ -103,7 +103,7 @@ export default function DiscoverView({ onAddProspect, onAddLog }: Props) {
           <button
             onClick={handleRun}
             disabled={isRunning || !query.trim()}
-            className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-sm font-medium rounded-md transition-colors"
+            className="px-4 py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-sm font-medium rounded-md transition-colors"
           >
             {isRunning ? 'Running...' : 'Run Scan'}
           </button>
@@ -113,17 +113,17 @@ export default function DiscoverView({ onAddProspect, onAddLog }: Props) {
       {/* Run history */}
       {runHistory.length > 0 && (
         <div className="mt-8">
-          <p className="text-xs font-medium text-slate-400 uppercase tracking-widest mb-3">Recent Runs</p>
-          <div className="divide-y divide-slate-100">
+          <p className="text-xs font-medium text-ink-muted uppercase tracking-widest mb-3">Recent Runs</p>
+          <div className="divide-y divide-border-subtle">
             {runHistory.map(run => (
               <div key={run.id} className="py-2.5 flex items-center justify-between text-sm">
                 <div>
-                  <span className="text-slate-700">
+                  <span className="text-ink-secondary">
                     {run.startedAt.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
                     {' '}
                     {run.startedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
                   </span>
-                  <span className="text-slate-400 ml-2">
+                  <span className="text-ink-muted ml-2">
                     · Found {run.foundCount} prospect{run.foundCount !== 1 ? 's' : ''}
                   </span>
                 </div>

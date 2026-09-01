@@ -4,37 +4,37 @@ interface Props {
 
 export default function LoginView({ error }: Props) {
   return (
-    <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center px-6">
+    <div className="min-h-screen bg-canvas flex items-center justify-center px-6">
       <div className="w-full max-w-sm">
         <div className="flex items-center space-x-2 mb-8 justify-center">
-          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
-            <span className="text-white font-bold text-xs">NR</span>
+          <div className="w-8 h-8 rounded-lg bg-ink flex items-center justify-center">
+            <span className="text-panel-elevated font-bold text-xs">NR</span>
           </div>
-          <span className="font-semibold text-slate-900 text-lg tracking-tight">NexivoReach</span>
+          <span className="font-semibold text-ink text-lg tracking-tight">NexivoReach</span>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-          <h1 className="text-[15px] font-semibold text-slate-900">Sign in to continue</h1>
-          <p className="text-[13px] text-slate-500 mt-1 mb-6">
+        <div className="bg-panel-elevated border border-border rounded-lg p-6">
+          <h1 className="text-[15px] font-semibold text-ink">Sign in to continue</h1>
+          <p className="text-[13px] text-ink-secondary mt-1 mb-6">
             Use your Google account to access your workspace, catalog, and prospect queue.
           </p>
 
           {error && (
-            <p className="text-[13px] text-red-600 bg-red-50 border border-red-100 rounded-md px-3 py-2 mb-4">
+            <p className="text-[13px] text-red-800 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-4">
               Sign-in failed. Check your Google OAuth settings and try again.
             </p>
           )}
 
           <a
             href="/api/auth/google"
-            className="flex items-center justify-center gap-2.5 w-full px-4 py-2.5 bg-white border border-slate-300 hover:border-slate-400 hover:bg-slate-50 rounded-md text-[13.5px] font-medium text-slate-800 transition-colors"
+            className="flex items-center justify-center gap-2.5 w-full px-4 py-2.5 bg-panel border border-border hover:border-ink-muted hover:bg-muted rounded-md text-[13.5px] font-medium text-ink transition-colors"
           >
             <GoogleIcon />
             Continue with Google
           </a>
         </div>
 
-        <p className="text-[12px] text-slate-400 text-center mt-6">
+        <p className="text-[12px] text-ink-muted text-center mt-6">
           Your session is stored in a secure HTTP-only cookie.
         </p>
       </div>

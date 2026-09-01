@@ -22,34 +22,34 @@ export default function QueueView({ prospects, agentLogs, onReviewProspect }: Pr
 
       {/* Page heading */}
       <div className="mb-7">
-        <h1 className="text-[15px] font-semibold text-slate-900 tracking-tight">Review Queue</h1>
-        <p className="text-[13px] text-slate-500 mt-0.5">
-          <span className="font-medium text-slate-800">{pending.length}</span>{' '}
+        <h1 className="text-[15px] font-semibold text-ink tracking-tight">Review Queue</h1>
+        <p className="text-[13px] text-ink-secondary mt-0.5">
+          <span className="font-medium text-ink-secondary">{pending.length}</span>{' '}
           prospect{pending.length !== 1 ? 's' : ''} awaiting approval
           {lastRunLabel && (
-            <span className="text-slate-400"> · Last scan {lastRunLabel}</span>
+            <span className="text-ink-muted"> · Last scan {lastRunLabel}</span>
           )}
         </p>
       </div>
 
       {/* Active queue */}
       {pending.length === 0 ? (
-        <div className="bg-white border border-slate-200 rounded-lg px-5 py-10 text-center">
-          <p className="text-[13.5px] font-medium text-slate-600">Queue is clear</p>
-          <p className="text-[13px] text-slate-400 mt-1">
-            Switch to <strong className="font-medium text-slate-500">Discover</strong> to find new prospects.
+        <div className="bg-panel border border-border rounded-lg px-5 py-10 text-center">
+          <p className="text-[13.5px] font-medium text-ink-secondary">Queue is clear</p>
+          <p className="text-[13px] text-ink-muted mt-1">
+            Switch to <strong className="font-medium text-ink-secondary">Discover</strong> to find new prospects.
           </p>
         </div>
       ) : (
-        <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+        <div className="bg-panel border border-border rounded-lg overflow-hidden">
           {/* Column header */}
-          <div className="grid grid-cols-[1fr_160px_64px_88px] items-center px-4 py-2 border-b border-slate-100 bg-slate-50">
+          <div className="grid grid-cols-[1fr_160px_64px_88px] items-center px-4 py-2 border-b border-border-subtle bg-muted">
             <span className="section-label">Company</span>
             <span className="section-label">Top Signal</span>
             <span className="section-label text-right">Fit</span>
             <span className="section-label text-right">Action</span>
           </div>
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-border-subtle">
             {pending.map(prospect => (
               <QueueRow
                 key={prospect.id}
@@ -66,7 +66,7 @@ export default function QueueView({ prospects, agentLogs, onReviewProspect }: Pr
       {reviewed.length > 0 && (
         <div className="mt-8">
           <p className="section-label mb-3">Reviewed</p>
-          <div className="bg-white border border-slate-200 rounded-lg overflow-hidden divide-y divide-slate-100">
+          <div className="bg-panel border border-border rounded-lg overflow-hidden divide-y divide-border-subtle">
             {reviewed.map(prospect => (
               <QueueRow
                 key={prospect.id}
@@ -112,18 +112,18 @@ function QueueRow({
       {/* Company col */}
       <div className="flex items-center gap-2.5 min-w-0">
         <div
-          className={`w-1.5 h-1.5 rounded-full shrink-0 ${isNew ? 'bg-blue-600' : 'bg-slate-200'}`}
+          className={`w-1.5 h-1.5 rounded-full shrink-0 ${isNew ? 'bg-accent' : 'bg-border'}`}
         />
         <div className="min-w-0">
-          <p className={`text-[13.5px] truncate ${isNew ? 'font-medium text-slate-900' : 'text-slate-400'}`}>
+          <p className={`text-[13.5px] truncate ${isNew ? 'font-medium text-ink' : 'text-ink-muted'}`}>
             {prospect.companyName}
           </p>
-          <p className="text-[12px] text-slate-400 truncate mt-px">{prospect.location}</p>
+          <p className="text-[12px] text-ink-muted truncate mt-px">{prospect.location}</p>
         </div>
       </div>
 
       {/* Top signal col */}
-      <p className="text-[12.5px] text-slate-500 truncate">{topSignal}</p>
+      <p className="text-[12.5px] text-ink-secondary truncate">{topSignal}</p>
 
       {/* Score col */}
       <p className={`text-[13px] font-semibold text-right tabular-nums ${isNew ? scoreClass : 'text-slate-300'}`}>
@@ -133,7 +133,7 @@ function QueueRow({
       {/* Action col */}
       <div className="text-right">
         {statusLabel ? (
-          <span className="text-[12px] text-slate-400">{statusLabel}</span>
+          <span className="text-[12px] text-ink-muted">{statusLabel}</span>
         ) : (
           <button
             onClick={e => { e.stopPropagation(); onReview(); }}

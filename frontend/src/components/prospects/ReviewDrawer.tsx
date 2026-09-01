@@ -29,11 +29,11 @@ export default function ReviewDrawer({ prospect, onClose, onUpdateStatus, onSave
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
       <div className="absolute inset-0 drawer-overlay" onClick={onClose} />
 
-      <div className="relative w-full max-w-xl bg-white border-l border-slate-200 h-full overflow-y-auto flex flex-col z-10">
-        <div className="sticky top-0 bg-white border-b border-slate-200 px-5 py-3 flex items-center justify-between z-20">
+      <div className="relative w-full max-w-xl bg-panel-elevated border-l border-border h-full overflow-y-auto flex flex-col z-10">
+        <div className="sticky top-0 bg-panel-elevated border-b border-border px-5 py-3 flex items-center justify-between z-20">
           <button
             onClick={onClose}
-            className="flex items-center space-x-1.5 text-[13px] text-slate-500 hover:text-slate-900 transition-colors"
+            className="flex items-center space-x-1.5 text-[13px] text-ink-secondary hover:text-ink transition-colors"
           >
             <ArrowLeft className="w-4 h-4" strokeWidth={1.75} />
             <span>Back to Queue</span>
@@ -43,7 +43,7 @@ export default function ReviewDrawer({ prospect, onClose, onUpdateStatus, onSave
             {!alreadySent && !alreadyApproved && draft && (
               <button
                 onClick={() => onUpdateStatus(prospect.id, 'Approved')}
-                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-medium rounded-md transition-colors"
+                className="px-3.5 py-1.5 bg-accent hover:bg-accent-hover text-white text-[13px] font-medium rounded-md transition-colors"
               >
                 Approve &amp; Send
               </button>
@@ -51,7 +51,7 @@ export default function ReviewDrawer({ prospect, onClose, onUpdateStatus, onSave
             {alreadyApproved && !alreadySent && (
               <button
                 onClick={() => onUpdateStatus(prospect.id, 'Sent')}
-                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-medium rounded-md transition-colors"
+                className="px-3.5 py-1.5 bg-accent hover:bg-accent-hover text-white text-[13px] font-medium rounded-md transition-colors"
               >
                 Dispatch Email
               </button>
@@ -75,7 +75,7 @@ export default function ReviewDrawer({ prospect, onClose, onUpdateStatus, onSave
         <div className="px-5 pt-5 pb-4 border-b border-slate-100">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-[15px] font-semibold text-slate-900">{prospect.companyName}</h1>
+              <h1 className="text-[15px] font-semibold text-ink">{prospect.companyName}</h1>
               <p className="text-[13px] text-slate-500 mt-0.5">
                 {prospect.location} · {prospect.industry}
               </p>
@@ -121,7 +121,7 @@ export default function ReviewDrawer({ prospect, onClose, onUpdateStatus, onSave
             </p>
             {(prospect.buyingSignals || []).map((sig, i) => (
               <div key={i} className="mt-3">
-                <p className="text-[13px] font-medium text-slate-800">{sig.signal}</p>
+                <p className="text-[13px] font-medium text-ink-secondary">{sig.signal}</p>
                 <p className="source-quote mt-1">{sig.sourceExcerpt || sig.whyItMatters}</p>
                 {sig.sourceUrl && (
                   <a
@@ -145,7 +145,7 @@ export default function ReviewDrawer({ prospect, onClose, onUpdateStatus, onSave
               {(prospect.productFit || []).map((item, i) => (
                 <div key={i} className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-[13.5px] font-medium text-slate-800">{i + 1}. {item.productName}</p>
+                    <p className="text-[13.5px] font-medium text-ink-secondary">{i + 1}. {item.productName}</p>
                     <p className="text-[12px] text-slate-500 mt-0.5">{item.reasoning}</p>
                   </div>
                   <span className={`text-[12px] font-semibold shrink-0 mt-0.5 ${
@@ -174,7 +174,7 @@ export default function ReviewDrawer({ prospect, onClose, onUpdateStatus, onSave
                       setDraftBody(draft.body);
                       setEditingDraft(!editingDraft);
                     }}
-                    className="flex items-center space-x-1 text-[12px] text-slate-500 hover:text-slate-800 transition-colors"
+                    className="flex items-center space-x-1 text-[12px] text-slate-500 hover:text-ink-secondary transition-colors"
                   >
                     <Edit3 className="w-3.5 h-3.5" strokeWidth={1.75} />
                     <span>Edit Draft</span>
@@ -188,19 +188,19 @@ export default function ReviewDrawer({ prospect, onClose, onUpdateStatus, onSave
                   <input
                     value={draftSubject}
                     onChange={e => setDraftSubject(e.target.value)}
-                    className="w-full border border-slate-200 rounded-md px-3 py-2 text-[13px] text-slate-800"
+                    className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary"
                     placeholder="Subject line..."
                   />
                   <textarea
                     value={draftBody}
                     onChange={e => setDraftBody(e.target.value)}
                     rows={8}
-                    className="w-full border border-slate-200 rounded-md px-3 py-2 text-[13px] text-slate-800 resize-none"
+                    className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary resize-none"
                   />
                   <div className="flex justify-end space-x-2">
                     <button
                       onClick={() => setEditingDraft(false)}
-                      className="px-3 py-1.5 text-[13px] text-slate-600 hover:text-slate-900"
+                      className="px-3 py-1.5 text-[13px] text-ink-secondary hover:text-ink"
                     >
                       Cancel
                     </button>
@@ -242,7 +242,7 @@ function ScoreRow({ label, value, max }: { label: string; value: number; max: nu
   return (
     <div className="flex items-center justify-between">
       <span className="text-slate-500">{label}</span>
-      <span className="tabular-nums text-slate-800 font-medium">{value}/{max}</span>
+      <span className="tabular-nums text-ink-secondary font-medium">{value}/{max}</span>
     </div>
   );
 }

@@ -29,15 +29,15 @@ export default function SettingsView({
   return (
     <div className="max-w-3xl">
       <div className="mb-7">
-        <h1 className="text-[15px] font-semibold text-slate-900 tracking-tight">
+        <h1 className="text-[15px] font-semibold text-ink tracking-tight">
           {section === 'catalog' ? 'Catalog' : 'Settings'}
         </h1>
-        <p className="text-[13px] text-slate-500 mt-0.5">
+        <p className="text-[13px] text-ink-secondary mt-0.5">
           Configure your workspace, product catalog, and targeting rules.
         </p>
       </div>
 
-      <div className="flex space-x-6 border-b border-slate-200 mb-6">
+      <div className="flex space-x-6 border-b border-border mb-6">
         {([
           ['company', 'Company Profile'],
           ['catalog', 'Product Catalog'],
@@ -48,8 +48,8 @@ export default function SettingsView({
             onClick={() => setSection(id)}
             className={`pb-2.5 text-[13px] border-b-2 -mb-px transition-colors ${
               section === id
-                ? 'border-blue-600 text-blue-600 font-medium'
-                : 'border-transparent text-slate-500 hover:text-slate-900'
+                ? 'border-accent text-accent font-medium'
+                : 'border-transparent text-ink-secondary hover:text-ink'
             }`}
           >
             {label}
@@ -114,8 +114,8 @@ function CompanySection({ businessInfo, onSave }: { businessInfo: BusinessInfo; 
   return (
     <div className="space-y-5 max-w-lg">
       <div>
-        <label className="block text-[12px] font-medium text-slate-700 mb-1">
-          Business description <span className="text-slate-400 font-normal">(auto-fill from this)</span>
+        <label className="block text-[12px] font-medium text-ink-secondary mb-1">
+          Business description <span className="text-ink-muted font-normal">(auto-fill from this)</span>
         </label>
         <div className="flex gap-2 items-start">
           <textarea
@@ -123,12 +123,12 @@ function CompanySection({ businessInfo, onSave }: { businessInfo: BusinessInfo; 
             onChange={e => setDescription(e.target.value)}
             rows={3}
             placeholder="We manufacture industrial valves in Italy and sell to water utilities in Germany and the UK..."
-            className="flex-1 border border-slate-200 rounded-md px-3 py-2 text-[13px] text-slate-800 placeholder-slate-400 resize-none"
+            className="flex-1 border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted resize-none"
           />
           <button
             onClick={handleExtract}
             disabled={extracting || !description.trim()}
-            className="shrink-0 px-3 py-2 border border-slate-200 hover:border-slate-400 rounded-md text-[12px] text-slate-600 hover:text-slate-900 transition-colors disabled:opacity-40"
+            className="shrink-0 px-3 py-2 border border-border hover:border-ink-muted rounded-md text-[12px] text-ink-secondary hover:text-ink transition-colors disabled:opacity-40"
           >
             {extracting ? <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.75} /> : 'Auto-fill'}
           </button>
@@ -144,7 +144,7 @@ function CompanySection({ businessInfo, onSave }: { businessInfo: BusinessInfo; 
       <div className="pt-1">
         <button
           onClick={handleSave}
-          className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-medium rounded-md transition-colors"
+          className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-white text-[13px] font-medium rounded-md transition-colors"
         >
           {saved ? 'Saved' : 'Save Changes'}
         </button>
@@ -156,13 +156,13 @@ function CompanySection({ businessInfo, onSave }: { businessInfo: BusinessInfo; 
 function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder: string }) {
   return (
     <div>
-      <label className="block text-[12px] font-medium text-slate-700 mb-1">{label}</label>
+      <label className="block text-[12px] font-medium text-ink-secondary mb-1">{label}</label>
       <input
         type="text"
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full border border-slate-200 rounded-md px-3 py-2 text-[13px] text-slate-800 placeholder-slate-400"
+        className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted"
       />
     </div>
   );
@@ -248,16 +248,16 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
   return (
     <div className="space-y-5 max-w-xl">
       <div>
-        <label className="block text-[12px] font-medium text-slate-700 mb-2">Import source</label>
+        <label className="block text-[12px] font-medium text-ink-secondary mb-2">Import source</label>
         <div className="flex space-x-5">
           {(['url', 'file', 'manual'] as const).map(m => (
-            <label key={m} className="flex items-center space-x-1.5 cursor-pointer text-[13px] text-slate-700">
+            <label key={m} className="flex items-center space-x-1.5 cursor-pointer text-[13px] text-ink-secondary">
               <input
                 type="radio"
                 name="import-mode"
                 checked={inputMode === m}
                 onChange={() => setInputMode(m)}
-                className="accent-blue-600"
+                className="accent-accent"
               />
               <span>{m === 'url' ? 'Website URL' : m === 'file' ? 'Upload file' : 'Manual entry'}</span>
             </label>
@@ -272,12 +272,12 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
             value={url}
             onChange={e => setUrl(e.target.value)}
             placeholder="https://..."
-            className="flex-1 border border-slate-200 rounded-md px-3 py-2 text-[13px] text-slate-800 placeholder-slate-400"
+            className="flex-1 border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted"
           />
           <button
             onClick={handleScrape}
             disabled={scraping || !url.trim()}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-[13px] font-medium rounded-md transition-colors shrink-0"
+            className="px-4 py-2 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-[13px] font-medium rounded-md transition-colors shrink-0"
           >
             {scraping ? <Loader2 className="w-4 h-4 animate-spin inline" strokeWidth={1.75} /> : 'Extract'}
           </button>
@@ -301,14 +301,14 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
             type="button"
             onClick={() => fileRef.current?.click()}
             disabled={scraping}
-            className="w-full border border-dashed border-slate-300 rounded-md px-4 py-8 text-center hover:border-slate-400 transition-colors"
+            className="w-full border border-dashed border-border rounded-md px-4 py-8 text-center hover:border-ink-muted transition-colors"
           >
             {scraping ? (
-              <Loader2 className="w-4 h-4 animate-spin inline text-slate-400" strokeWidth={1.75} />
+              <Loader2 className="w-4 h-4 animate-spin inline text-ink-muted" strokeWidth={1.75} />
             ) : (
               <>
-                <p className="text-[13px] text-slate-500">Drop a PDF, CSV, or Excel file, or browse</p>
-                <p className="text-[12px] text-slate-400 mt-1">Supports .pdf, .csv, .xlsx</p>
+                <p className="text-[13px] text-ink-secondary">Drop a PDF, CSV, or Excel file, or browse</p>
+                <p className="text-[12px] text-ink-muted mt-1">Supports .pdf, .csv, .xlsx</p>
               </>
             )}
           </button>
@@ -316,23 +316,23 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
       )}
 
       {inputMode === 'manual' && (
-        <div className="space-y-3 bg-white border border-slate-200 rounded-lg p-4">
+        <div className="space-y-3 bg-panel border border-border rounded-lg p-4">
           <Field label="Product name" value={manual.name} onChange={v => setManual({ ...manual, name: v })} placeholder="Product name" />
           <Field label="Category" value={manual.category} onChange={v => setManual({ ...manual, category: v })} placeholder="Category" />
           <Field label="Price" value={manual.price} onChange={v => setManual({ ...manual, price: v })} placeholder="$1,850" />
           <div>
-            <label className="block text-[12px] font-medium text-slate-700 mb-1">Description</label>
+            <label className="block text-[12px] font-medium text-ink-secondary mb-1">Description</label>
             <textarea
               value={manual.description}
               onChange={e => setManual({ ...manual, description: e.target.value })}
               rows={2}
-              className="w-full border border-slate-200 rounded-md px-3 py-2 text-[13px] text-slate-800"
+              className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary"
             />
           </div>
           <button
             onClick={handleManualAdd}
             disabled={!manual.name.trim()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-[13px] font-medium rounded-md"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-[13px] font-medium rounded-md"
           >
             <Plus className="w-3.5 h-3.5" strokeWidth={2} />
             Add product
@@ -345,12 +345,12 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
       {products.length > 0 && (
         <div className="pt-2">
           <p className="section-label mb-3">{products.length} Products in Catalog</p>
-          <div className="bg-white border border-slate-200 rounded-lg divide-y divide-slate-100">
+          <div className="bg-panel border border-border rounded-lg divide-y divide-border-subtle">
             {products.map(product => (
               <div key={product.id} className="px-4 py-3 flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <p className="text-[13.5px] font-medium text-slate-800 truncate">{product.name}</p>
-                  <p className="text-[12px] text-slate-400 mt-0.5">
+                  <p className="text-[13.5px] font-medium text-ink-secondary truncate">{product.name}</p>
+                  <p className="text-[12px] text-ink-muted mt-0.5">
                     {product.category}
                     {product.price ? ` · ${product.price}` : ''}
                   </p>
@@ -358,13 +358,13 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
                 <div className="flex items-center gap-3 shrink-0">
                   <button
                     onClick={() => toggleVerified(product.id)}
-                    className={`text-[12px] ${product.verifiedByUser ? 'text-green-700' : 'text-slate-400 hover:text-slate-700'}`}
+                    className={`text-[12px] ${product.verifiedByUser ? 'text-green-700' : 'text-ink-muted hover:text-ink-secondary'}`}
                   >
                     {product.verifiedByUser ? 'Verified' : 'Verify'}
                   </button>
                   <button
                     onClick={() => removeProduct(product.id)}
-                    className="text-slate-300 hover:text-slate-600"
+                    className="text-border hover:text-ink-secondary"
                     aria-label={`Remove ${product.name}`}
                   >
                     <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
@@ -407,11 +407,11 @@ function ICPSection({ icp, onSave }: { icp: IdealCustomerProfile; onSave: (i: Id
         <Field label="Buyer types" value={buyerTypes} onChange={setBuyerTypes} placeholder="Hospital groups, water utilities, OEMs" />
         <Field label="Target countries" value={countries} onChange={setCountries} placeholder="Germany, United Kingdom" />
         <div>
-          <label className="block text-[12px] font-medium text-slate-700 mb-1">Company size</label>
+          <label className="block text-[12px] font-medium text-ink-secondary mb-1">Company size</label>
           <select
             value={companySize}
             onChange={e => setCompanySize(e.target.value as IdealCustomerProfile['companySize'])}
-            className="w-full border border-slate-200 rounded-md px-3 py-2 text-[13px] text-slate-800 bg-white"
+            className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary bg-panel"
           >
             {['Any', 'Small', 'Medium', 'Enterprise'].map(size => (
               <option key={size} value={size}>{size}</option>
@@ -422,7 +422,7 @@ function ICPSection({ icp, onSave }: { icp: IdealCustomerProfile; onSave: (i: Id
         <div className="pt-2">
           <button
             onClick={handleSave}
-            className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-medium rounded-md transition-colors"
+            className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-white text-[13px] font-medium rounded-md transition-colors"
           >
             {saved ? 'Saved' : 'Save Changes'}
           </button>
@@ -431,14 +431,14 @@ function ICPSection({ icp, onSave }: { icp: IdealCustomerProfile; onSave: (i: Id
 
       <div>
         <p className="section-label mb-3">Buying Signal Rules</p>
-        <div className="space-y-4 divide-y divide-slate-100">
+        <div className="space-y-4 divide-y divide-border-subtle">
           {signals.map((sig, i) => (
             <div key={sig.id || i} className="pt-3 first:pt-0">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-[13.5px] font-medium text-slate-800">{sig.name}</p>
-                <span className="text-[12px] text-slate-400">+{sig.weight} pts</span>
+                <p className="text-[13.5px] font-medium text-ink-secondary">{sig.name}</p>
+                <span className="text-[12px] text-ink-muted">+{sig.weight} pts</span>
               </div>
-              <p className="text-[12px] text-slate-500 mt-0.5 leading-relaxed">{sig.description}</p>
+              <p className="text-[12px] text-ink-secondary mt-0.5 leading-relaxed">{sig.description}</p>
             </div>
           ))}
         </div>

@@ -184,7 +184,7 @@ export default function App() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center text-slate-500 text-sm">
+      <div className="min-h-screen bg-canvas flex items-center justify-center text-ink-muted text-sm">
         Loading...
       </div>
     );
@@ -195,7 +195,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex">
+    <div className="min-h-screen bg-canvas text-ink flex">
       <Sidebar
         activeTab={activeTab}
         onTabChange={tab => setActiveTab(tab as TabId)}

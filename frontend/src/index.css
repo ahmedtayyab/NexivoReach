@@ -1,20 +1,35 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap');
 @import "tailwindcss";
 
+@theme {
+  --color-canvas: #E8E6E1;
+  --color-surface: #DFDCD6;
+  --color-panel: #F3F2EE;
+  --color-panel-elevated: #FAF9F7;
+  --color-muted: #EAE8E3;
+  --color-border: #C9C5BE;
+  --color-border-subtle: #DAD7D1;
+  --color-ink: #1C1B19;
+  --color-ink-secondary: #5A5854;
+  --color-ink-muted: #8A8680;
+  --color-accent: #3D5A80;
+  --color-accent-hover: #314A66;
+}
+
 @layer base {
   :root {
-    --bg-app: #F8FAFC;
-    --bg-white: #FFFFFF;
-    --border: #E2E8F0;
-    --border-subtle: #F1F5F9;
-    --text-primary: #0F172A;
-    --text-secondary: #475569;
-    --text-muted: #94A3B8;
-    --accent: #2563EB;
-    --accent-hover: #1D4ED8;
-    --green: #16A34A;
-    --amber: #D97706;
-    --row-hover: #F8FAFC;
+    --bg-app: #E8E6E1;
+    --bg-panel: #F3F2EE;
+    --border: #C9C5BE;
+    --border-subtle: #DAD7D1;
+    --text-primary: #1C1B19;
+    --text-secondary: #5A5854;
+    --text-muted: #8A8680;
+    --accent: #3D5A80;
+    --accent-hover: #314A66;
+    --green: #2D6A4F;
+    --amber: #9A6700;
+    --row-hover: #EAE8E3;
   }
 
   * { box-sizing: border-box; }
@@ -32,45 +47,38 @@
   }
 }
 
-/* ─── Thin scrollbar ─── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+::-webkit-scrollbar-thumb { background: #B8B4AC; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #8A8680; }
 
-/* ─── Queue rows ─── */
 .queue-row { cursor: pointer; transition: background-color 120ms ease; }
-.queue-row:hover { background-color: #F8FAFC; }
+.queue-row:hover { background-color: var(--row-hover); }
 
-/* ─── Drawer overlay ─── */
-.drawer-overlay { background: rgba(15, 23, 42, 0.25); backdrop-filter: blur(2px); }
+.drawer-overlay { background: rgba(28, 27, 25, 0.35); backdrop-filter: blur(2px); }
 
-/* ─── Focus ring ─── */
 input:focus, textarea:focus, select:focus {
-  outline: 2px solid #2563EB;
+  outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
 
-/* ─── Score color utility ─── */
-.score-high  { color: #16A34A; }
-.score-mid   { color: #2563EB; }
-.score-low   { color: #D97706; }
+.score-high  { color: #2D6A4F; }
+.score-mid   { color: #3D5A80; }
+.score-low   { color: #9A6700; }
 
-/* ─── Blockquote excerpt ─── */
 .source-quote {
-  border-left: 2px solid #CBD5E1;
+  border-left: 2px solid #C9C5BE;
   padding-left: 10px;
-  color: #64748B;
+  color: #6B6862;
   font-size: 12px;
   font-style: italic;
   line-height: 1.6;
 }
 
-/* ─── Section label ─── */
 .section-label {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #94A3B8;
+  color: #8A8680;
 }
