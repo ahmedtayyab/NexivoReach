@@ -68,9 +68,9 @@ Goal Specification (ICP & Catalog)
 | **Ideal Customer Profile (ICP)** | ✅ Completed | Target buyer personas, geographic markets, deal sizes & custom buying signal rules |
 | **Autonomous Prospecting Agent** | ✅ Completed | Multi-step agent execution engine (`Observe -> Decide -> Tool -> Inspect -> Complete`) |
 | **Web Research Engine** | ✅ Completed | Search & public website scraper with source links and excerpt attributions |
-| **Transparent Prospect Scoring** | 🚧 In progress | Configurable 100-point scoring formula with evidence explanations |
-| **Prospect Research Detail View** | ⬜ Planned | 94% fit banner, buying signals, product fit matrix, agent activity timeline |
-| **Personalized Outreach Engine** | ⬜ Planned | AI personalized messaging based on verified company evidence |
+| **Transparent Prospect Scoring** | ✅ Completed | Transparent 100-point fit formula (Industry, Location, Overlap, Signals, Scale) with evidence |
+| **Prospect Research Detail View** | ✅ Completed | 94% fit match hero, score breakdown table, buying signals, product matrix, agent timeline |
+| **Personalized Outreach Engine** | 🚧 In progress | AI personalized messaging based on verified company evidence |
 | **Human Approval System** | ⬜ Planned | Explicit permission barrier for message dispatch |
 | **Agent Operational Log** | ⬜ Planned | Full tool execution trace history and decision inspection |
 | **Sales Command Dashboard** | ⬜ Planned | Pipeline board, priority leads, real-time agent metrics |
