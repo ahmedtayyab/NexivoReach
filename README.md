@@ -62,18 +62,18 @@ Goal Specification (ICP & Catalog)
 | Feature | Status | Description |
 | :--- | :---: | :--- |
 | **Initial Setup & Architecture** | ✅ Completed | GitHub repo, modular FastAPI backend & Vite frontend scaffold |
-| **Application Shell & Design System** | ✅ Completed | Professional SaaS design system (Linear/Attio inspired, zero AI tropes), responsive navigation tabs, and dark mode palette |
+| **Application Shell & Design System** | ✅ Completed | Enterprise B2B SaaS layout (Linear/Attio inspired, neutral dark slate, zero AI tropes) |
 | **Business Onboarding** | ✅ Completed | Natural language business summary & AI profile extraction API |
 | **Product Catalog Management** | ✅ Completed | Multi-source product import (URL scraper, PDF, CSV, Excel, Manual) & AI verification tagging |
 | **Ideal Customer Profile (ICP)** | ✅ Completed | Target buyer personas, geographic markets, deal sizes & custom buying signal rules |
 | **Autonomous Prospecting Agent** | ✅ Completed | Multi-step agent execution engine (`Observe -> Decide -> Tool -> Inspect -> Complete`) |
 | **Web Research Engine** | ✅ Completed | Search & public website scraper with source links and excerpt attributions |
 | **Transparent Prospect Scoring** | ✅ Completed | Transparent 100-point fit formula (Industry, Location, Overlap, Signals, Scale) with evidence |
-| **Prospect Research Detail View** | ✅ Completed | 94% fit match hero, score breakdown table, buying signals, product matrix, agent timeline |
+| **Prospect Research Detail Drawer** | ✅ Completed | Slide-over drawer with executive summary, evidence quotes, product fit matrix, and draft review |
 | **Personalized Outreach Engine** | ✅ Completed | AI personalized messaging based on verified company evidence & expansion news |
 | **Human Approval System** | ✅ Completed | Explicit permission barrier for message dispatch (Default: Sending requires human approval) |
 | **Agent Operational Log** | ✅ Completed | Full tool execution trace history, step decisions, and source inspection |
-| **Sales Command Dashboard** | ✅ Completed | Pipeline board, priority leads, real-time agent metrics & Apex Fitness demo mode |
+| **Sales Command Dashboard** | ✅ Completed | Command Center, priority approvals queue, recent discoveries & Apex Fitness demo mode |
 
 ---
 

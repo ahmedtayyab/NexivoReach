@@ -4,7 +4,6 @@ import {
   Send, 
   ShieldCheck, 
   CheckCircle2, 
-  Sparkles, 
   ExternalLink
 } from 'lucide-react';
 
@@ -15,7 +14,7 @@ interface Props {
 }
 
 export default function OutreachView({ prospects, onUpdateStatus, onSelectProspect }: Props) {
-  const [filterStatus, setFilterStatus] = useState<string>('All');
+  const [filterStatus, setFilterStatus] = useState<string>('Draft');
 
   const prospectsWithOutreach = prospects.filter(p => p.outreachDraft !== undefined);
   const filteredProspects = prospectsWithOutreach.filter(p => {
@@ -24,32 +23,36 @@ export default function OutreachView({ prospects, onUpdateStatus, onSelectProspe
   });
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-2">
-        <div className="flex items-center space-x-2 text-amber-400 text-xs font-semibold uppercase tracking-wider">
-          <Send className="w-4 h-4" />
-          <span>Step 6: Personalized Outreach & Human Approval Center</span>
+    <div className="space-y-6 font-sans text-slate-100">
+      {/* Header */}
+      <div className="bg-[#1e293b] border border-slate-800 rounded-lg p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-lg font-bold text-white tracking-tight">Outreach Approval Queue</h1>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Review personalized outreach drafts generated from verified prospect news and buying signals.
+          </p>
         </div>
-        <h1 className="text-xl font-bold text-white">Review & Approve Agent Outreach Drafts</h1>
-        <p className="text-xs text-slate-300">
-          NexivoReach generates personalized outreach messages tied directly to company research and buying signals. Messages require explicit human approval before sending.
-        </p>
       </div>
 
-      {/* Filter Tabs */}
-      <div className="flex items-center justify-between bg-[#121929] border border-slate-800 rounded-xl p-4">
+      {/* Filter Tabs Toolbar */}
+      <div className="flex items-center justify-between bg-[#1e293b] border border-slate-800 rounded-lg p-3">
         <div className="flex space-x-2">
-          {['All', 'Draft', 'Approved', 'Sent', 'Replied'].map(status => (
+          {[
+            { id: 'Draft', label: 'Pending Approval' },
+            { id: 'Approved', label: 'Approved' },
+            { id: 'Sent', label: 'Sent' },
+            { id: 'All', label: 'All Messages' },
+          ].map(tab => (
             <button
-              key={status}
-              onClick={() => setFilterStatus(status)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                filterStatus === status 
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' 
+              key={tab.id}
+              onClick={() => setFilterStatus(tab.id)}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                filterStatus === tab.id 
+                  ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' 
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {status === 'Draft' ? 'Pending Approval' : status}
+              {tab.label}
             </button>
           ))}
         </div>
@@ -59,56 +62,55 @@ export default function OutreachView({ prospects, onUpdateStatus, onSelectProspe
         </span>
       </div>
 
-      {/* Draft List */}
+      {/* Queue Items List */}
       <div className="space-y-4">
         {filteredProspects.map(prospect => {
           const draft = prospect.outreachDraft!;
           return (
             <div 
               key={prospect.id} 
-              className="bg-[#121929] border border-slate-800 hover:border-slate-700 rounded-xl p-5 space-y-4 transition-all"
+              className="bg-[#1e293b] border border-slate-800 hover:border-slate-700 rounded-lg p-5 space-y-4 transition-all"
             >
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
                 <div>
                   <div className="flex items-center space-x-2">
-                    <h3 className="font-bold text-white text-sm">{prospect.companyName}</h3>
-                    <span className="text-xs text-emerald-400 font-bold">• {prospect.fitScore}% Fit</span>
+                    <button
+                      onClick={() => onSelectProspect(prospect.id)}
+                      className="font-bold text-white hover:text-blue-400 text-sm"
+                    >
+                      {prospect.companyName}
+                    </button>
+                    <span className="text-xs text-emerald-400 font-bold">• {prospect.fitScore}% Fit Match</span>
                   </div>
-                  <p className="text-xs text-slate-400">{prospect.location} — {prospect.industry}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{prospect.location} — {prospect.industry}</p>
                 </div>
 
-                <div className="flex items-center space-x-2">
-                  <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${
-                    draft.status === 'Approved' 
-                      ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' 
-                      : draft.status === 'Sent'
-                      ? 'bg-blue-950 text-blue-400 border border-blue-800'
-                      : 'bg-amber-950 text-amber-300 border border-amber-800'
-                  }`}>
-                    {draft.status === 'Draft' ? '⚠️ Human Approval Required' : draft.status}
-                  </span>
-                </div>
+                <span className={`text-[10px] font-semibold px-2.5 py-1 rounded ${
+                  draft.status === 'Approved' 
+                    ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' 
+                    : draft.status === 'Sent'
+                    ? 'bg-blue-950 text-blue-400 border border-blue-800'
+                    : 'bg-amber-950 text-amber-300 border border-amber-800'
+                }`}>
+                  {draft.status === 'Draft' ? 'Requires Approval' : draft.status}
+                </span>
               </div>
 
-              {/* Subject & Body */}
-              <div className="bg-[#0b101c] border border-slate-800 rounded-lg p-4 space-y-3 text-xs">
-                <div className="text-slate-300 font-semibold flex items-center space-x-2">
-                  <span className="text-slate-500 font-mono">Subject:</span>
+              {/* Message Preview */}
+              <div className="bg-[#090d16] border border-slate-800 rounded-lg p-4 space-y-2 text-xs">
+                <div className="text-slate-300 font-semibold">
+                  <span className="text-slate-500 font-mono text-[11px]">Subject: </span>
                   <span>{draft.subject}</span>
                 </div>
-                <div className="text-slate-200 whitespace-pre-line leading-relaxed border-t border-slate-800/80 pt-2.5 font-sans">
+                <p className="text-slate-300 whitespace-pre-line leading-relaxed border-t border-slate-800 pt-2 font-sans">
                   {draft.body}
-                </div>
+                </p>
               </div>
 
-              {/* Personalization Reason */}
-              <div className="bg-amber-950/20 border border-amber-900/30 rounded-lg p-3 text-xs text-amber-200 flex items-start space-x-2">
-                <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-                <div>
-                  <strong className="font-semibold block text-amber-300">Why this message was personalized:</strong>
-                  <span>{draft.personalizedReason}</span>
-                </div>
-              </div>
+              {/* Personalization Note */}
+              <p className="text-[11px] text-slate-400 italic">
+                <strong>Personalization note: </strong>{draft.personalizedReason}
+              </p>
 
               {/* Actions */}
               <div className="flex items-center justify-between pt-1">
@@ -116,15 +118,15 @@ export default function OutreachView({ prospects, onUpdateStatus, onSelectProspe
                   onClick={() => onSelectProspect(prospect.id)}
                   className="text-xs text-blue-400 hover:text-blue-300 flex items-center space-x-1"
                 >
-                  <span>Inspect Prospect Evidence</span>
-                  <ExternalLink className="w-3 h-3" />
+                  <span>Inspect Prospect Evidence & Signals</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
                 </button>
 
                 <div className="flex items-center space-x-2">
                   {draft.status === 'Draft' && (
                     <button
                       onClick={() => onUpdateStatus(prospect.id, 'Approved')}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg flex items-center space-x-1.5 shadow-md shadow-emerald-600/20"
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-md flex items-center space-x-1.5 shadow-sm transition-all"
                     >
                       <ShieldCheck className="w-4 h-4" />
                       <span>Approve Outreach Draft</span>
@@ -134,7 +136,7 @@ export default function OutreachView({ prospects, onUpdateStatus, onSelectProspe
                   {draft.status === 'Approved' && (
                     <button
                       onClick={() => onUpdateStatus(prospect.id, 'Sent')}
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs rounded-lg flex items-center space-x-1.5 shadow-md shadow-blue-600/20"
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs rounded-md flex items-center space-x-1.5 shadow-sm transition-all"
                     >
                       <Send className="w-4 h-4" />
                       <span>Dispatch Outreach Email</span>
@@ -144,7 +146,7 @@ export default function OutreachView({ prospects, onUpdateStatus, onSelectProspe
                   {draft.status === 'Sent' && (
                     <span className="text-xs text-emerald-400 font-medium flex items-center space-x-1">
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>Dispatched (Tracking Follow-ups)</span>
+                      <span>Dispatched (Tracking Replies)</span>
                     </span>
                   )}
                 </div>

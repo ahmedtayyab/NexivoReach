@@ -2,25 +2,29 @@
 
 @layer base {
   :root {
-    --bg-primary: #090d16;
-    --bg-secondary: #0f172a;
-    --bg-card: #161e31;
-    --bg-card-hover: #1e293b;
-    --border-color: #26334d;
+    --bg-app: #0f172a;
+    --bg-sidebar: #090d16;
+    --bg-card: #1e293b;
+    --bg-card-hover: #26334d;
+    --bg-subtle: #121b2d;
+    --border-color: #334155;
+    --border-subtle: #1e293b;
     --text-primary: #f8fafc;
     --text-secondary: #94a3b8;
     --text-muted: #64748b;
+    
+    /* Semantic accents - restrained, non-glowing */
     --accent-blue: #3b82f6;
-    --accent-indigo: #6366f1;
-    --accent-emerald: #10b981;
+    --accent-blue-hover: #2563eb;
+    --accent-green: #10b981;
     --accent-amber: #f59e0b;
-    --accent-rose: #f43f5e;
+    --accent-rose: #ef4444;
   }
 
   body {
-    background-color: var(--bg-primary);
+    background-color: var(--bg-app);
     color: var(--text-primary);
-    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
     margin: 0;
     padding: 0;
@@ -28,24 +32,24 @@
   }
 }
 
-/* Custom Scrollbar */
+/* Custom Scrollbar - Minimal & Thin */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
-  background: #090d16;
+  background: var(--bg-sidebar);
 }
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 3px;
+  background: #334155;
+  border-radius: 2px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #475569;
 }
 
-.glass-panel {
-  background: rgba(22, 30, 49, 0.85);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+/* Clean Slide-Over Drawer Transitions */
+.drawer-backdrop {
+  background-color: rgba(9, 13, 22, 0.7);
+  backdrop-filter: blur(4px);
 }
