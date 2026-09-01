@@ -12,7 +12,8 @@ import {
   type AppRoute,
   type SettingsSection,
   isSettingsRoute,
-  parseRoute,
+  normalizeRoute,
+  resolveRouteFromLocation,
   routeFromSidebarTab,
   sidebarTabForRoute,
 } from './lib/navigation';
@@ -46,12 +47,13 @@ export default function App() {
   ).length;
 
   const navigate = (route: AppRoute, replace = false) => {
-    setActiveRoute(route);
-    const url = `#${route}`;
+    const next = normalizeRoute(route);
+    setActiveRoute(next);
+    const url = `#${next}`;
     if (replace) {
-      window.history.replaceState({ route }, '', url);
+      window.history.replaceState({ route: next }, '', url);
     } else {
-      window.history.pushState({ route }, '', url);
+      window.history.pushState({ route: next }, '', url);
     }
   };
 
@@ -104,7 +106,7 @@ export default function App() {
           await loadWorkspace();
         }
         if (data.user) {
-          const initialRoute = parseRoute(window.location.hash);
+          const initialRoute = resolveRouteFromLocation();
           setActiveRoute(initialRoute);
           window.history.replaceState({ route: initialRoute }, '', `#${initialRoute}`);
         }
@@ -118,13 +120,28 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const onPopState = () => {
-      const route = (window.history.state?.route as AppRoute | undefined) ?? parseRoute(window.location.hash);
-      setActiveRoute(route);
+    const syncRoute = () => {
+      setActiveRoute(resolveRouteFromLocation());
     };
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
+    window.addEventListener('popstate', syncRoute);
+    window.addEventListener('hashchange', syncRoute);
+    return () => {
+      window.removeEventListener('popstate', syncRoute);
+      window.removeEventListener('hashchange', syncRoute);
+    };
   }, []);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    const valid =
+      activeRoute === 'queue' ||
+      activeRoute === 'discover' ||
+      activeRoute === 'activity' ||
+      isSettingsRoute(activeRoute);
+    if (!valid) {
+      navigate('queue', true);
+    }
+  }, [activeRoute, authLoading, user]);
 
   const handleSidebarChange = (tab: string) => {
     navigate(routeFromSidebarTab(tab));

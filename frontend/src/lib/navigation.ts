@@ -13,9 +13,41 @@ export const APP_ROUTES: AppRoute[] = [
 
 export const SETTINGS_SECTIONS: SettingsSection[] = ['company', 'catalog', 'icp'];
 
+const ROUTE_ALIASES: Record<string, AppRoute> = {
+  settings: 'company',
+  setting: 'company',
+  profile: 'company',
+  'company-profile': 'company',
+  catalogue: 'catalog',
+  'product-catalog': 'catalog',
+  signals: 'icp',
+  'icp-signals': 'icp',
+};
+
+export function normalizeRoute(raw: string | undefined | null): AppRoute {
+  if (!raw) return 'queue';
+  const key = raw.replace(/^#/, '').trim().toLowerCase();
+  if (!key) return 'queue';
+  if (ROUTE_ALIASES[key]) return ROUTE_ALIASES[key];
+  if (APP_ROUTES.includes(key as AppRoute)) return key as AppRoute;
+  return 'queue';
+}
+
 export function parseRoute(hash: string): AppRoute {
-  const route = hash.replace(/^#/, '').trim() as AppRoute;
-  return APP_ROUTES.includes(route) ? route : 'queue';
+  return normalizeRoute(hash);
+}
+
+export function resolveRouteFromLocation(state: unknown = window.history.state): AppRoute {
+  const historyState = (state ?? null) as { route?: string; tab?: string } | null;
+  if (historyState?.route) {
+    const route = normalizeRoute(historyState.route);
+    if (route !== 'queue' || historyState.route.toLowerCase() === 'queue') return route;
+  }
+  if (historyState?.tab) {
+    const route = normalizeRoute(historyState.tab);
+    if (route !== 'queue' || historyState.tab.toLowerCase() === 'queue') return route;
+  }
+  return parseRoute(window.location.hash);
 }
 
 export function isSettingsRoute(route: AppRoute): route is SettingsSection {
@@ -29,7 +61,5 @@ export function sidebarTabForRoute(route: AppRoute): string {
 }
 
 export function routeFromSidebarTab(tab: string): AppRoute {
-  if (tab === 'settings') return 'company';
-  if (tab === 'catalog') return 'catalog';
-  return tab as AppRoute;
+  return normalizeRoute(tab);
 }
