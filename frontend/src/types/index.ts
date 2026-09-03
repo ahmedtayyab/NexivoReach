@@ -52,6 +52,16 @@ export interface ProductFitMatch {
   reasoning: string;
 }
 
+export interface ProspectEvidence {
+  claim: 'icp' | 'offer' | 'motion' | 'intent' | string;
+  statement: string;
+  quote?: string;
+  url?: string;
+  sourceType?: string;
+  sourceQuality?: string;
+  confidence?: number;
+}
+
 export interface Prospect {
   id: string;
   companyName: string;
@@ -66,8 +76,29 @@ export interface Prospect {
     productMatch: number; // max 20
     buyingSignals: number; // max 20
     companyFit: number; // max 15
+    icpFit?: string;
+    offerFit?: string;
+    motionFit?: string;
+    fitSummary?: string;
+    intent?: string;
+    confidence?: number;
+    priority?: string;
+    entityType?: string;
+    discoveryPool?: string;
+    whyNow?: string;
+    evidence?: ProspectEvidence[];
   };
   whyThisProspect: string;
+  whyNow?: string;
+  icpFit?: string;
+  offerFit?: string;
+  motionFit?: string;
+  intent?: string;
+  confidence?: number;
+  priority?: string;
+  entityType?: string;
+  discoveryPool?: string;
+  evidence?: ProspectEvidence[];
   buyingSignals: BuyingSignalDetected[];
   productFit: ProductFitMatch[];
   recommendedApproach: string;

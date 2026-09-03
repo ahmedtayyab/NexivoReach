@@ -1,15 +1,22 @@
-"""Lead-hunting agent: many companies from web + maps, catalog-aware, no mock data."""
+"""Lead-hunting agent: planned discovery → classify → cheap fetch → Fit vs Intent."""
 
 from __future__ import annotations
 
-import re
+import asyncio
 import time
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 from urllib.parse import urlparse
 
+from app.agents.search_planner import (
+    infer_seller_profile,
+    plan_wave1,
+    plan_wave2,
+    profile_to_dict,
+)
+from app.agents.serp_classifier import classify_serp_row, summarize_classifications
+from app.agents.qualify import qualify_account
 from app.tools.web_search import WebSearchTool
-from app.tools.score_calculator import ScoreCalculatorTool
 
 
 LEAD_STAGES = (
@@ -23,6 +30,10 @@ LEAD_STAGES = (
     "Won",
 )
 
+FETCH_CAP = 12
+SAVE_CAP = 15
+WAVE1_RESULT_CAP = 40
+
 
 def _domain(url: str) -> str:
     host = (urlparse(url or "").hostname or "").lower()
@@ -31,73 +42,17 @@ def _domain(url: str) -> str:
     return host
 
 
-def build_hunt_queries(
-    user_prompt: str,
-    products: List[Dict[str, Any]],
-    icp: Dict[str, Any],
-    business: Dict[str, Any],
-) -> tuple[list[str], str]:
-    categories = [
-        *(business.get("primaryCategories") or business.get("primary_categories") or []),
-        *[p.get("category") for p in products if p.get("category") and p.get("category") != "Uncategorized"],
-    ]
-    # unique, keep order
-    seen = set()
-    cats: List[str] = []
-    for c in categories:
-        key = (c or "").strip()
-        if not key or key.lower() in seen:
-            continue
-        seen.add(key.lower())
-        cats.append(key)
-    cats = cats[:4] or ["wholesale"]
-
-    buyers = list(icp.get("targetBuyerTypes") or icp.get("target_buyer_types") or [])[:4]
-    if not buyers:
-        buyers = ["distributors", "retailers", "wholesalers", "importers"]
-
-    countries = list(icp.get("targetCountries") or icp.get("target_countries") or [])[:4]
-    markets = list(business.get("targetMarkets") or business.get("target_markets") or [])[:4]
-    places = []
-    for p in countries + markets:
-        if p and p not in places:
-            places.append(p)
-    if not places:
-        places = [""]
-
-    queries: List[str] = []
-    if user_prompt.strip():
-        queries.append(user_prompt.strip())
-
-    for place in places[:3]:
-        loc = place.strip()
-        for buyer in buyers[:2]:
-            for cat in cats[:2]:
-                q = f"{buyer} {cat} {loc}".strip()
-                if q and q not in queries:
-                    queries.append(q)
-        queries.append(f"{cats[0]} distributors {loc}".strip())
-        queries.append(f"{cats[0]} retailers {loc}".strip())
-
-    # de-dupe / trim
-    out: List[str] = []
-    seen_q = set()
-    for q in queries:
-        key = re.sub(r"\s+", " ", q.lower()).strip()
-        if not key or key in seen_q:
-            continue
-        seen_q.add(key)
-        out.append(q)
-        if len(out) >= 8:
-            break
-    primary_place = next((p for p in places if p), "")
-    return out, primary_place
+def _legal_name_key(name: str) -> str:
+    raw = (name or "").lower()
+    raw = raw.replace(",", " ")
+    for suffix in (" incorporated", " inc.", " inc", " llc", " ltd", " limited", " co.", " corp", " gmbh"):
+        raw = raw.replace(suffix, " ")
+    return " ".join(raw.split())
 
 
 class ProspectingAgent:
     def __init__(self):
         self.web_search = WebSearchTool()
-        self.score_calc = ScoreCalculatorTool()
 
     async def execute_discovery_goal(
         self,
@@ -106,39 +61,98 @@ class ProspectingAgent:
         icp: Dict[str, Any],
         business: Optional[Dict[str, Any]] = None,
         exclude_websites: Optional[List[str]] = None,
-        limit: int = 35,
+        limit: int = 15,
     ) -> Dict[str, Any]:
         start_time = time.time()
         decisions_log: List[Dict[str, Any]] = []
         business = business or {}
-        queries, location = build_hunt_queries(user_prompt, products, icp, business)
-
+        profile = infer_seller_profile(products, icp, business)
+        wave1 = plan_wave1(profile, user_prompt)
+        place = profile.places[0] if profile.places else ""
         exclude_domains = {_domain(u) for u in (exclude_websites or []) if _domain(u)}
 
         decisions_log.append({
             "step": 1,
-            "observation": f"Hunt for buyers of {len(products)} catalog items in {location or 'target markets'}.",
-            "decision": f"Run {len(queries)} web + Maps searches (skip {len(exclude_domains)} already-known domains).",
-            "toolCalled": "QueryBuilder",
-            "toolResultSnippet": "; ".join(queries[:4]),
+            "observation": (
+                f"Seller motion={profile.sales_motion}, offer={profile.offer_class}, "
+                f"geo={profile.geo_mode}, maps={'on' if profile.use_maps else 'off'}."
+            ),
+            "decision": (
+                f"Wave 1: {len(wave1)} query families "
+                f"({', '.join(sorted({q.family for q in wave1}))}). "
+                "Not running synonym clones."
+            ),
+            "toolCalled": "SearchPlanner",
+            "toolResultSnippet": "; ".join(q.query for q in wave1[:4]),
         })
 
         leads = await self.web_search.hunt_leads(
-            queries,
-            target_location=location,
+            wave1,
+            target_location=place,
             exclude_domains=exclude_domains,
-            limit=limit,
+            limit=WAVE1_RESULT_CAP,
+            use_maps=profile.use_maps,
         )
-
+        classified = [
+            classify_serp_row(row, hunting_buyers=profile.hunting_buyers, target_places=profile.places)
+            for row in leads
+        ]
+        stats = summarize_classifications(classified)
         decisions_log.append({
             "step": 2,
-            "observation": f"Found {len(leads)} unique companies (web + Google Maps).",
-            "decision": "Score each lead against catalog, buyers, and target countries. Skip mock/gym templates.",
-            "toolCalled": "WebSearchTool",
-            "toolResultSnippet": ", ".join(c.get("company_name", "") for c in leads[:8]),
+            "observation": (
+                f"Wave 1 returned {len(leads)} unique URLs. "
+                f"Junk {stats['junk_ratio']:.0%}, manufacturers {stats['manufacturer_ratio']:.0%}, "
+                f"relevant {stats['relevant_count']}."
+            ),
+            "decision": "Inspect SERP patterns before more searches.",
+            "toolCalled": "SerpClassifier",
+            "toolResultSnippet": f"rejected={stats['rejected']} seeds={len(stats['competitor_names'])}",
         })
 
-        if not leads:
+        wave2 = plan_wave2(profile, stats, stats.get("learned_terms"))
+        if wave2 and stats["relevant_count"] < 8:
+            more = await self.web_search.hunt_leads(
+                wave2,
+                target_location=place,
+                exclude_domains=exclude_domains | {_domain(r.get("website")) for r in classified if r.get("website")},
+                limit=25,
+                use_maps=False,
+            )
+            extra = [
+                classify_serp_row(row, hunting_buyers=profile.hunting_buyers, target_places=profile.places)
+                for row in more
+            ]
+            classified.extend(extra)
+            decisions_log.append({
+                "step": 3,
+                "observation": f"Wave 2 ran {len(wave2)} follow-up searches → {len(more)} new URLs.",
+                "decision": "Use learned terms / manufacturer exclusions / competitor-customer queries.",
+                "toolCalled": "AdaptiveSearch",
+                "toolResultSnippet": "; ".join(q.query for q in wave2[:3]),
+            })
+        else:
+            decisions_log.append({
+                "step": 3,
+                "observation": "No second wave (enough relevant hits, or nothing useful to refine).",
+                "decision": "Proceed to cheap homepage inspection on survivors only.",
+                "toolCalled": "AdaptiveSearch",
+            })
+
+        candidates = []
+        seen_names = set()
+        for row in classified:
+            if row.get("reject"):
+                continue
+            website = row.get("website") or ""
+            name_key = _legal_name_key(row.get("company_name") or "")
+            if name_key and name_key in seen_names and not website:
+                continue
+            if name_key:
+                seen_names.add(name_key)
+            candidates.append(row)
+
+        if not candidates:
             duration_ms = int((time.time() - start_time) * 1000)
             return {
                 "prospects": [],
@@ -147,90 +161,116 @@ class ProspectingAgent:
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "task": user_prompt or "Lead hunt",
                     "durationMs": duration_ms,
-                    "toolsUsed": ["WebSearchTool"],
-                    "sourcesCount": 0,
+                    "toolsUsed": ["SearchPlanner", "WebSearchTool", "SerpClassifier"],
+                    "sourcesCount": len(leads),
                     "status": "CompletedWithNoCandidates",
-                    "decisions": decisions_log,
+                    "decisions": decisions_log + [{
+                        "step": 4,
+                        "observation": "Every SERP row was excluded (directories, factories, jobs, or wrong geo).",
+                        "decision": "Do not persist junk as leads.",
+                        "toolCalled": "LeadPipeline",
+                    }],
+                    "sellerProfile": profile_to_dict(profile),
                 },
             }
 
-        product_names = [p.get("name") for p in products if p.get("name")][:6]
-        cats = list({p.get("category") for p in products if p.get("category")})[:4]
-        seller = (business.get("name") or "your catalog").strip()
-        countries = icp.get("targetCountries") or icp.get("target_countries") or []
-        buyers = icp.get("targetBuyerTypes") or icp.get("target_buyer_types") or []
+        to_fetch = [c for c in candidates if (c.get("website") or "").strip()][:FETCH_CAP]
+        pages = await asyncio.gather(
+            *[self.web_search.scrape_homepage(c["website"]) for c in to_fetch],
+            return_exceptions=True,
+        )
+        text_by_domain: Dict[str, Dict[str, Any]] = {}
+        for cand, page in zip(to_fetch, pages):
+            dom = _domain(cand.get("website") or "")
+            if isinstance(page, dict) and page.get("ok"):
+                text_by_domain[dom] = page
+            else:
+                text_by_domain[dom] = {"text": "", "url": cand.get("website") or "", "ok": False}
+
+        decisions_log.append({
+            "step": 4,
+            "observation": f"{len(candidates)} candidates after exclusions; fetched {len(to_fetch)} homepages (cap {FETCH_CAP}).",
+            "decision": "Qualify Fit vs Intent from site text. Do not invent buying signals.",
+            "toolCalled": "HomepageFetch",
+            "toolResultSnippet": f"{sum(1 for v in text_by_domain.values() if v.get('ok'))} live pages",
+        })
 
         prospects: List[Dict[str, Any]] = []
-        for co in leads:
-            snippet = co.get("snippet") or ""
-            industry = co.get("industry") or snippet or (cats[0] if cats else "Buyer")
-            matches = [
-                {
-                    "productName": name,
-                    "fitLevel": "Medium",
-                    "reasoning": f"Possible buyer for {name} based on {co.get('company_name')} appearing in {co.get('source') or 'search'} for {cats[0] if cats else 'your category'}.",
-                }
-                for name in product_names[:3]
-            ]
-            score_res = self.score_calc.calculate_fit_score(
-                company_industry=industry,
-                company_location=co.get("location") or "",
-                target_countries=list(countries),
-                buying_signals=[],
-                product_matches=matches,
-                target_buyer_types=list(buyers),
-                research_text=f"{co.get('company_name')} {snippet}",
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        for co in candidates[:SAVE_CAP + 8]:
+            dom = _domain(co.get("website") or "")
+            page = text_by_domain.get(dom) or {}
+            site_text = page.get("text") or ""
+            q = qualify_account(
+                row=co,
+                site_text=site_text,
+                profile=profile,
+                products=products,
+                page_url=page.get("url") or co.get("website") or "",
             )
+            if not q.get("shouldPersist"):
+                continue
             source = co.get("source") or "web"
-            why = (
-                f"{co.get('company_name')} showed up as a {source} result for "
-                f"{(cats[0] if cats else 'your products')} in {co.get('location') or location or 'your target market'}."
-            )
-            now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            location = (co.get("location") or "").strip()
             prospects.append({
                 "id": f"prospect-{uuid4().hex[:10]}",
                 "companyName": co.get("company_name") or "Unknown",
                 "website": co.get("website") or "",
-                "location": co.get("location") or location or "",
-                "industry": industry[:80],
+                "location": location,
+                "industry": (q.get("industry") or "")[:80],
                 "companySize": "",
                 "phone": co.get("phone") or "",
                 "source": source,
-                "fitScore": score_res["total_score"],
-                "fitBreakdown": score_res["breakdown"],
-                "whyThisProspect": why,
-                "buyingSignals": [],
-                "productFit": matches,
-                "recommendedApproach": (
-                    f"Reach out as {seller}. Lead with {product_names[0] if product_names else 'your catalog'} "
-                    f"and confirm they buy {cats[0] if cats else 'this category'}."
-                ),
+                "fitScore": q["fitScore"],
+                "fitBreakdown": q["fitBreakdown"],
+                "whyThisProspect": q["whyThisProspect"],
+                "whyNow": q["whyNow"],
+                "icpFit": q["icpFit"],
+                "offerFit": q["offerFit"],
+                "motionFit": q["motionFit"],
+                "intent": q["intent"],
+                "confidence": q["confidence"],
+                "priority": q["priority"],
+                "evidence": q["evidence"],
+                "entityType": co.get("entity_type") or "company",
+                "discoveryPool": co.get("discovery_pool") or "",
+                "buyingSignals": q["buyingSignals"],
+                "productFit": q["productFit"],
+                "recommendedApproach": q["recommendedApproach"],
                 "outreachDraft": None,
                 "stage": "To contact",
                 "discoveredAt": now,
                 "agentTimeline": [
-                    {"time": time.strftime("%H:%M"), "action": f"Discovered via {source} search"},
-                    {"time": time.strftime("%H:%M"), "action": f"Scored {score_res['total_score']}/100 against catalog/ICP"},
+                    {"time": time.strftime("%H:%M"), "action": f"Discovered via {source} ({co.get('discovery_pool') or 'search'})"},
+                    {"time": time.strftime("%H:%M"), "action": f"Fit {q['fitSummary']} · Intent {q['intent']} · {q['priority']}"},
                 ],
             })
+            if len(prospects) >= min(limit, SAVE_CAP):
+                break
 
-        prospects.sort(key=lambda p: int(p.get("fitScore") or 0), reverse=True)
+        def _rank(p: Dict[str, Any]) -> tuple:
+            intent_rank = {"high": 2, "low": 1, "none": 0}.get(p.get("intent") or "none", 0)
+            pri = {"priority": 3, "nurture": 2, "review": 1, "low": 0}.get(p.get("priority") or "", 0)
+            return (pri, intent_rank, int(p.get("fitScore") or 0))
+
+        prospects.sort(key=_rank, reverse=True)
 
         duration_ms = int((time.time() - start_time) * 1000)
         agent_log = {
             "id": f"run-{int(time.time())}",
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "task": user_prompt or f"Find buyers in {location}",
+            "task": user_prompt or f"Find buyers ({profile.sales_motion})",
             "durationMs": duration_ms,
-            "toolsUsed": ["QueryBuilder", "WebSearchTool", "MapsSearch", "ScoreCalculatorTool"],
+            "toolsUsed": ["SearchPlanner", "WebSearchTool", "SerpClassifier", "HomepageFetch", "QualifyAccount"],
             "sourcesCount": len(leads),
-            "status": "Completed",
+            "status": "Completed" if prospects else "CompletedWithNoCandidates",
+            "sellerProfile": profile_to_dict(profile),
             "decisions": decisions_log + [{
-                "step": 3,
-                "observation": f"Qualified {len(prospects)} leads to contact.",
-                "decision": "Persist all leads (not just the first) and sync to Google Sheets.",
+                "step": 5,
+                "observation": f"Persisting {len(prospects)} qualified accounts (Fit not Low). Intent is scored separately.",
+                "decision": "Skip contact discovery until a lead is outreach-ready. Do not fabricate why-now.",
                 "toolCalled": "LeadPipeline",
                 "toolResultSnippet": f"{len(prospects)} To contact",
             }],
         }
-        return {"prospects": prospects, "agent_log": agent_log}
+        return {"prospects": prospects, "agent_log": agent_log, "prospect": prospects[0] if prospects else None}

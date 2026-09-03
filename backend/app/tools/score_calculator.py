@@ -2,6 +2,8 @@ from typing import Dict, Any, List, Optional
 
 
 class ScoreCalculatorTool:
+    """Fit-only scoring. Intent must not be padded in when signals are empty."""
+
     def name(self) -> str:
         return "ScoreCalculatorTool"
 
@@ -15,14 +17,6 @@ class ScoreCalculatorTool:
         target_buyer_types: Optional[List[str]] = None,
         research_text: str = "",
     ) -> Dict[str, Any]:
-        """
-        Transparent 100-Point Formula:
-        - Industry fit: max 25
-        - Location fit: max 20
-        - Product match: max 20
-        - Buying signals: max 20
-        - Company fit: max 15
-        """
         industry_score = self._industry_fit(
             company_industry=company_industry,
             research_text=research_text,
@@ -32,20 +26,22 @@ class ScoreCalculatorTool:
 
         high_fits = [p for p in product_matches if p.get("fitLevel") == "High"]
         if not product_matches:
-            product_score = 8
+            product_score = 0
         elif len(high_fits) >= 2:
             product_score = 20
         elif len(high_fits) == 1:
             product_score = 16
+        elif any(p.get("fitLevel") == "Medium" for p in product_matches):
+            product_score = 10
         else:
-            product_score = 12
+            product_score = 0
 
         if buying_signals:
             signal_score = min(20, sum(int(sig.get("weight", 10)) for sig in buying_signals))
         else:
-            signal_score = 8
+            signal_score = 0
 
-        company_fit = 12 if (company_industry or research_text) else 8
+        company_fit = 10 if (company_industry or research_text) else 0
         total_score = industry_score + location_score + product_score + signal_score + company_fit
 
         return {
@@ -62,7 +58,7 @@ class ScoreCalculatorTool:
     def _industry_fit(self, company_industry: str, research_text: str, target_buyer_types: List[str]) -> int:
         blob = f"{company_industry} {research_text}".lower()
         if not target_buyer_types:
-            return 15 if company_industry else 10
+            return 10 if company_industry else 0
         hits = 0
         for buyer in target_buyer_types:
             tokens = [t for t in buyer.lower().replace("/", " ").split() if len(t) > 3]
@@ -74,12 +70,14 @@ class ScoreCalculatorTool:
             return 25
         if hits == 1:
             return 20
-        return 12
+        return 0
 
     def _location_fit(self, company_location: str, target_countries: List[str]) -> int:
         if not target_countries:
-            return 15
+            return 0
         loc = (company_location or "").lower()
+        if not loc:
+            return 0
         aliases = {
             "united arab emirates": ["uae", "dubai", "abu dhabi", "sharjah"],
             "saudi arabia": ["ksa", "riyadh", "jeddah"],
@@ -95,8 +93,7 @@ class ScoreCalculatorTool:
             for alias in aliases.get(c, []):
                 if alias in loc:
                     return 20
-            # Also match short names the user typed (Germany, India, etc.)
             token = c.split(",")[0].strip()
             if len(token) > 3 and token in loc:
                 return 20
-        return 8
+        return 0

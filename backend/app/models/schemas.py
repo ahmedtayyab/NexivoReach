@@ -62,6 +62,7 @@ class ProspectRecord(SQLModel, table=True):
     business_id: Optional[str] = Field(default=None, index=True)
     source: Optional[str] = None
     phone: Optional[str] = None
+    why_now: Optional[str] = None
 
 
 class AgentRunRecord(SQLModel, table=True):
@@ -78,6 +79,9 @@ class AgentRunRecord(SQLModel, table=True):
 
 
 class User(SQLModel, table=True):
+    # Explicit name avoids Postgres treating bare "user" as a reserved keyword.
+    __tablename__ = "nr_user"
+
     id: Optional[str] = Field(default=None, primary_key=True)
     google_id: str = Field(index=True, unique=True)
     email: str

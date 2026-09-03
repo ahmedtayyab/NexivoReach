@@ -17,12 +17,34 @@ interface Props {
   agentLogs: AgentRunLog[];
   onReviewProspect: (id: string) => void;
   onUpdateStage: (id: string, stage: Prospect['stage']) => void;
+  onClearLeads?: () => Promise<void> | void;
 }
 
-export default function QueueView({ prospects, agentLogs, onReviewProspect, onUpdateStage }: Props) {
+export default function QueueView({
+  prospects,
+  agentLogs,
+  onReviewProspect,
+  onUpdateStage,
+  onClearLeads,
+}: Props) {
   const [filter, setFilter] = useState<string>('To contact');
+  const [clearing, setClearing] = useState(false);
   const lastRun = agentLogs[0];
   const lastRunLabel = lastRun ? formatRelative(lastRun.timestamp) : null;
+
+  const handleClear = async () => {
+    if (!onClearLeads || !prospects.length || clearing) return;
+    const ok = window.confirm(
+      `Clear all ${prospects.length} leads for this company? This cannot be undone.`,
+    );
+    if (!ok) return;
+    setClearing(true);
+    try {
+      await onClearLeads();
+    } finally {
+      setClearing(false);
+    }
+  };
 
   const counts = useMemo(() => {
     const map: Record<string, number> = {};
@@ -41,12 +63,24 @@ export default function QueueView({ prospects, agentLogs, onReviewProspect, onUp
 
   return (
     <div className="max-w-3xl">
-      <div className="mb-6">
-        <h1 className="text-[15px] font-semibold text-ink tracking-tight">Leads</h1>
-        <p className="text-[13px] text-ink-secondary mt-0.5">
-          {prospects.length} saved
-          {lastRunLabel && <span className="text-ink-muted"> · Last scan {lastRunLabel}</span>}
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-[15px] font-semibold text-ink tracking-tight">Leads</h1>
+          <p className="text-[13px] text-ink-secondary mt-0.5">
+            {prospects.length} saved
+            {lastRunLabel && <span className="text-ink-muted"> · Last scan {lastRunLabel}</span>}
+          </p>
+        </div>
+        {onClearLeads && prospects.length > 0 && (
+          <button
+            type="button"
+            onClick={handleClear}
+            disabled={clearing}
+            className="shrink-0 px-3 py-1.5 text-[12px] border border-border rounded-md text-ink-secondary hover:text-ink hover:border-ink-muted disabled:opacity-40 transition-colors"
+          >
+            {clearing ? 'Clearing…' : 'Clear all leads'}
+          </button>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-1.5 mb-4">
@@ -71,9 +105,10 @@ export default function QueueView({ prospects, agentLogs, onReviewProspect, onUp
         </div>
       ) : (
         <div className="bg-panel border border-border rounded-lg overflow-hidden">
-          <div className="grid grid-cols-[1fr_90px_56px_140px] items-center px-4 py-2 border-b border-border-subtle bg-muted">
+          <div className="grid grid-cols-[1fr_90px_72px_56px_140px] items-center px-4 py-2 border-b border-border-subtle bg-muted">
             <span className="section-label">Lead</span>
             <span className="section-label">Source</span>
+            <span className="section-label">Intent</span>
             <span className="section-label text-right">Fit</span>
             <span className="section-label text-right">Status</span>
           </div>
@@ -81,7 +116,7 @@ export default function QueueView({ prospects, agentLogs, onReviewProspect, onUp
             {visible.map(prospect => (
               <div
                 key={prospect.id}
-                className="grid grid-cols-[1fr_90px_56px_140px] items-center px-4 py-3 gap-2 hover:bg-canvas/60"
+                className="grid grid-cols-[1fr_90px_72px_56px_140px] items-center px-4 py-3 gap-2 hover:bg-canvas/60"
               >
                 <button type="button" className="text-left min-w-0" onClick={() => onReviewProspect(prospect.id)}>
                   <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
@@ -90,6 +125,7 @@ export default function QueueView({ prospects, agentLogs, onReviewProspect, onUp
                   </p>
                 </button>
                 <span className="text-[12px] text-ink-muted capitalize">{prospect.source || 'web'}</span>
+                <span className="text-[12px] text-ink-muted capitalize">{prospect.intent || prospect.fitBreakdown?.intent || '—'}</span>
                 <span className="text-[13px] font-semibold text-right tabular-nums">{prospect.fitScore}</span>
                 <select
                   value={normalizeStage(prospect.stage)}

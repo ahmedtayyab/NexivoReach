@@ -274,6 +274,16 @@ export default function App() {
     );
   };
 
+  const handleClearLeads = async () => {
+    const resp = await apiFetch('/api/prospects/clear', { method: 'DELETE' });
+    if (!resp.ok) {
+      console.warn('Failed to clear leads', await resp.text());
+      return;
+    }
+    setProspects([]);
+    setSelectedProspectId(null);
+  };
+
   const handleAddLog = (log: AgentRunLog) => {
     setAgentLogs(prev => [log, ...prev]);
   };
@@ -305,6 +315,31 @@ export default function App() {
       method: 'POST',
       body: JSON.stringify(next),
     });
+  };
+
+  const handleRestoredFromSheets = async (payload: {
+    company?: BusinessInfo;
+    products?: Product[];
+    prospects?: Prospect[];
+    activeBusinessId?: string;
+  }) => {
+    if (payload.activeBusinessId) {
+      setActiveBusinessId(payload.activeBusinessId);
+      setActiveCompanyIdState(payload.activeBusinessId);
+      await apiFetch(`/api/companies/${payload.activeBusinessId}/activate`, { method: 'POST' });
+    }
+    await loadCompanies();
+    await loadCompanyData();
+    if (payload.company) {
+      setBusinessInfo(prev => ({ ...prev, ...payload.company! }));
+    }
+    if (Array.isArray(payload.products)) {
+      setProducts(payload.products);
+    }
+    if (Array.isArray(payload.prospects)) {
+      setProspects(payload.prospects);
+    }
+    navigate('catalog');
   };
 
   const handleLogout = async () => {
@@ -355,6 +390,7 @@ export default function App() {
             agentLogs={agentLogs}
             onReviewProspect={id => setSelectedProspectId(id)}
             onUpdateStage={handleUpdateStage}
+            onClearLeads={handleClearLeads}
           />
         )}
         {activeRoute === 'discover' && (
@@ -376,6 +412,7 @@ export default function App() {
             onSaveBusiness={handleSaveBusiness}
             onSaveProducts={handleSaveProducts}
             onSaveICP={handleSaveICP}
+            onRestoredFromSheets={handleRestoredFromSheets}
           />
         )}
         {activeRoute === 'activity' && <ActivityView agentLogs={agentLogs} />}

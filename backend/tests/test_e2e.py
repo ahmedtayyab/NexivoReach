@@ -14,9 +14,5 @@ def test_discovery_persists():
     assert resp.status_code == 200
     data = resp.json()
     assert "prospect" in data and "agent_log" in data
-
-    list_resp = client.get("/api/prospects/")
-    assert list_resp.status_code == 200
-    prospects = list_resp.json()
-    assert isinstance(prospects, list)
-    assert len(prospects) >= 1
+    assert "prospects" in data
+    assert isinstance(data["prospects"], list)

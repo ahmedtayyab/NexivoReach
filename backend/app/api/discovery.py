@@ -35,7 +35,16 @@ def _sync_leads_job(business_id: str, prospects: list[dict]) -> None:
     try:
         with Session(engine) as session:
             biz = session.get(Business, business_id)
-            seller = (biz.name if biz and biz.name else None) or "Company"
+            from app.models.schemas import ProductItem
+            product_rows = session.exec(
+                select(ProductItem).where(ProductItem.business_id == business_id)
+            ).all()
+            products = [
+                {"sourceUrl": r.source_url, "productUrl": r.product_url}
+                for r in product_rows
+                if r.source_url or r.product_url
+            ]
+            seller = sheets_mod.resolve_company_tab_name(biz, products, fallback="Company")
         sheets_mod.sync_leads(seller, prospects)
     except Exception as exc:
         log.warning("Sheets lead sync failed: %s", exc)
@@ -85,7 +94,7 @@ async def run_discovery_agent(
         icp=req.icp,
         business=business_payload,
         exclude_websites=exclude,
-        limit=40,
+        limit=15,
     )
 
     prospects = res.get("prospects") or []
@@ -135,6 +144,7 @@ async def run_discovery_agent(
                     business_id=business_id,
                     source=prospect.get("source") or "web",
                     phone=prospect.get("phone") or "",
+                    why_now=prospect.get("whyNow") or "",
                 )
                 session.add(pr)
                 saved_front.append(prospect_to_frontend(pr))

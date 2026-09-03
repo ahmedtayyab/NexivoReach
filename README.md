@@ -51,8 +51,11 @@ Goal Specification (ICP & Catalog)
 ## 🛠️ Technology Stack
 
 - **Frontend**: React, TypeScript, Vite, Tailwind CSS, Lucide Icons
-- **Backend**: Python 3.13, FastAPI, Uvicorn, SQLModel / SQLite (PostgreSQL compatible)
+- **Backend**: Python 3.11+, FastAPI, Uvicorn, SQLModel
+- **Database**: SQLite locally; **PostgreSQL in production** (required for multi-device / sold MVP)
+- **Auth**: Google OAuth — same account sees the same companies on any device once Postgres is live
 - **AI Providers**: Google Gemini API (Primary), Groq API (Secondary Fallback), with structural fallback heuristics
+- **Export**: Optional Google Sheets sync (backup/export — not the system of record)
 - **Data Parsing**: PyPDF, OpenPyXL, Pandas, Beautiful Soup 4
 
 ---
@@ -87,11 +90,43 @@ GEMINI_API_KEY=your_gemini_api_key_here
 GROQ_API_KEY=your_groq_api_key_here
 
 # Database
+# Local: SQLite. Production: Postgres (Render sets DATABASE_URL).
 DATABASE_URL=sqlite:///./nexivoreach.db
 
 # Server Configuration
 PORT=8000
 HOST=0.0.0.0
+```
+
+### Data persistence (important for a sellable MVP)
+
+| Environment | Database | Survives restart? | Same data on phone/laptop? |
+| :--- | :--- | :---: | :---: |
+| Local `uvicorn` | SQLite file on that PC | Yes (on that PC) | No |
+| Local Docker Postgres | `docker-compose.postgres.yml` | Yes | Same LAN / tunnel |
+| Render + SQLite | Ephemeral disk | **No** | No |
+| **Render + Postgres** | Managed cloud DB | **Yes** | **Yes** (Google login) |
+| Google Sheets | Export/backup only | Yes | View-only outside the app |
+
+**Production rule:** the app database is Postgres. Google Sheets is optional export. Sign in with Google → your companies, catalog, ICP, and leads follow you across devices.
+
+#### Deploy Postgres on Render
+
+1. Push this repo (includes `render.yaml` with `nexivoreach-db`).
+2. In Render: **Blueprint** → apply / sync so the Postgres instance is created and `DATABASE_URL` is linked to the web service.
+3. Or manually: create a **PostgreSQL** database, then on the web service set `DATABASE_URL` from the DB’s **Internal Database URL**.
+4. Redeploy. Hit `/health` — you should see `"database": "postgres"` and `"databaseOk": true`.
+5. Sign in with Google on the live URL, then **Settings → Integrations → Restore company** to pull Alwasi from Sheets into Postgres once.
+
+#### Local Postgres (optional)
+
+```bash
+docker compose -f docker-compose.postgres.yml up -d db
+# Windows PowerShell:
+$env:DATABASE_URL="postgresql://nexivo:nexivo@localhost:5432/nexivoreach"
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
 ```
 
 ---

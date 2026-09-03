@@ -4,6 +4,7 @@ from app.models.schemas import ProspectRecord, AgentRunRecord, Business, Product
 
 
 def prospect_to_frontend(pr: ProspectRecord) -> Dict[str, Any]:
+    breakdown = pr.fit_breakdown or {}
     return {
         "id": pr.id,
         "companyName": pr.company_name,
@@ -12,8 +13,18 @@ def prospect_to_frontend(pr: ProspectRecord) -> Dict[str, Any]:
         "industry": pr.industry,
         "companySize": pr.company_size,
         "fitScore": pr.fit_score,
-        "fitBreakdown": pr.fit_breakdown or {},
+        "fitBreakdown": breakdown,
         "whyThisProspect": pr.why_this_prospect,
+        "whyNow": getattr(pr, "why_now", None) or breakdown.get("whyNow") or "",
+        "icpFit": breakdown.get("icpFit") or "",
+        "offerFit": breakdown.get("offerFit") or "",
+        "motionFit": breakdown.get("motionFit") or "",
+        "intent": breakdown.get("intent") or "",
+        "confidence": breakdown.get("confidence"),
+        "priority": breakdown.get("priority") or "",
+        "entityType": breakdown.get("entityType") or "",
+        "discoveryPool": breakdown.get("discoveryPool") or "",
+        "evidence": breakdown.get("evidence") or [],
         "buyingSignals": pr.buying_signals or [],
         "productFit": pr.product_fit or [],
         "recommendedApproach": pr.recommended_approach,
@@ -47,6 +58,7 @@ def prospect_from_frontend(payload: Dict[str, Any]) -> Dict[str, Any]:
         "agent_timeline": payload.get("agentTimeline") or payload.get("agent_timeline") or [],
         "source": payload.get("source") or "",
         "phone": payload.get("phone") or "",
+        "why_now": payload.get("whyNow") or payload.get("why_now") or "",
     }
 
 

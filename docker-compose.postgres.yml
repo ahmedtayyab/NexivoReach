@@ -1,0 +1,46 @@
+# Local stack with Postgres (same shape as production).
+# Usage:
+#   docker compose -f docker-compose.postgres.yml up -d db
+#   set DATABASE_URL=postgresql://nexivo:nexivo@localhost:5432/nexivoreach
+#   cd backend && uvicorn app.main:app --reload
+#
+# Or run API in Docker too:
+#   docker compose -f docker-compose.postgres.yml up --build
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nexivoreach
+      POSTGRES_USER: nexivo
+      POSTGRES_PASSWORD: nexivo
+    ports:
+      - "5432:5432"
+    volumes:
+      - nexivoreach_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexivo -d nexivoreach"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://nexivo:nexivo@db:5432/nexivoreach
+      PYTHON_ENV: development
+      AUTH_DISABLED: ${AUTH_DISABLED:-0}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  nexivoreach_pg:

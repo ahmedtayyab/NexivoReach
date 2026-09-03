@@ -1,3 +1,9 @@
+databases:
+  - name: nexivoreach-db
+    plan: free
+    databaseName: nexivoreach
+    user: nexivoreach
+
 services:
   - type: web
     name: nexivoreach
@@ -12,15 +18,21 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: SERPER_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
+      # Live multi-device data: managed Postgres (not ephemeral SQLite).
       - key: DATABASE_URL
-        value: sqlite:///./nexivoreach.db
+        fromDatabase:
+          name: nexivoreach-db
+          property: connectionString
       - key: PYTHON_ENV
         value: production
-      # Optional — auto-detected from RENDER_EXTERNAL_URL if omitted:
       - key: APP_URL
         sync: false
       - key: GOOGLE_REDIRECT_URI

@@ -1,0 +1,203 @@
+"""Cheap SERP-row classification. Discovery only — not qualification."""
+
+from __future__ import annotations
+
+import re
+from typing import Any, Dict, List
+from urllib.parse import urlparse
+
+
+DIRECTORY_HOSTS = (
+    "yelp.com", "yellowpages.com", "kompass.com", "thomasnet.com",
+    "indiamart.com", "alibaba.com", "made-in-china.com", "europages.com",
+    "zoominfo.com", "crunchbase.com", "dnb.com", "bloomberg.com",
+    "clutch.co", "sortlist.com", "goodfirms.co", "trustpilot.com",
+)
+MARKETPLACE_HOSTS = (
+    "amazon.com", "amazon.co", "ebay.com", "etsy.com", "walmart.com",
+    "aliexpress.com", "shopify.com",
+)
+JOB_HOSTS = (
+    "indeed.com", "glassdoor.com", "lever.co", "greenhouse.io",
+    "workable.com", "ziprecruiter.com", "linkedin.com",
+)
+NEWS_HOSTS = (
+    "reuters.com", "bloomberg.com", "techcrunch.com", "forbes.com",
+    "businessinsider.com", "prnewswire.com", "globenewswire.com",
+)
+SKIP_HOSTS = (
+    "wikipedia.org", "youtube.com", "facebook.com", "instagram.com",
+    "twitter.com", "x.com", "reddit.com", "pinterest.com", "tiktok.com",
+    "medium.com", "quora.com", "google.com", "duckduckgo.com",
+)
+
+JUNK_TITLE = re.compile(
+    r"\b(top\s+\d+|best \d+|complete guide|how to|what is|directory|list of)\b",
+    re.I,
+)
+MFR_RE = re.compile(
+    r"\b(manufacturer|manufacturing|factory|factories|oem|odm|textile mill|foundry)\b",
+    re.I,
+)
+BUYER_RE = re.compile(
+    r"\b(brand|retailer|distributor|importer|wholesaler|boutique|stockist|clinic|hospital|gym)\b",
+    re.I,
+)
+
+
+def _host(url: str) -> str:
+    host = (urlparse(url or "").hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def _endswith_any(host: str, suffixes: tuple[str, ...]) -> bool:
+    return any(host == s or host.endswith("." + s) for s in suffixes)
+
+
+def classify_serp_row(
+    row: Dict[str, Any],
+    *,
+    hunting_buyers: bool,
+    target_places: List[str],
+) -> Dict[str, Any]:
+    url = (row.get("website") or "").strip()
+    title = (row.get("title") or row.get("company_name") or "")
+    snippet = (row.get("snippet") or "")
+    blob = f"{title} {snippet} {url}"
+    host = _host(url)
+    entity = "company"
+    reject = False
+    reason = ""
+
+    if not host and not (row.get("company_name") and row.get("source") == "maps"):
+        reject, entity, reason = True, "unknown", "No website or Maps identity"
+
+    elif _endswith_any(host, SKIP_HOSTS):
+        reject, entity, reason = True, "skip_domain", "Social/wiki/search host"
+
+    elif _endswith_any(host, JOB_HOSTS) or "/jobs" in url.lower() or re.search(r"\b(hiring|we're hiring|careers)\b", title, re.I):
+        reject, entity, reason = True, "jobs", "Job listing"
+
+    elif _endswith_any(host, DIRECTORY_HOSTS) or JUNK_TITLE.search(title):
+        reject, entity, reason = True, "directory", "Directory or listicle — not a prospect"
+
+    elif _endswith_any(host, MARKETPLACE_HOSTS):
+        reject, entity, reason = True, "marketplace", "Marketplace listing"
+
+    elif _endswith_any(host, NEWS_HOSTS) or re.search(r"/(news|press|article)/", url.lower()):
+        reject, entity, reason = True, "news", "News article — not the company"
+
+    elif hunting_buyers and MFR_RE.search(blob) and not BUYER_RE.search(blob):
+        reject, entity, reason = True, "manufacturer", "Looks like a manufacturer while hunting buyers"
+
+    elif hunting_buyers and MFR_RE.search(blob):
+        entity, reason = "manufacturer", "Manufacturer language present — keep only as competitor seed"
+
+    path = (urlparse(url).path or "").lower()
+    if any(h in path for h in ("/blog", "/wiki", "/guide")) and not reject:
+        reject, entity, reason = True, "article", "Article URL"
+
+    geo_ok = _geo_mentioned(blob, target_places) if target_places else None
+    if geo_ok is False and target_places and _foreign_geo_conflict(blob, target_places):
+        reject, entity, reason = True, "wrong_geo", "Geography conflicts with ICP markets"
+
+    competitor_seed = entity == "manufacturer" and hunting_buyers
+    keep_candidate = (not reject) or (competitor_seed and not reject)
+    if entity == "manufacturer" and hunting_buyers:
+        keep_candidate = False  # do not save manufacturers as prospects
+
+    return {
+        **row,
+        "entity_type": entity,
+        "reject": reject or (entity == "manufacturer" and hunting_buyers),
+        "reject_reason": reason,
+        "competitor_seed": competitor_seed,
+        "geo_mentioned": geo_ok,
+        "title": title,
+    }
+
+
+def _geo_mentioned(blob: str, places: List[str]) -> bool | None:
+    if not places:
+        return None
+    low = blob.lower()
+    aliases = {
+        "united states": ["usa", "u.s.", "united states", "america"],
+        "united kingdom": ["uk", "britain", "england", "united kingdom"],
+        "united arab emirates": ["uae", "dubai", "abu dhabi"],
+    }
+    for place in places:
+        p = place.lower().strip()
+        if p and p in low:
+            return True
+        for alias in aliases.get(p, []):
+            if alias in low:
+                return True
+    return False
+
+
+def _foreign_geo_conflict(blob: str, places: List[str]) -> bool:
+    """True when another country is named and none of the target markets are."""
+    if _geo_mentioned(blob, places):
+        return False
+    countries = (
+        "china", "india", "pakistan", "bangladesh", "vietnam", "turkey",
+        "germany", "france", "italy", "spain", "canada", "australia",
+        "mexico", "brazil", "japan", "korea", "nigeria", "kenya",
+    )
+    targets = " ".join(places).lower()
+    low = blob.lower()
+    for c in countries:
+        if c in low and c not in targets:
+            return True
+    return False
+
+
+def summarize_classifications(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    n = len(rows) or 1
+    junk_types = {"directory", "jobs", "news", "article", "marketplace", "skip_domain"}
+    junk = sum(1 for r in rows if r.get("entity_type") in junk_types)
+    mfr = sum(1 for r in rows if r.get("entity_type") == "manufacturer")
+    wrong = sum(1 for r in rows if r.get("entity_type") == "wrong_geo")
+    relevant = [r for r in rows if not r.get("reject") and r.get("entity_type") == "company"]
+    seeds = []
+    for r in rows:
+        if r.get("competitor_seed"):
+            name = (r.get("company_name") or "")[:80]
+            if name and name not in seeds:
+                seeds.append(name)
+
+    learned = []
+    for r in relevant[:8]:
+        title = r.get("company_name") or r.get("title") or ""
+        # pull 2–4 word phrases that aren't the company legal name
+        for m in re.findall(r"\b([A-Za-z][A-Za-z]+(?:\s+[A-Za-z]+){0,2})\b", title):
+            if 4 <= len(m) <= 40 and m.lower() not in {"inc", "llc", "ltd", "the"}:
+                learned.append(m)
+    # unique learned terms that appeared often-ish
+    return {
+        "junk_ratio": junk / n,
+        "manufacturer_ratio": mfr / n,
+        "wrong_geo_ratio": wrong / n,
+        "relevant_count": len(relevant),
+        "competitor_names": seeds[:4],
+        "learned_terms": _uniq_keep(learned, 6),
+        "classified": len(rows),
+        "rejected": sum(1 for r in rows if r.get("reject")),
+    }
+
+
+def _uniq_keep(items: List[str], limit: int) -> List[str]:
+    seen = set()
+    out = []
+    for i in items:
+        k = i.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(i)
+        if len(out) >= limit:
+            break
+    return out

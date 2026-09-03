@@ -81,8 +81,8 @@ export default function ReviewDrawer({ prospect, onClose, onUpdateStatus, onSave
               </p>
             </div>
             <div className="text-right shrink-0">
-              <span className={`text-base font-bold tabular-nums ${scoreClass}`}>{prospect.fitScore}%</span>
-              <p className="text-[11px] text-slate-400 mt-0.5">Fit Score</p>
+              <span className={`text-base font-bold tabular-nums ${scoreClass}`}>{prospect.fitScore}</span>
+              <p className="text-[11px] text-slate-400 mt-0.5">Fit (not intent)</p>
             </div>
           </div>
           {prospect.website && (
@@ -99,25 +99,39 @@ export default function ReviewDrawer({ prospect, onClose, onUpdateStatus, onSave
         </div>
 
         <div className="px-5 py-5 space-y-6 flex-1">
-          {breakdown && (
-            <section>
-              <h2 className="section-label mb-2">Score Breakdown</h2>
-              <div className="h-px bg-slate-100 mb-3" />
-              <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[13px]">
-                <ScoreRow label="Industry" value={breakdown.industryFit} max={25} />
-                <ScoreRow label="Location" value={breakdown.locationFit} max={20} />
-                <ScoreRow label="Product" value={breakdown.productMatch} max={20} />
-                <ScoreRow label="Signals" value={breakdown.buyingSignals} max={20} />
-                <ScoreRow label="Company" value={breakdown.companyFit} max={15} />
-              </div>
-            </section>
-          )}
+          <section>
+            <h2 className="section-label mb-2">Qualification</h2>
+            <div className="h-px bg-slate-100 mb-3" />
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[13px]">
+              <LevelRow label="ICP fit" value={prospect.icpFit || breakdown?.icpFit} />
+              <LevelRow label="Offer fit" value={prospect.offerFit || breakdown?.offerFit} />
+              <LevelRow label="Motion fit" value={prospect.motionFit || breakdown?.motionFit} />
+              <LevelRow label="Intent" value={prospect.intent || breakdown?.intent || 'none'} />
+            </div>
+            {prospect.priority && (
+              <p className="text-[12px] text-slate-500 mt-2">Priority: {prospect.priority}</p>
+            )}
+          </section>
 
           <section>
-            <h2 className="section-label mb-2">Why Contact Now?</h2>
+            <h2 className="section-label mb-2">Why this prospect?</h2>
             <div className="h-px bg-slate-100 mb-3" />
             <p className="text-[13.5px] text-slate-700 leading-relaxed">
               {prospect.whyThisProspect}
+            </p>
+            {(prospect.evidence || prospect.fitBreakdown?.evidence || [])
+              .filter(e => e.claim !== 'intent')
+              .slice(0, 4)
+              .map((e, i) => (
+                <p key={i} className="source-quote mt-2">{e.quote || e.statement}</p>
+              ))}
+          </section>
+
+          <section>
+            <h2 className="section-label mb-2">Why now?</h2>
+            <div className="h-px bg-slate-100 mb-3" />
+            <p className="text-[13.5px] text-slate-700 leading-relaxed">
+              {prospect.whyNow || breakdown?.whyNow || 'No timing evidence.'}
             </p>
             {(prospect.buyingSignals || []).map((sig, i) => (
               <div key={i} className="mt-3">
@@ -238,11 +252,12 @@ export default function ReviewDrawer({ prospect, onClose, onUpdateStatus, onSave
   );
 }
 
-function ScoreRow({ label, value, max }: { label: string; value: number; max: number }) {
+function LevelRow({ label, value }: { label: string; value?: string }) {
+  const display = (value || 'unknown').toLowerCase();
   return (
     <div className="flex items-center justify-between">
       <span className="text-slate-500">{label}</span>
-      <span className="tabular-nums text-ink-secondary font-medium">{value}/{max}</span>
+      <span className="text-ink-secondary font-medium capitalize">{display}</span>
     </div>
   );
 }

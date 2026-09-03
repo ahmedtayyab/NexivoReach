@@ -53,7 +53,7 @@ export default function DiscoverView({
   const handleRun = async () => {
     if (!canRun || isRunning) return;
     setIsRunning(true);
-    setStatusText('Hunting buyers from catalog + Maps/web search…');
+    setStatusText('Planning searches, then qualifying Fit vs Intent…');
 
     const runId = `run-${Date.now()}`;
     const startedAt = new Date();
@@ -92,8 +92,8 @@ export default function DiscoverView({
       ]);
       setStatusText(
         found.length
-          ? `Added ${found.length} new lead${found.length === 1 ? '' : 's'} (already-known companies skipped).`
-          : 'No new companies this round — try another city or buyer type, then scan again.',
+          ? `Added ${found.length} qualified lead${found.length === 1 ? '' : 's'} (junk and low-fit accounts skipped).`
+          : 'No qualified accounts this round — directories, factories, or weak matches were filtered out.',
       );
     } catch (err: unknown) {
       console.error('Discovery failed', err);
@@ -110,7 +110,7 @@ export default function DiscoverView({
       <div className="mb-6">
         <h1 className="text-lg font-semibold text-ink">Discover</h1>
         <p className="text-sm text-ink-secondary mt-0.5">
-          The agent searches the web and Google Maps using your catalog, buyers, and countries — then saves every new company as a lead. Run again to keep hunting (already-found companies are skipped).
+          The agent plans searches from your sales motion, filters junk, inspects promising sites, then saves accounts with Fit and Intent scored separately. Keyword overlap is not treated as buying intent.
         </p>
       </div>
 

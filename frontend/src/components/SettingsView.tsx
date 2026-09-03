@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { BusinessInfo, Product, IdealCustomerProfile } from '../types';
+import type { BusinessInfo, Product, IdealCustomerProfile, Prospect } from '../types';
 import { CheckCircle2, ExternalLink, Loader2, Plus, Trash2, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
@@ -19,6 +19,12 @@ interface Props {
   onSaveBusiness: (info: BusinessInfo) => void;
   onSaveProducts: (products: Product[]) => void;
   onSaveICP: (icp: IdealCustomerProfile) => void;
+  onRestoredFromSheets?: (payload: {
+    company?: BusinessInfo;
+    products?: Product[];
+    prospects?: Prospect[];
+    activeBusinessId?: string;
+  }) => void | Promise<void>;
 }
 
 export default function SettingsView({
@@ -30,12 +36,23 @@ export default function SettingsView({
   onSaveBusiness,
   onSaveProducts,
   onSaveICP,
+  onRestoredFromSheets,
 }: Props) {
   const titles: Record<SettingsSection, string> = {
     company: 'Company Profile',
     catalog: 'Product Catalog',
     icp: 'ICP & Signals',
     integrations: 'Integrations',
+  };
+  const descriptions: Record<SettingsSection, string> = {
+    company:
+      'Describe this selling company: what it offers, how it sells (private label, wholesale, direct, SaaS, local services), and which markets it wants. Discover uses this to choose search strategies and to judge business-model fit — not just category keywords.',
+    catalog:
+      'The products or services this company actually sells. Offer fit is checked against this catalog, so keep names and categories accurate.',
+    icp:
+      'The ideal customer is who should buy — not who you are. Set buyer types (brands, distributors, hospitals, plants, etc.), countries, and size. Fit is scored against this. Buying-signal rules are optional timing clues; they do not turn a keyword match into intent.',
+    integrations:
+      'Connect Google Sheets and other destinations so qualified leads and catalog rows sync out of NexivoReach.',
   };
 
   return (
@@ -44,8 +61,8 @@ export default function SettingsView({
         <h1 className="text-[15px] font-semibold text-ink tracking-tight">
           {titles[section]}
         </h1>
-        <p className="text-[13px] text-ink-secondary mt-0.5">
-          Configure your company profile, product catalog, and targeting rules.
+        <p className="text-[13px] text-ink-secondary mt-1.5 leading-relaxed max-w-2xl">
+          {descriptions[section]}
         </p>
       </div>
 
@@ -88,7 +105,9 @@ export default function SettingsView({
           onSave={onSaveICP}
         />
       )}
-      {section === 'integrations' && <IntegrationsSection />}
+      {section === 'integrations' && (
+        <IntegrationsSection onRestoredFromSheets={onRestoredFromSheets} />
+      )}
     </div>
   );
 }
@@ -161,6 +180,9 @@ function CompanySection({
 
   return (
     <div className="space-y-5 max-w-lg">
+      <p className="text-[13px] text-ink-muted leading-relaxed">
+        Write the description the way you would brief a new salesperson: product, manufacturing vs brand, export vs local, and who you refuse to sell to if that matters.
+      </p>
       <div>
         <label className="block text-[12px] font-medium text-ink-secondary mb-1">
           Business description <span className="text-ink-muted font-normal">(auto-fill from this)</span>
@@ -541,6 +563,9 @@ function ICPSection({
     <div className="grid grid-cols-1 md:grid-cols-2 gap-10 max-w-3xl">
       <div className="space-y-4">
         <p className="section-label">Target Buyer Criteria</p>
+        <p className="text-[13px] text-ink-muted leading-relaxed">
+          Name the companies you want in the pipeline. A Pakistani factory selling private-label apparel should list brands and importers — not other factories. Geography here is a hard filter when the agent can confirm it.
+        </p>
         <PredictiveField
           label="Buyer types"
           hint="Type who you sell to (e.g. “gym”, “hospital”, “distributor”) — options appear as you type."
@@ -591,7 +616,10 @@ function ICPSection({
       </div>
 
       <div>
-        <p className="section-label mb-3">Buying Signal Rules</p>
+        <p className="section-label mb-1.5">Buying Signal Rules</p>
+        <p className="text-[13px] text-ink-muted leading-relaxed mb-3">
+          Optional. These are examples of timing the agent may look for on a qualified site (expansion, sourcing, a new line). A company is not a hot lead just because it matches a product keyword.
+        </p>
         <div className="space-y-4 divide-y divide-border-subtle">
           {signals.map((sig, i) => (
             <div key={sig.id || i} className="pt-3 first:pt-0">
@@ -614,15 +642,45 @@ type SheetsStatus =
   | { connected: true; spreadsheet_title: string; url: string }
   | { connected: false; reason: string };
 
-function IntegrationsSection() {
+function IntegrationsSection({
+  onRestoredFromSheets,
+}: {
+  onRestoredFromSheets?: (payload: {
+    company?: BusinessInfo;
+    products?: Product[];
+    prospects?: Prospect[];
+    activeBusinessId?: string;
+  }) => void | Promise<void>;
+}) {
   const [status, setStatus] = useState<SheetsStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [restoreOptions, setRestoreOptions] = useState<
+    Array<{ companyName: string; productsTab?: string; leadsTab?: string }>
+  >([]);
+  const [restoreCompany, setRestoreCompany] = useState('');
+  const [includeLeads, setIncludeLeads] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreMsg, setRestoreMsg] = useState('');
 
   const load = async () => {
     setLoading(true);
     try {
       const r = await apiFetch('/api/sheets/status');
-      if (r.ok) setStatus(await r.json());
+      if (r.ok) {
+        const data = await r.json();
+        setStatus(data);
+        if (data.connected) {
+          const opts = await apiFetch('/api/sheets/restore-options');
+          if (opts.ok) {
+            const body = await opts.json();
+            const companies = Array.isArray(body.companies) ? body.companies : [];
+            setRestoreOptions(companies);
+            if (companies.length && !restoreCompany) {
+              setRestoreCompany(companies[0].companyName);
+            }
+          }
+        }
+      }
     } catch {
       // ignore
     } finally {
@@ -632,6 +690,53 @@ function IntegrationsSection() {
 
   useEffect(() => { load(); }, []);
 
+  const handleRestore = async () => {
+    if (!restoreCompany || restoring) return;
+    const ok = window.confirm(
+      includeLeads
+        ? `Restore catalog and leads for “${restoreCompany}” from Google Sheets into this company?`
+        : `Restore the product catalog for “${restoreCompany}” from Google Sheets into this company?`,
+    );
+    if (!ok) return;
+    setRestoring(true);
+    setRestoreMsg('');
+    try {
+      const resp = await apiFetch('/api/sheets/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_name: restoreCompany,
+          include_products: true,
+          include_leads: includeLeads,
+          replace_products: true,
+          replace_leads: includeLeads,
+        }),
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(text || `Restore failed (${resp.status})`);
+      }
+      const data = await resp.json();
+      setRestoreMsg(
+        `Restored company “${data.company?.name || restoreCompany}” with ${data.productsRestored || 0} products`
+        + (includeLeads ? ` and ${data.leadsRestored || 0} leads` : '')
+        + `.`,
+      );
+      if (onRestoredFromSheets) {
+        await onRestoredFromSheets({
+          company: data.company,
+          products: data.products,
+          prospects: data.prospects,
+          activeBusinessId: data.activeBusinessId,
+        });
+      }
+    } catch (e) {
+      setRestoreMsg(e instanceof Error ? e.message : 'Restore failed');
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   return (
     <div className="space-y-8">
       {/* Google Sheets card */}
@@ -640,7 +745,7 @@ function IntegrationsSection() {
           <div>
             <h3 className="text-[14px] font-semibold text-ink">Google Sheets</h3>
             <p className="text-[12.5px] text-ink-secondary mt-0.5">
-              Automatically sync your product catalog and prospect activity to a shared spreadsheet.
+              Optional export of catalog and leads. The live product database is Postgres in production — Sheets is backup, not the source of truth.
             </p>
           </div>
           {loading ? (
@@ -693,6 +798,52 @@ function IntegrationsSection() {
           </div>
         )}
       </div>
+
+      {status?.connected && restoreOptions.length > 0 && (
+        <div className="rounded-xl border border-border bg-surface p-6 space-y-4">
+          <div>
+            <h3 className="text-[14px] font-semibold text-ink">Restore company from Sheets</h3>
+            <p className="text-[12.5px] text-ink-secondary mt-0.5 leading-relaxed">
+              Recreates the company in the app (name, website, catalog) from your Sheets tabs. Pick Alwasi Enterprises to bring it back into the sidebar.
+            </p>
+          </div>
+          <div>
+            <label className="block text-[12px] font-medium text-ink-secondary mb-1">Company tab</label>
+            <select
+              value={restoreCompany}
+              onChange={e => setRestoreCompany(e.target.value)}
+              className="w-full max-w-md border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary bg-panel"
+            >
+              {restoreOptions.map(opt => (
+                <option key={opt.companyName} value={opt.companyName}>
+                  {opt.companyName}
+                  {opt.productsTab ? ' (products)' : ''}
+                  {opt.leadsTab ? ' (leads)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-[13px] text-ink-secondary">
+            <input
+              type="checkbox"
+              checked={includeLeads}
+              onChange={e => setIncludeLeads(e.target.checked)}
+            />
+            Also restore leads (usually skip — re-run Discover instead)
+          </label>
+          <button
+            type="button"
+            onClick={handleRestore}
+            disabled={restoring || !restoreCompany}
+            className="px-4 py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-[13px] font-medium rounded-md transition-colors"
+          >
+            {restoring ? 'Restoring…' : 'Restore company'}
+          </button>
+          {restoreMsg && (
+            <p className="text-[12.5px] text-ink-secondary">{restoreMsg}</p>
+          )}
+        </div>
+      )}
 
       {/* What syncs */}
       <div className="rounded-xl border border-border bg-surface p-6">

@@ -21,6 +21,26 @@ def _sync_products_to_sheets(business_id: str, products: list[dict]) -> None:
         with Session(engine) as session:
             biz = session.get(Business, business_id)
             company_name = sheets_mod.resolve_company_tab_name(biz, products)
+            if (
+                biz
+                and sheets_mod.is_placeholder_company_name(biz.name)
+                and company_name
+                and not sheets_mod.is_placeholder_company_name(company_name)
+            ):
+                biz.name = company_name
+                if not (biz.website or "").strip():
+                    first_url = next(
+                        (
+                            (p.get("sourceUrl") or p.get("source_url") or p.get("productUrl") or p.get("product_url") or "").strip()
+                            for p in products
+                            if (p.get("sourceUrl") or p.get("source_url") or p.get("productUrl") or p.get("product_url"))
+                        ),
+                        "",
+                    )
+                    if first_url:
+                        biz.website = first_url
+                session.add(biz)
+                session.commit()
         result = sheets_mod.sync_products(company_name, products)
         log.info("Sheets product sync (%s): %s", company_name, result)
     except Exception as exc:

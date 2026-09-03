@@ -25,6 +25,22 @@ def list_prospects(request: Request, user: AuthUser = Depends(get_current_user))
         return [prospect_to_frontend(r) for r in rows]
 
 
+@router.delete("/clear")
+def clear_prospects(request: Request, user: AuthUser = Depends(get_current_user)):
+    """Delete all leads for the active company so Discover can start clean."""
+    with Session(engine) as session:
+        business_id = resolve_business_id(request, user, session)
+        rows = session.exec(
+            select(ProspectRecord).where(ProspectRecord.business_id == business_id)
+        ).all()
+        deleted = 0
+        for row in rows:
+            session.delete(row)
+            deleted += 1
+        session.commit()
+        return {"ok": True, "deleted": deleted}
+
+
 @router.get("/{prospect_id}")
 def get_prospect(prospect_id: str, request: Request, user: AuthUser = Depends(get_current_user)):
     with Session(engine) as session:
@@ -63,6 +79,7 @@ def save_prospect(payload: Dict[str, Any], request: Request, user: AuthUser = De
             existing.business_id = business_id
             existing.source = data.get("source") or existing.source
             existing.phone = data.get("phone") or existing.phone
+            existing.why_now = data.get("why_now") or existing.why_now
             session.add(existing)
             session.commit()
             session.refresh(existing)
@@ -90,6 +107,7 @@ def save_prospect(payload: Dict[str, Any], request: Request, user: AuthUser = De
             business_id=business_id,
             source=data.get("source") or "",
             phone=data.get("phone") or "",
+            why_now=data.get("why_now") or "",
         )
         session.add(record)
         session.commit()
@@ -107,8 +125,7 @@ def _maybe_sync_prospect(record: ProspectRecord):
             from app.models.schemas import Business
             with Session(engine) as session:
                 biz = session.get(Business, record.business_id)
-                if biz and biz.name:
-                    seller = biz.name
+                seller = sheets_mod.resolve_company_tab_name(biz, fallback="Company")
         sheets_mod.sync_leads(seller, [{
             "id": record.id,
             "company_name": record.company_name,
@@ -117,6 +134,8 @@ def _maybe_sync_prospect(record: ProspectRecord):
             "industry": record.industry,
             "fit_score": record.fit_score,
             "why_this_prospect": record.why_this_prospect,
+            "why_now": record.why_now,
+            "intent": (record.fit_breakdown or {}).get("intent") or "",
             "stage": record.stage,
             "discovered_at": record.discovered_at,
             "source": record.source,

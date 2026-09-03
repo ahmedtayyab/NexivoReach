@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import onboarding, discovery, products, icp, prospects, auth, sheets, suggestions, companies
 import app.models.schemas  # ensure SQLModel models are imported so metadata is registered
 from app.database.session import init_db
-from app.config import settings, effective_app_url
+from app.config import settings, effective_app_url, database_backend
 
 STATIC_DIR = Path(os.getenv("STATIC_DIR", str(Path(__file__).resolve().parent.parent / "static")))
 
@@ -45,6 +45,7 @@ app.include_router(companies.router)
 @app.on_event("startup")
 def on_startup():
     init_db()
+    print(f"Database backend: {database_backend()}")
     if STATIC_DIR.is_dir():
         print(f"Serving frontend from {STATIC_DIR}")
     else:
@@ -53,7 +54,24 @@ def on_startup():
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "service": "NexivoReach Backend", "static": STATIC_DIR.is_dir()}
+    db_ok = True
+    db_error = None
+    try:
+        from sqlalchemy import text
+        from app.database.session import engine
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        db_ok = False
+        db_error = str(exc)[:200]
+    return {
+        "status": "healthy" if db_ok else "degraded",
+        "service": "NexivoReach Backend",
+        "static": STATIC_DIR.is_dir(),
+        "database": database_backend(),
+        "databaseOk": db_ok,
+        "databaseError": db_error,
+    }
 
 
 def _mount_frontend():

@@ -24,6 +24,21 @@ from app.tools.web_search import display_name_from_url, site_display_name_from_u
 
 log = logging.getLogger(__name__)
 
+GENERIC_COMPANY_NAMES = {
+    "",
+    "company",
+    "my company",
+    "new company",
+    "untitled",
+    "untitled company",
+    "business",
+    "catalog",
+}
+
+
+def is_placeholder_company_name(name: str | None) -> bool:
+    return (name or "").strip().lower() in GENERIC_COMPANY_NAMES
+
 # ── Column definitions ──────────────────────────────────────────────────────
 
 PRODUCT_HEADERS = [
@@ -33,8 +48,8 @@ PRODUCT_HEADERS = [
 
 LEAD_HEADERS = [
     "Seller Company", "Lead Name", "Website", "Phone", "Location",
-    "Industry", "Source", "Status", "Next action", "Fit Score",
-    "Why", "Discovered", "Last Updated",
+    "Industry", "Source", "Status", "Next action", "Fit Score", "Intent",
+    "Why this", "Why now", "Discovered", "Last Updated",
 ]
 
 TIMELINE_HEADERS = [
@@ -156,28 +171,33 @@ def _collect_catalog_urls(business: Any | None, products: list[dict]) -> list[st
     return urls
 
 
-def resolve_company_tab_name(business: Any | None, products: list[dict]) -> str:
+def resolve_company_tab_name(
+    business: Any | None,
+    products: list[dict] | None = None,
+    fallback: str = "Catalog",
+) -> str:
     """
-    Tab label for the products sheet: company profile name, else website title/domain.
+    Company label for Sheets: profile name, else website title/domain slug.
+    Treats generic names like "Company" as missing so the URL is used.
     """
+    products = products or []
     profile_name = ""
     if business is not None:
         profile_name = (getattr(business, "name", None) or "").strip()
-    generic = {"", "my company", "company", "untitled", "business"}
-    if profile_name and profile_name.lower() not in generic:
+    if profile_name and not is_placeholder_company_name(profile_name):
         return _sanitize_tab_label(profile_name)
 
     for url in _collect_catalog_urls(business, products):
         label = site_display_name_from_url(url)
-        if label:
+        if label and not is_placeholder_company_name(label):
             return _sanitize_tab_label(label)
 
     for url in _collect_catalog_urls(business, products):
         label = display_name_from_url(url)
-        if label:
+        if label and not is_placeholder_company_name(label):
             return _sanitize_tab_label(label)
 
-    return "Catalog"
+    return _sanitize_tab_label(fallback)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -264,7 +284,16 @@ def sync_leads(seller_name: str, prospects: list[dict]) -> dict:
 
     sheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip()
     sh = client.open_by_key(sheet_id)
-    seller = _sanitize_tab_label(seller_name or "Company")
+    generic = GENERIC_COMPANY_NAMES
+    resolved = (seller_name or "").strip()
+    if resolved.lower() in generic:
+        for p in prospects:
+            url = (p.get("seller_website") or p.get("sellerWebsite") or "").strip()
+            if url:
+                resolved = site_display_name_from_url(url) or display_name_from_url(url) or resolved
+                if resolved and resolved.lower() not in generic:
+                    break
+    seller = _sanitize_tab_label(resolved or "Company")
     tab_name = f"{seller} - Leads"
     ws = _get_or_create_sheet(sh, tab_name, LEAD_HEADERS)
     now = _now()
@@ -299,7 +328,7 @@ def sync_leads(seller_name: str, prospects: list[dict]) -> dict:
             "Won": "Onboard",
         }.get(stage, "Review")
         row_data = [
-            seller_name or seller,
+            seller,
             name,
             website,
             p.get("phone") or "",
@@ -309,7 +338,9 @@ def sync_leads(seller_name: str, prospects: list[dict]) -> dict:
             stage,
             next_action,
             str(p.get("fit_score") or p.get("fitScore") or ""),
+            str(p.get("intent") or (p.get("fitBreakdown") or p.get("fit_breakdown") or {}).get("intent") or ""),
             (p.get("why_this_prospect") or p.get("whyThisProspect") or "")[:300],
+            (p.get("why_now") or p.get("whyNow") or "")[:300],
             p.get("discovered_at") or p.get("discoveredAt") or "",
             now,
         ]
@@ -317,7 +348,7 @@ def sync_leads(seller_name: str, prospects: list[dict]) -> dict:
         if not match:
             match = index_by_name.get(name.lower())
         if match:
-            updates.append((f"A{match}:M{match}", row_data))
+            updates.append((f"A{match}:O{match}", row_data))
         else:
             appends.append(row_data)
 
@@ -341,3 +372,124 @@ def sync_prospect(prospect: dict) -> dict:
     """Single-lead wrapper — writes to that seller's Leads tab."""
     seller = prospect.get("seller_name") or prospect.get("sellerName") or "Company"
     return sync_leads(seller, [prospect])
+
+
+def list_restore_tabs() -> list[dict[str, Any]]:
+    """Return Products/Leads worksheet pairs found in the spreadsheet."""
+    client = _get_client()
+    if client is None:
+        return []
+    sheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip()
+    sh = client.open_by_key(sheet_id)
+    products: dict[str, str] = {}
+    leads: dict[str, str] = {}
+    for ws in sh.worksheets():
+        title = (ws.title or "").strip()
+        if title.endswith(" - Products"):
+            products[title[: -len(" - Products")]] = title
+        elif title.endswith(" - Leads"):
+            leads[title[: -len(" - Leads")]] = title
+    names = sorted(set(products) | set(leads))
+    return [
+        {
+            "companyName": name,
+            "productsTab": products.get(name),
+            "leadsTab": leads.get(name),
+        }
+        for name in names
+        if not is_placeholder_company_name(name)
+    ]
+
+
+def fetch_products_from_tab(tab_name: str) -> list[dict[str, Any]]:
+    client = _get_client()
+    if client is None:
+        return []
+    sheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip()
+    sh = client.open_by_key(sheet_id)
+    ws = sh.worksheet(tab_name)
+    rows = ws.get_all_values()
+    if not rows:
+        return []
+    header = [h.strip() for h in rows[0]]
+    idx = {h: i for i, h in enumerate(header)}
+
+    def cell(row: list[str], *names: str) -> str:
+        for name in names:
+            i = idx.get(name)
+            if i is not None and i < len(row):
+                return (row[i] or "").strip()
+        return ""
+
+    products: list[dict[str, Any]] = []
+    for row in rows[1:]:
+        name = cell(row, "Name")
+        if not name:
+            continue
+        in_stock_raw = cell(row, "In Stock").lower()
+        in_stock = None
+        if in_stock_raw in ("yes", "true", "1"):
+            in_stock = True
+        elif in_stock_raw in ("no", "false", "0"):
+            in_stock = False
+        products.append({
+            "id": cell(row, "ID") or f"prod-restored-{len(products)}",
+            "name": name,
+            "category": cell(row, "Category") or "Uncategorized",
+            "description": cell(row, "Description"),
+            "price": cell(row, "Price") or None,
+            "moq": cell(row, "MOQ") or None,
+            "productUrl": cell(row, "Product URL") or None,
+            "imageUrl": cell(row, "Image") or None,
+            "sourceUrl": cell(row, "Source Page") or None,
+            "inStock": in_stock,
+        })
+    return products
+
+
+def fetch_leads_from_tab(tab_name: str) -> list[dict[str, Any]]:
+    client = _get_client()
+    if client is None:
+        return []
+    sheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip()
+    sh = client.open_by_key(sheet_id)
+    ws = sh.worksheet(tab_name)
+    rows = ws.get_all_values()
+    if not rows:
+        return []
+    header = [h.strip() for h in rows[0]]
+    idx = {h: i for i, h in enumerate(header)}
+
+    def cell(row: list[str], *names: str) -> str:
+        for name in names:
+            i = idx.get(name)
+            if i is not None and i < len(row):
+                return (row[i] or "").strip()
+        return ""
+
+    leads: list[dict[str, Any]] = []
+    for row in rows[1:]:
+        name = cell(row, "Lead Name")
+        if not name:
+            continue
+        fit_raw = cell(row, "Fit Score")
+        try:
+            fit_score = int(float(fit_raw)) if fit_raw else 0
+        except ValueError:
+            fit_score = 0
+        leads.append({
+            "companyName": name,
+            "website": cell(row, "Website"),
+            "phone": cell(row, "Phone"),
+            "location": cell(row, "Location"),
+            "industry": cell(row, "Industry"),
+            "source": cell(row, "Source") or "web",
+            "stage": cell(row, "Status") or "To contact",
+            "fitScore": fit_score,
+            "intent": cell(row, "Intent"),
+            "whyThisProspect": cell(row, "Why this", "Why"),
+            "whyNow": cell(row, "Why now"),
+            "discoveredAt": cell(row, "Discovered"),
+        })
+    return leads
+

@@ -143,9 +143,10 @@ def results_to_companies(results: List[Dict[str, str]], target_location: str = "
         companies.append({
             "company_name": name[:120],
             "website": url,
-            "location": _location_from_text(f"{title} {snippet}", target_location),
+            "location": _location_from_text(f"{title} {snippet}", ""),
             "industry": "",
             "snippet": snippet[:500],
+            "title": title,
             "_rank": homepage_bonus - article_penalty,
         })
     companies.sort(key=lambda row: row.get("_rank", 0), reverse=True)
@@ -166,8 +167,9 @@ def _location_from_text(text: str, fallback: str = "") -> str:
     ]
     found = [p for p in places if re.search(rf"\b{re.escape(p)}\b", blob, re.I)]
     if found:
-        return ", ".join(dict.fromkeys(found) )[:80]
-    return fallback or "Unknown"
+        return ", ".join(dict.fromkeys(found))[:80]
+    # Never stamp the hunt country onto empty locations.
+    return (fallback or "").strip()
 
 
 class WebSearchTool:
@@ -210,9 +212,10 @@ class WebSearchTool:
             leads.append({
                 "company_name": name[:120],
                 "website": website,
-                "location": address or target_location or "",
+                "location": address or "",
                 "industry": "",
                 "snippet": (p.get("type") or p.get("category") or "")[:500],
+                "title": name,
                 "phone": phone,
                 "source": "maps",
             })
@@ -231,33 +234,62 @@ class WebSearchTool:
 
     async def hunt_leads(
         self,
-        queries: List[str],
+        queries: List[Any],
         target_location: str = "",
         exclude_domains: Optional[set] = None,
         limit: int = 40,
+        use_maps: bool = False,
     ) -> List[Dict[str, Any]]:
-        """Run several web + maps searches and merge unique companies."""
+        """Run a wave of web searches (Maps only when the plan says so)."""
         exclude_domains = exclude_domains or set()
         merged: List[Dict[str, Any]] = []
         seen: set = set(exclude_domains)
 
-        async def run_one(q: str) -> List[Dict[str, Any]]:
-            web, maps = await asyncio.gather(
-                self.search_companies(q, target_location),
-                self.search_maps(q, target_location),
-                return_exceptions=True,
-            )
+        specs: List[Dict[str, Any]] = []
+        for q in queries[:8]:
+            if isinstance(q, str):
+                specs.append({"query": q, "use_maps": use_maps, "pool": "", "family": ""})
+            elif isinstance(q, dict):
+                specs.append(q)
+            else:
+                specs.append({
+                    "query": getattr(q, "query", ""),
+                    "use_maps": bool(getattr(q, "use_maps", use_maps)),
+                    "pool": getattr(q, "pool", ""),
+                    "family": getattr(q, "family", ""),
+                })
+
+        async def run_one(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+            q = (spec.get("query") or "").strip()
+            if not q:
+                return []
+            maps_on = bool(spec.get("use_maps") or use_maps)
+            web_task = self.search_companies(q, target_location)
+            if maps_on:
+                web, maps = await asyncio.gather(
+                    web_task,
+                    self.search_maps(q, target_location),
+                    return_exceptions=True,
+                )
+            else:
+                web = await web_task
+                maps = []
             out: List[Dict[str, Any]] = []
             if isinstance(maps, list):
-                out.extend(maps)
+                for row in maps:
+                    row.setdefault("source", "maps")
+                    row["discovery_query"] = q
+                    row["discovery_pool"] = spec.get("pool") or "maps_local"
+                    out.append(row)
             if isinstance(web, list):
                 for row in web:
                     row.setdefault("source", "web")
+                    row["discovery_query"] = q
+                    row["discovery_pool"] = spec.get("pool") or spec.get("family") or "web"
                     out.append(row)
             return out
 
-        chunks = queries[:8]
-        results = await asyncio.gather(*[run_one(q) for q in chunks], return_exceptions=True)
+        results = await asyncio.gather(*[run_one(s) for s in specs], return_exceptions=True)
         for batch in results:
             if not isinstance(batch, list):
                 continue
@@ -369,7 +401,32 @@ class WebSearchTool:
             })
         return hits
 
+    async def scrape_homepage(self, url: str, limit: int = 8000) -> Dict[str, Any]:
+        """Cheap single-page fetch for qualification. Does not crawl the shop catalog."""
+        if not url or _should_skip(url):
+            return {"text": "", "title": "", "url": url or "", "ok": False}
+        try:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=HEADERS) as client:
+                res = await client.get(url)
+                if res.status_code != 200 or not res.text:
+                    return {"text": "", "title": "", "url": str(res.url), "ok": False}
+                soup = BeautifulSoup(res.text, "html.parser")
+                title = ""
+                if soup.title and soup.title.get_text(strip=True):
+                    title = soup.title.get_text(strip=True)[:160]
+                meta = soup.find("meta", attrs={"name": "description"})
+                desc = (meta.get("content") or "") if meta else ""
+                text = _html_to_text(res.text, limit=limit)
+                if desc:
+                    text = f"{desc}\n{text}"[:limit]
+                return {"text": text, "title": title, "url": str(res.url), "ok": True, "status": res.status_code}
+        except Exception:
+            return {"text": "", "title": "", "url": url, "ok": False}
+
     async def scrape_site_content(self, url: str) -> str:
+        page = await self.scrape_homepage(url)
+        if page.get("text"):
+            return page["text"]
         pages = await self.scrape_catalog_pages(url)
         return pages[0][1] if pages else ""
 
