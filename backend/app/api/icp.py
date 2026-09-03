@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from sqlmodel import Session
 from app.database.session import engine
 from app.models.schemas import ICPConfig
 from app.api.serializers import icp_to_frontend
-from app.api.deps import AuthUser, get_current_user
+from app.api.deps import AuthUser, get_current_user, resolve_business_id
 
 router = APIRouter(prefix="/api/icp", tags=["icp"])
 
@@ -21,17 +21,20 @@ class ICPRequest(BaseModel):
 
 
 @router.get("/")
-def get_icp_profile(user: AuthUser = Depends(get_current_user)):
+def get_icp_profile(request: Request, user: AuthUser = Depends(get_current_user)):
     with Session(engine) as session:
-        icp = session.get(ICPConfig, user.id)
+        business_id = resolve_business_id(request, user, session)
+        icp = session.get(ICPConfig, business_id)
         return {"icp": icp_to_frontend(icp)}
 
 
 @router.post("/save")
-def save_icp_profile(payload: ICPRequest, user: AuthUser = Depends(get_current_user)):
+def save_icp_profile(payload: ICPRequest, request: Request, user: AuthUser = Depends(get_current_user)):
     with Session(engine) as session:
-        icp = session.get(ICPConfig, user.id) or ICPConfig(id=user.id)
-        icp.id = user.id
+        business_id = resolve_business_id(request, user, session)
+        icp = session.get(ICPConfig, business_id) or ICPConfig(id=business_id, business_id=business_id)
+        icp.id = business_id
+        icp.business_id = business_id
         icp.target_buyer_types = payload.targetBuyerTypes
         icp.target_countries = payload.targetCountries
         icp.company_size = payload.companySize

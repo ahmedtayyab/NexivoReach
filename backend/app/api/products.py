@@ -1,26 +1,25 @@
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, UploadFile, File
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from sqlmodel import Session, select
 from app.providers.factory import get_ai_provider
 from app.tools.web_search import WebSearchTool
 from app.database.session import engine
-from app.models.schemas import ProductItem
+from app.models.schemas import ProductItem, Business
 from app.api.serializers import product_to_frontend, normalize_extracted_product
-from app.api.deps import AuthUser, get_current_user
-from app.models.schemas import Business
+from app.api.deps import AuthUser, get_current_user, resolve_business_id
 from app.integrations import sheets as sheets_mod
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/products", tags=["products"])
 
 
-def _sync_products_to_sheets(user_id: str, products: list[dict]) -> None:
+def _sync_products_to_sheets(business_id: str, products: list[dict]) -> None:
     try:
         with Session(engine) as session:
-            biz = session.get(Business, user_id)
+            biz = session.get(Business, business_id)
             company_name = sheets_mod.resolve_company_tab_name(biz, products)
         result = sheets_mod.sync_products(company_name, products)
         log.info("Sheets product sync (%s): %s", company_name, result)
@@ -93,20 +92,25 @@ async def upload_catalog_file(file: UploadFile = File(...), _user: AuthUser = De
 
 
 @router.get("/")
-def list_products(user: AuthUser = Depends(get_current_user)):
+def list_products(request: Request, user: AuthUser = Depends(get_current_user)):
     with Session(engine) as session:
-        rows = session.exec(select(ProductItem).where(ProductItem.user_id == user.id)).all()
+        business_id = resolve_business_id(request, user, session)
+        rows = session.exec(
+            select(ProductItem).where(ProductItem.business_id == business_id)
+        ).all()
         return [product_to_frontend(row) for row in rows]
 
 
 @router.post("/save")
 def save_products(
     req: ProductSaveRequest,
+    request: Request,
     background_tasks: BackgroundTasks,
     user: AuthUser = Depends(get_current_user),
 ):
     with Session(engine) as session:
-        for row in session.exec(select(ProductItem).where(ProductItem.user_id == user.id)).all():
+        business_id = resolve_business_id(request, user, session)
+        for row in session.exec(select(ProductItem).where(ProductItem.business_id == business_id)).all():
             session.delete(row)
         saved = []
         for index, raw in enumerate(req.products):
@@ -123,6 +127,7 @@ def save_products(
                 source_url=normalized.get("sourceUrl"),
                 in_stock=normalized.get("inStock"),
                 user_id=user.id,
+                business_id=business_id,
             )
             session.add(item)
             saved.append(item)
@@ -130,6 +135,6 @@ def save_products(
         result = [product_to_frontend(item) for item in saved]
 
         if sheets_mod.is_configured():
-            background_tasks.add_task(_sync_products_to_sheets, user.id, result)
+            background_tasks.add_task(_sync_products_to_sheets, business_id, result)
 
         return result

@@ -16,7 +16,7 @@ export default function LoginView({ error }: Props) {
         <div className="bg-panel-elevated border border-border rounded-lg p-6">
           <h1 className="text-[15px] font-semibold text-ink">Sign in to continue</h1>
           <p className="text-[13px] text-ink-secondary mt-1 mb-6">
-            Use your Google account to access your workspace, catalog, and prospect queue.
+            Use your Google account to save your companies, catalogs, and prospect queues — and pick up where you left off.
           </p>
 
           {error && (

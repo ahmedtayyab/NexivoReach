@@ -1,14 +1,18 @@
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, JSON
 
+
 class Business(SQLModel, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
-    name: str
-    website: str
-    description: str
+    user_id: Optional[str] = Field(default=None, index=True)
+    name: str = ""
+    website: str = ""
+    description: str = ""
     target_markets: List[str] = Field(default=[], sa_type=JSON)
     primary_categories: List[str] = Field(default=[], sa_type=JSON)
     extracted_by_ai: bool = True
+    updated_at: str = ""
+
 
 class ProductItem(SQLModel, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
@@ -19,12 +23,15 @@ class ProductItem(SQLModel, table=True):
     moq: Optional[str] = None
     product_url: Optional[str] = None
     image_url: Optional[str] = None
-    source_url: Optional[str] = None   # page it was scraped from
-    in_stock: Optional[bool] = None    # None = unknown
+    source_url: Optional[str] = None
+    in_stock: Optional[bool] = None
     user_id: Optional[str] = Field(default=None, index=True)
+    business_id: Optional[str] = Field(default=None, index=True)
+
 
 class ICPConfig(SQLModel, table=True):
-    id: Optional[str] = Field(default=None, primary_key=True)
+    id: Optional[str] = Field(default=None, primary_key=True)  # same as business_id
+    business_id: Optional[str] = Field(default=None, index=True)
     target_buyer_types: List[str] = Field(default=[], sa_type=JSON)
     target_countries: List[str] = Field(default=[], sa_type=JSON)
     company_size: str = "Medium"
@@ -32,6 +39,7 @@ class ICPConfig(SQLModel, table=True):
     shipping_markets: List[str] = Field(default=[], sa_type=JSON)
     sales_constraints: List[str] = Field(default=[], sa_type=JSON)
     buying_signals: List[dict] = Field(default=[], sa_type=JSON)
+
 
 class ProspectRecord(SQLModel, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
@@ -51,6 +59,8 @@ class ProspectRecord(SQLModel, table=True):
     discovered_at: str
     agent_timeline: List[dict] = Field(default=[], sa_type=JSON)
     user_id: Optional[str] = Field(default=None, index=True)
+    business_id: Optional[str] = Field(default=None, index=True)
+
 
 class AgentRunRecord(SQLModel, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
@@ -62,6 +72,7 @@ class AgentRunRecord(SQLModel, table=True):
     status: str
     decisions: List[dict] = Field(default=[], sa_type=JSON)
     user_id: Optional[str] = Field(default=None, index=True)
+    business_id: Optional[str] = Field(default=None, index=True)
 
 
 class User(SQLModel, table=True):
@@ -71,3 +82,4 @@ class User(SQLModel, table=True):
     name: str = ""
     picture: str = ""
     created_at: str = ""
+    active_business_id: Optional[str] = Field(default=None, index=True)

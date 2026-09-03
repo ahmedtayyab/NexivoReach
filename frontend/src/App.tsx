@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog, AuthUser } from './types';
 import {
   emptyBusinessInfo,
@@ -7,7 +7,7 @@ import {
   emptyProspects,
   emptyAgentLogs,
 } from './data/defaults';
-import { apiFetch } from './lib/api';
+import { apiFetch, setActiveBusinessId } from './lib/api';
 import { parseIcpResponse, parseProfileResponse } from './lib/workspace';
 import {
   type AppRoute,
@@ -34,6 +34,8 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [activeRoute, setActiveRoute] = useState<AppRoute>('queue');
+  const [companies, setCompanies] = useState<BusinessInfo[]>([]);
+  const [activeCompanyId, setActiveCompanyIdState] = useState<string | null>(null);
   const [businessInfo, setBusinessInfo] = useState<BusinessInfo>(emptyBusinessInfo);
   const [products, setProducts] = useState<Product[]>(emptyProducts);
   const [icp, setIcp] = useState<IdealCustomerProfile>(emptyICP);
@@ -58,7 +60,21 @@ export default function App() {
     }
   };
 
-  const loadWorkspace = async () => {
+  const loadCompanies = useCallback(async () => {
+    const resp = await apiFetch('/api/companies/');
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const list = Array.isArray(data.companies) ? (data.companies as BusinessInfo[]) : [];
+    setCompanies(list);
+    const active = (data.activeBusinessId as string) || list[0]?.id || null;
+    if (active) {
+      setActiveBusinessId(active);
+      setActiveCompanyIdState(active);
+    }
+    return active;
+  }, []);
+
+  const loadCompanyData = useCallback(async () => {
     const [prospectsResp, logsResp, profileResp, productsResp, icpResp] = await Promise.all([
       apiFetch('/api/prospects/'),
       apiFetch('/api/discovery/runs'),
@@ -70,22 +86,37 @@ export default function App() {
     if (prospectsResp.ok) {
       const list = await prospectsResp.json();
       if (Array.isArray(list)) setProspects(list as Prospect[]);
+    } else {
+      setProspects(emptyProspects);
     }
     if (logsResp.ok) {
       const logs = await logsResp.json();
       if (Array.isArray(logs)) setAgentLogs(logs as AgentRunLog[]);
+    } else {
+      setAgentLogs(emptyAgentLogs);
     }
     if (profileResp.ok) {
       setBusinessInfo(parseProfileResponse(await profileResp.json()));
+    } else {
+      setBusinessInfo(emptyBusinessInfo);
     }
     if (productsResp.ok) {
       const catalog = await productsResp.json();
       if (Array.isArray(catalog)) setProducts(catalog as Product[]);
+    } else {
+      setProducts(emptyProducts);
     }
     if (icpResp.ok) {
       setIcp(parseIcpResponse(await icpResp.json()));
+    } else {
+      setIcp(emptyICP);
     }
-  };
+  }, []);
+
+  const bootstrap = useCallback(async () => {
+    await loadCompanies();
+    await loadCompanyData();
+  }, [loadCompanies, loadCompanyData]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -102,7 +133,7 @@ export default function App() {
         setAuthConfigured(Boolean(data.configured));
         setUser(data.user ?? null);
         if (!data.configured || data.user) {
-          await loadWorkspace();
+          await bootstrap();
         }
         if (data.user) {
           const initialRoute = resolveRouteFromLocation();
@@ -116,7 +147,7 @@ export default function App() {
         setAuthLoading(false);
       }
     })();
-  }, []);
+  }, [bootstrap]);
 
   useEffect(() => {
     const syncRoute = () => {
@@ -153,6 +184,32 @@ export default function App() {
 
   const handleSettingsSectionChange = (section: SettingsSection) => {
     navigate(section);
+  };
+
+  const handleSwitchCompany = async (id: string) => {
+    setActiveBusinessId(id);
+    setActiveCompanyIdState(id);
+    setSelectedProspectId(null);
+    await apiFetch(`/api/companies/${id}/activate`, { method: 'POST' });
+    await loadCompanyData();
+    await loadCompanies();
+  };
+
+  const handleAddCompany = async () => {
+    const resp = await apiFetch('/api/companies/', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'New company' }),
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const id = data.activeBusinessId || data.company?.id;
+    if (id) {
+      setActiveBusinessId(id);
+      setActiveCompanyIdState(id);
+    }
+    await loadCompanies();
+    await loadCompanyData();
+    navigate('company');
   };
 
   const persistProspect = async (prospect: Prospect) => {
@@ -207,25 +264,30 @@ export default function App() {
     setAgentLogs(prev => [log, ...prev]);
   };
 
-  const handleSaveBusiness = (info: BusinessInfo) => {
+  const handleSaveBusiness = async (info: BusinessInfo) => {
     setBusinessInfo(info);
-    void apiFetch('/api/onboarding/profile', {
+    const resp = await apiFetch('/api/onboarding/profile', {
       method: 'POST',
       body: JSON.stringify(info),
     });
+    if (resp.ok) {
+      const saved = await resp.json();
+      if (saved?.id) setBusinessInfo(prev => ({ ...prev, ...saved }));
+      await loadCompanies();
+    }
   };
 
-  const handleSaveProducts = (next: Product[]) => {
+  const handleSaveProducts = async (next: Product[]) => {
     setProducts(next);
-    void apiFetch('/api/products/save', {
+    await apiFetch('/api/products/save', {
       method: 'POST',
       body: JSON.stringify({ products: next }),
     });
   };
 
-  const handleSaveICP = (next: IdealCustomerProfile) => {
+  const handleSaveICP = async (next: IdealCustomerProfile) => {
     setIcp(next);
-    void apiFetch('/api/icp/save', {
+    await apiFetch('/api/icp/save', {
       method: 'POST',
       body: JSON.stringify(next),
     });
@@ -234,6 +296,9 @@ export default function App() {
   const handleLogout = async () => {
     await apiFetch('/api/auth/logout', { method: 'POST' });
     setUser(null);
+    setCompanies([]);
+    setActiveCompanyIdState(null);
+    setActiveBusinessId(null);
     setProspects(emptyProspects);
     setAgentLogs(emptyAgentLogs);
     setBusinessInfo(emptyBusinessInfo);
@@ -261,7 +326,10 @@ export default function App() {
         activeRoute={activeRoute}
         onTabChange={handleSidebarChange}
         pendingCount={pendingCount}
-        workspaceName={businessInfo.name || 'Workspace'}
+        companies={companies.length ? companies : [businessInfo]}
+        activeCompanyId={activeCompanyId || businessInfo.id}
+        onSwitchCompany={handleSwitchCompany}
+        onAddCompany={handleAddCompany}
         user={user}
         onLogout={authConfigured ? handleLogout : undefined}
       />

@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from app.api import onboarding, discovery, products, icp, prospects, auth, sheets, suggestions
+from app.api import onboarding, discovery, products, icp, prospects, auth, sheets, suggestions, companies
 import app.models.schemas  # ensure SQLModel models are imported so metadata is registered
 from app.database.session import init_db
 from app.config import settings, effective_app_url
@@ -39,6 +39,7 @@ app.include_router(icp.router)
 app.include_router(prospects.router)
 app.include_router(sheets.router)
 app.include_router(suggestions.router)
+app.include_router(companies.router)
 
 
 @app.on_event("startup")

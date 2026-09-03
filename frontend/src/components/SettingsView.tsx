@@ -45,7 +45,7 @@ export default function SettingsView({
           {titles[section]}
         </h1>
         <p className="text-[13px] text-ink-secondary mt-0.5">
-          Configure your workspace, product catalog, and targeting rules.
+          Configure your company profile, product catalog, and targeting rules.
         </p>
       </div>
 
