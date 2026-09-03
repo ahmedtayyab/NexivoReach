@@ -6,7 +6,6 @@ import {
   Upload, 
   Plus, 
   Sparkles, 
-  Check, 
   Edit3, 
   Trash2, 
   ArrowRight,
@@ -41,8 +40,8 @@ export default function CatalogView({ products, onSaveProducts, onNext }: Props)
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
   const [moq, setMoq] = useState('');
-  const [targetBuyer, setTargetBuyer] = useState('');
-  const [specsText, setSpecsText] = useState('');
+  const [productUrl, setProductUrl] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
 
   const handleUrlExtract = () => {
     if (!urlInput.trim()) return;
@@ -55,11 +54,8 @@ export default function CatalogView({ products, onSaveProducts, onNext }: Props)
         description: 'Single and dual-arm cable fly station with independent weight stacks and variable resistance cams.',
         price: '$2,750',
         moq: '2 Units',
-        specs: ['100kg weight stack x2', 'Variable cam cable arc', 'Ergonomic seat'],
-        targetBuyer: 'Commercial Gyms, Rehab Facilities',
         productUrl: urlInput,
-        aiExtracted: true,
-        verifiedByUser: false,
+        sourceUrl: urlInput,
       };
       onSaveProducts([newProduct, ...products]);
       setIsUrlExtracting(false);
@@ -79,10 +75,6 @@ export default function CatalogView({ products, onSaveProducts, onNext }: Props)
         description: '3-tier commercial heavy-duty dumbbell storage rack pre-loaded with CPU rubber dumbbells.',
         price: '$1,950',
         moq: '1 Rack Set',
-        specs: ['Commercial grade 11-gauge steel frame', 'Rubber end caps'],
-        targetBuyer: 'Independent Fitness Centers',
-        aiExtracted: true,
-        verifiedByUser: false,
       };
       onSaveProducts([newProduct, ...products]);
       setIsFileParsing(false);
@@ -96,8 +88,8 @@ export default function CatalogView({ products, onSaveProducts, onNext }: Props)
     setDescription('');
     setPrice('');
     setMoq('');
-    setTargetBuyer('');
-    setSpecsText('');
+    setProductUrl('');
+    setImageUrl('');
     setShowFormModal(true);
   };
 
@@ -108,14 +100,9 @@ export default function CatalogView({ products, onSaveProducts, onNext }: Props)
     setDescription(p.description);
     setPrice(p.price || '');
     setMoq(p.moq || '');
-    setTargetBuyer(p.targetBuyer || '');
-    setSpecsText(p.specs?.join(', ') || '');
+    setProductUrl(p.productUrl || '');
+    setImageUrl(p.imageUrl || '');
     setShowFormModal(true);
-  };
-
-  const handleVerifyProduct = (id: string) => {
-    const updated = products.map(p => p.id === id ? { ...p, verifiedByUser: true } : p);
-    onSaveProducts(updated);
   };
 
   const handleDeleteProduct = (id: string) => {
@@ -131,10 +118,8 @@ export default function CatalogView({ products, onSaveProducts, onNext }: Props)
       description,
       price,
       moq,
-      targetBuyer,
-      specs: specsText.split(',').map(s => s.trim()).filter(Boolean),
-      aiExtracted: editingProduct ? editingProduct.aiExtracted : false,
-      verifiedByUser: true,
+      productUrl: productUrl || undefined,
+      imageUrl: imageUrl || undefined,
     };
 
     if (editingProduct) {
@@ -257,35 +242,21 @@ export default function CatalogView({ products, onSaveProducts, onNext }: Props)
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {products.map((product) => (
             <div key={product.id} className="bg-[#0b101c] border border-slate-800 hover:border-slate-700 rounded-xl p-4 space-y-3 transition-all relative">
-              <div className="flex items-start justify-between">
-                <div>
+              <div className="flex items-start gap-3">
+                {product.imageUrl ? (
+                  <img
+                    src={product.imageUrl}
+                    alt={product.name}
+                    className="w-14 h-14 rounded object-cover border border-slate-700 shrink-0"
+                  />
+                ) : (
+                  <div className="w-14 h-14 rounded border border-slate-700 bg-slate-900 shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-400 bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-800/40">
                     {product.category}
                   </span>
                   <h3 className="font-semibold text-white text-sm mt-1">{product.name}</h3>
-                </div>
-
-                <div className="flex items-center space-x-1.5">
-                  {product.aiExtracted && (
-                    <span className="text-[10px] font-medium bg-blue-950 text-blue-300 border border-blue-800/50 px-1.5 py-0.5 rounded flex items-center space-x-1">
-                      <Sparkles className="w-3 h-3 text-blue-400" />
-                      <span>AI Extracted</span>
-                    </span>
-                  )}
-
-                  {product.verifiedByUser ? (
-                    <span className="text-[10px] font-medium bg-emerald-950 text-emerald-300 border border-emerald-800/50 px-1.5 py-0.5 rounded flex items-center space-x-1">
-                      <Check className="w-3 h-3 text-emerald-400" />
-                      <span>Verified</span>
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => handleVerifyProduct(product.id)}
-                      className="text-[10px] font-semibold bg-amber-950 text-amber-300 hover:bg-amber-900 border border-amber-800/60 px-2 py-0.5 rounded transition-all"
-                    >
-                      Verify
-                    </button>
-                  )}
                 </div>
               </div>
 
@@ -300,21 +271,19 @@ export default function CatalogView({ products, onSaveProducts, onNext }: Props)
                   <span className="text-slate-400">MOQ:</span>{' '}
                   <span className="text-slate-200 font-medium">{product.moq || 'N/A'}</span>
                 </div>
-                <div className="col-span-2">
-                  <span className="text-slate-400">Target Buyer:</span>{' '}
-                  <span className="text-indigo-300 font-medium">{product.targetBuyer || 'Commercial Buyers'}</span>
-                </div>
+                {product.productUrl && (
+                  <div className="col-span-2">
+                    <a
+                      href={product.productUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-indigo-300 hover:underline"
+                    >
+                      View product page
+                    </a>
+                  </div>
+                )}
               </div>
-
-              {product.specs && product.specs.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {product.specs.map((spec, i) => (
-                    <span key={i} className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded">
-                      {spec}
-                    </span>
-                  ))}
-                </div>
-              )}
 
               <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-800/60">
                 <button
@@ -408,22 +377,21 @@ export default function CatalogView({ products, onSaveProducts, onNext }: Props)
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-300 mb-1">Target Buyer Type</label>
+                  <label className="block text-slate-300 mb-1">Product URL</label>
                   <input
-                    type="text"
-                    value={targetBuyer}
-                    onChange={e => setTargetBuyer(e.target.value)}
+                    type="url"
+                    value={productUrl}
+                    onChange={e => setProductUrl(e.target.value)}
                     className="w-full bg-[#0b101c] border border-slate-700 rounded p-2 text-slate-200"
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-slate-300 mb-1">Specifications (Comma separated)</label>
+                <label className="block text-slate-300 mb-1">Image URL</label>
                 <input
-                  type="text"
-                  value={specsText}
-                  onChange={e => setSpecsText(e.target.value)}
-                  placeholder="e.g. 11-gauge steel, 1000kg capacity"
+                  type="url"
+                  value={imageUrl}
+                  onChange={e => setImageUrl(e.target.value)}
                   className="w-full bg-[#0b101c] border border-slate-700 rounded p-2 text-slate-200"
                 />
               </div>
