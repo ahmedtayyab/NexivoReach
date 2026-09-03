@@ -59,23 +59,50 @@ class FallbackProvider(AIProvider):
 
     async def extract_products(self, content: str, source_type: str = "text") -> List[Dict[str, Any]]:
         products: List[Dict[str, Any]] = []
-        for line in (content or "").splitlines():
-            line = line.strip(" -•\t")
-            if len(line) < 8 or len(line) > 140:
+        seen = set()
+        skip_prefixes = (
+            "home", "about", "contact", "search", "welcome", "our categories",
+            "feature products", "get special", "download", "links", "skip",
+            "view category", "products", "customer care",
+        )
+        skip_exact = {
+            "alwasi", "alwasi enterprises", "enterprise", "fitness & bodybuilding",
+            "sports wears", "sports goods", "all kind of gloves", "catalogue",
+        }
+        for raw_line in (content or "").splitlines():
+            line = re.sub(r"\s+", " ", raw_line).strip(" -•\t|")
+            if len(line) < 4 or len(line) > 90:
                 continue
             if not re.search(r"[A-Za-z]", line):
                 continue
-            if re.match(r"^(the|this|we|our|and|for)\b", line, re.I):
+            lowered = line.lower()
+            if any(lowered.startswith(prefix) for prefix in skip_prefixes):
                 continue
-            if re.search(r"\b(price|usd|eur|gbp|\$|moq|sku)\b", line, re.I) or re.match(r"^[A-Z][\w &/\-]{3,80}$", line):
-                products.append({
-                    "name": re.split(r"\s[-–:|]\s", line)[0][:80],
-                    "category": "Uncategorized",
-                    "description": line,
-                    "ai_extracted": False,
-                    "verified_by_user": False,
-                })
-            if len(products) >= 8:
+            if lowered in skip_exact:
+                continue
+            if re.search(r"\b(copyright|privacy|cookie|login|cart|wishlist)\b", lowered):
+                continue
+            if re.match(r"^art\s*#", lowered) or re.match(r"^awe-\d+", lowered):
+                continue
+            looks_like_product = bool(re.search(
+                r"\b(glove|belt|strap|hoodie|jacket|shirt|suit|bag|wrap|sleeve|hook|band|coverall)\b",
+                lowered,
+            ))
+            if not looks_like_product:
+                continue
+            name = re.split(r"\s[-–:|]\s", line)[0][:80].strip()
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            products.append({
+                "name": name,
+                "category": _guess_category(name),
+                "description": line,
+                "ai_extracted": False,
+                "verified_by_user": False,
+            })
+            if len(products) >= 16:
                 break
         return products
 
@@ -171,6 +198,26 @@ class FallbackProvider(AIProvider):
             ),
             "personalizedReason": f"Drafted from {company_name}'s {signal_label.lower()} and catalog match on {product_name}.",
         }
+
+
+def _guess_category(name: str) -> str:
+    lowered = (name or "").lower()
+    mapping = (
+        ("glove", "Gloves"),
+        ("belt", "Fitness & Bodybuilding"),
+        ("strap", "Fitness & Bodybuilding"),
+        ("wrap", "Fitness & Bodybuilding"),
+        ("sleeve", "Fitness & Bodybuilding"),
+        ("hoodie", "Sportswear"),
+        ("jacket", "Sportswear"),
+        ("shirt", "Sportswear"),
+        ("suit", "Sportswear"),
+        ("bag", "Sports Goods"),
+    )
+    for token, category in mapping:
+        if token in lowered:
+            return category
+    return "Uncategorized"
 
 
 def _excerpt_around(text: str, keywords: List[str], window: int = 140) -> str:

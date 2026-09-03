@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import type { BusinessInfo, Product, IdealCustomerProfile } from '../types';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import SuggestionChips from './SuggestionChips';
+import { BUYER_SUGGESTIONS, CATEGORY_SUGGESTIONS, MARKET_SUGGESTIONS } from '../data/suggestions';
 
 import type { SettingsSection } from '../lib/navigation';
 
@@ -148,8 +150,22 @@ function CompanySection({ businessInfo, onSave }: { businessInfo: BusinessInfo; 
 
       <Field label="Business name" value={name} onChange={setName} placeholder="Acme Manufacturing" />
       <Field label="Website" value={website} onChange={setWebsite} placeholder="https://..." />
-      <Field label="Target markets" value={markets} onChange={setMarkets} placeholder="Germany, United Kingdom, Netherlands" />
-      <Field label="Product categories" value={categories} onChange={setCategories} placeholder="Industrial components, custom assemblies..." />
+      <SuggestionChips
+        label="Target markets"
+        hint="Click a market to add it, or type your own."
+        value={markets}
+        onChange={setMarkets}
+        suggestions={MARKET_SUGGESTIONS}
+        placeholder="United States, United Kingdom, UAE"
+      />
+      <SuggestionChips
+        label="Product categories"
+        hint="Pick the closest categories so discovery knows what you sell."
+        value={categories}
+        onChange={setCategories}
+        suggestions={CATEGORY_SUGGESTIONS}
+        placeholder="Fitness & Bodybuilding, Sportswear, Gloves"
+      />
 
       <div className="pt-1">
         <button
@@ -182,6 +198,7 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
   const [inputMode, setInputMode] = useState<'url' | 'file' | 'manual'>('url');
   const [url, setUrl] = useState('');
   const [scraping, setScraping] = useState(false);
+  const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const [manual, setManual] = useState({ name: '', category: '', description: '', price: '' });
@@ -198,6 +215,7 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
     if (!url.trim()) return;
     setScraping(true);
     setError('');
+    setStatus('Reading the website and looking for products...');
     try {
       const resp = await apiFetch('/api/products/extract-url', {
         method: 'POST',
@@ -206,10 +224,17 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
       });
       if (!resp.ok) throw new Error('Extract failed');
       const data = await resp.json();
-      mergeProducts((data.products || []) as Product[]);
+      const found = (data.products || []) as Product[];
+      mergeProducts(found);
+      setStatus(
+        found.length
+          ? data.message || `Added ${found.length} product${found.length === 1 ? '' : 's'} from the website.`
+          : data.message || 'No products were found. Try a product page URL or add items manually.'
+      );
     } catch (e) {
       console.warn(e);
-      setError('Could not extract products from that URL.');
+      setStatus('');
+      setError('Could not extract products from that URL. Try a product or catalog page, or add items manually.');
     } finally {
       setScraping(false);
     }
@@ -281,7 +306,7 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
             type="url"
             value={url}
             onChange={e => setUrl(e.target.value)}
-            placeholder="https://..."
+            placeholder="https://www.alwasi-ent.com"
             className="flex-1 border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted"
           />
           <button
@@ -293,6 +318,7 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
           </button>
         </div>
       )}
+      {status && <p className="text-[12px] text-ink-secondary">{status}</p>}
 
       {inputMode === 'file' && (
         <div>
@@ -414,8 +440,22 @@ function ICPSection({ icp, onSave }: { icp: IdealCustomerProfile; onSave: (i: Id
     <div className="grid grid-cols-1 md:grid-cols-2 gap-10 max-w-3xl">
       <div className="space-y-4">
         <p className="section-label">Target Buyer Criteria</p>
-        <Field label="Buyer types" value={buyerTypes} onChange={setBuyerTypes} placeholder="Hospital groups, water utilities, OEMs" />
-        <Field label="Target countries" value={countries} onChange={setCountries} placeholder="Germany, United Kingdom" />
+        <SuggestionChips
+          label="Buyer types"
+          hint="Who typically buys from you? Click to add."
+          value={buyerTypes}
+          onChange={setBuyerTypes}
+          suggestions={BUYER_SUGGESTIONS}
+          placeholder="Gyms & fitness clubs, Sports retailers"
+        />
+        <SuggestionChips
+          label="Target countries"
+          hint="Choose the markets you want the agent to search first."
+          value={countries}
+          onChange={setCountries}
+          suggestions={MARKET_SUGGESTIONS}
+          placeholder="United Arab Emirates, Germany"
+        />
         <div>
           <label className="block text-[12px] font-medium text-ink-secondary mb-1">Company size</label>
           <select

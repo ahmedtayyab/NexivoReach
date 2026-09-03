@@ -39,10 +39,20 @@ def _file_to_text(filename: str, raw: bytes) -> str:
 @router.post("/extract-url")
 async def extract_products_from_url(req: UrlParseRequest, _user: AuthUser = Depends(get_current_user)):
     scraper = WebSearchTool()
-    page_text = await scraper.scrape_site_content(req.url)
+    pages = await scraper.scrape_catalog_pages(req.url)
+    combined = "\n".join(text for _, text in pages) or req.url
     provider = get_ai_provider()
-    prods = await provider.extract_products(page_text or req.url, source_type="url")
-    return {"products": [normalize_extracted_product(p, i) for i, p in enumerate(prods)]}
+    prods = await provider.extract_products(combined, source_type="url")
+    return {
+        "sourceUrl": req.url,
+        "pagesScanned": len(pages),
+        "products": [normalize_extracted_product(p, i) for i, p in enumerate(prods)],
+        "message": (
+            f"Found {len(prods)} product{'s' if len(prods) != 1 else ''} from the website."
+            if prods
+            else "No products were found on that page. Try a product or catalog URL, or add items manually."
+        ),
+    }
 
 
 @router.post("/upload-file")

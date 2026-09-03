@@ -219,7 +219,7 @@ export default function App() {
     setProducts(next);
     void apiFetch('/api/products/save', {
       method: 'POST',
-      body: JSON.stringify(next),
+      body: JSON.stringify({ products: next }),
     });
   };
 

@@ -249,17 +249,57 @@ class WebSearchTool:
         return hits
 
     async def scrape_site_content(self, url: str) -> str:
+        pages = await self.scrape_catalog_pages(url)
+        return pages[0][1] if pages else ""
+
+    async def scrape_catalog_pages(self, url: str) -> List[tuple[str, str]]:
         if not url or _should_skip(url):
-            return ""
+            return []
+        pages: List[tuple[str, str]] = []
         try:
-            async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=HEADERS) as client:
-                res = await client.get(url)
-                if res.status_code != 200 or not res.text:
-                    return ""
-                soup = BeautifulSoup(res.text, "html.parser")
-                for tag in soup(["script", "style", "noscript", "svg"]):
-                    tag.decompose()
-                text = soup.get_text(separator=" ")
-                return " ".join(text.split())[:4000]
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=HEADERS) as client:
+                first = await client.get(url)
+                if first.status_code != 200 or not first.text:
+                    return []
+                html = first.text
+                pages.append((str(first.url), _html_to_text(html)))
+                extra_urls = _catalog_links(html, str(first.url))[:4]
+                for extra in extra_urls:
+                    try:
+                        res = await client.get(extra)
+                        if res.status_code == 200 and res.text:
+                            pages.append((str(res.url), _html_to_text(res.text)))
+                    except Exception:
+                        continue
         except Exception:
-            return ""
+            return pages
+        return pages
+
+
+def _html_to_text(html: str) -> str:
+    soup = BeautifulSoup(html or "", "html.parser")
+    for tag in soup(["script", "style", "noscript", "svg", "nav", "footer", "form"]):
+        tag.decompose()
+    text = soup.get_text(separator="\n")
+    return "\n".join(line.strip() for line in text.splitlines() if line.strip())[:8000]
+
+
+def _catalog_links(html: str, base_url: str) -> List[str]:
+    soup = BeautifulSoup(html or "", "html.parser")
+    found: List[str] = []
+    seen = set()
+    keywords = ("product", "catalog", "category", "shop", "collection", "glove", "fitness", "sport")
+    for anchor in soup.find_all("a", href=True):
+        href = (anchor.get("href") or "").strip()
+        label = anchor.get_text(" ", strip=True).lower()
+        if href.startswith("#") or href.startswith("mailto:") or href.startswith("tel:"):
+            continue
+        absolute = httpx.URL(base_url).join(href).human_repr()
+        host = _registrable_domain(absolute)
+        if host != _registrable_domain(base_url) or absolute in seen:
+            continue
+        path = (urlparse(absolute).path or "").lower()
+        if any(key in path or key in label for key in keywords):
+            seen.add(absolute)
+            found.append(absolute)
+    return found
