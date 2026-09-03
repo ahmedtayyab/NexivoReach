@@ -269,14 +269,8 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
       category: manual.category.trim() || 'Uncategorized',
       description: manual.description.trim(),
       price: manual.price.trim() || undefined,
-      verifiedByUser: true,
-      aiExtracted: false,
     }]);
     setManual({ name: '', category: '', description: '', price: '' });
-  };
-
-  const toggleVerified = (id: string) => {
-    onSave(products.map(p => p.id === id ? { ...p, verifiedByUser: !p.verifiedByUser } : p));
   };
 
   const removeProduct = (id: string) => {
@@ -386,28 +380,52 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
           <p className="section-label mb-3">{products.length} Products in Catalog</p>
           <div className="bg-panel border border-border rounded-lg divide-y divide-border-subtle">
             {products.map(product => (
-              <div key={product.id} className="px-4 py-3 flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <p className="text-[13.5px] font-medium text-ink-secondary truncate">{product.name}</p>
-                  <p className="text-[12px] text-ink-muted mt-0.5">
-                    {product.category}
-                    {product.price ? ` · ${product.price}` : ''}
-                  </p>
-                </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <button
-                    onClick={() => toggleVerified(product.id)}
-                    className={`text-[12px] ${product.verifiedByUser ? 'text-green-700' : 'text-ink-muted hover:text-ink-secondary'}`}
-                  >
-                    {product.verifiedByUser ? 'Verified' : 'Verify'}
-                  </button>
-                  <button
-                    onClick={() => removeProduct(product.id)}
-                    className="text-border hover:text-ink-secondary"
-                    aria-label={`Remove ${product.name}`}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                  </button>
+              <div key={product.id} className="px-4 py-3 flex items-start gap-3">
+                {/* Thumbnail */}
+                {product.imageUrl ? (
+                  <img
+                    src={product.imageUrl}
+                    alt={product.name}
+                    className="w-12 h-12 rounded object-cover shrink-0 border border-border bg-canvas"
+                    onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                  />
+                ) : (
+                  <div className="w-12 h-12 rounded border border-border bg-canvas shrink-0 flex items-center justify-center text-[10px] text-ink-muted">
+                    No img
+                  </div>
+                )}
+                {/* Info */}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[13.5px] font-medium text-ink-secondary truncate">{product.name}</p>
+                      <p className="text-[12px] text-ink-muted mt-0.5">
+                        {product.category}
+                        {product.price ? ` · ${product.price}` : ''}
+                        {product.moq ? ` · MOQ: ${product.moq}` : ''}
+                      </p>
+                      {product.description && (
+                        <p className="text-[11.5px] text-ink-muted mt-0.5 line-clamp-2 leading-relaxed">{product.description}</p>
+                      )}
+                      <div className="flex items-center gap-3 mt-1">
+                        {product.productUrl && (
+                          <a href={product.productUrl} target="_blank" rel="noopener noreferrer"
+                            className="text-[11px] text-accent hover:underline">
+                            View product ↗
+                          </a>
+                        )}
+                        {product.inStock === true && <span className="text-[11px] text-emerald-600">In stock</span>}
+                        {product.inStock === false && <span className="text-[11px] text-amber-600">Out of stock</span>}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => removeProduct(product.id)}
+                      className="text-border hover:text-ink-secondary shrink-0 mt-0.5"
+                      aria-label={`Remove ${product.name}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}

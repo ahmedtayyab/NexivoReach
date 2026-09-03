@@ -100,13 +100,10 @@ def save_products(req: ProductSaveRequest, user: AuthUser = Depends(get_current_
                 description=normalized["description"],
                 price=normalized.get("price"),
                 moq=normalized.get("moq"),
-                specs=normalized.get("specs") or [],
-                target_buyer=normalized.get("targetBuyer"),
-                features=normalized.get("features") or [],
                 product_url=normalized.get("productUrl"),
                 image_url=normalized.get("imageUrl"),
-                ai_extracted=normalized.get("aiExtracted", True),
-                verified_by_user=normalized.get("verifiedByUser", False),
+                source_url=normalized.get("sourceUrl"),
+                in_stock=normalized.get("inStock"),
                 user_id=user.id,
             )
             session.add(item)

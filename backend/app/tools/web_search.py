@@ -346,13 +346,34 @@ def _shop_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
         if key in seen or len(display) < 3:
             continue
         seen.add(key)
+
+        # ── Image extraction ──────────────────────────────────────────────
+        image_url = ""
+        img_tag = card.select_one("img")
+        if img_tag:
+            # Try srcset first (highest-res thumbnail), then src, then data-src (lazy)
+            srcset = img_tag.get("srcset") or img_tag.get("data-srcset") or ""
+            if srcset:
+                # srcset format: "url1 300w, url2 600w" — take last (largest)
+                candidates = [s.strip().split()[0] for s in srcset.split(",") if s.strip()]
+                if candidates:
+                    image_url = urljoin(page_url, candidates[-1])
+            if not image_url:
+                src = img_tag.get("src") or img_tag.get("data-src") or img_tag.get("data-lazy-src") or ""
+                if src and not src.startswith("data:"):  # skip base64 placeholders
+                    image_url = urljoin(page_url, src)
+
+        price_node = card.select_one(".price")
+        price = price_node.get_text(" ", strip=True)[:40] if price_node else ""
+
         products.append({
             "name": display[:90],
             "category": category,
             "description": blob[:180],
             "productUrl": href or page_url,
-            "ai_extracted": True,
-            "verified_by_user": False,
+            "imageUrl": image_url,
+            "price": price,
+            "source_url": page_url,
         })
     return products
 

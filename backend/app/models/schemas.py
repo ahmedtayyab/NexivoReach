@@ -17,13 +17,10 @@ class ProductItem(SQLModel, table=True):
     description: str
     price: Optional[str] = None
     moq: Optional[str] = None
-    specs: List[str] = Field(default=[], sa_type=JSON)
-    target_buyer: Optional[str] = None
-    features: List[str] = Field(default=[], sa_type=JSON)
     product_url: Optional[str] = None
     image_url: Optional[str] = None
-    ai_extracted: bool = True
-    verified_by_user: bool = False
+    source_url: Optional[str] = None   # page it was scraped from
+    in_stock: Optional[bool] = None    # None = unknown
     user_id: Optional[str] = Field(default=None, index=True)
 
 class ICPConfig(SQLModel, table=True):

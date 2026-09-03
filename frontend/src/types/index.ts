@@ -15,13 +15,10 @@ export interface Product {
   description: string;
   price?: string;
   moq?: string;
-  specs?: string[];
-  targetBuyer?: string;
-  features?: string[];
   productUrl?: string;
   imageUrl?: string;
-  aiExtracted?: boolean;
-  verifiedByUser?: boolean;
+  sourceUrl?: string;
+  inStock?: boolean | null;
 }
 
 export interface BuyingSignalConfig {

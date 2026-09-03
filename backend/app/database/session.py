@@ -16,6 +16,8 @@ def _ensure_sqlite_columns():
         return
     additions = [
         ("productitem", "user_id", "VARCHAR"),
+        ("productitem", "source_url", "VARCHAR"),
+        ("productitem", "in_stock", "BOOLEAN"),
         ("prospectrecord", "user_id", "VARCHAR"),
         ("agentrunrecord", "user_id", "VARCHAR"),
     ]

@@ -81,13 +81,10 @@ def product_to_frontend(item: ProductItem) -> Dict[str, Any]:
         "description": item.description,
         "price": item.price,
         "moq": item.moq,
-        "specs": item.specs or [],
-        "targetBuyer": item.target_buyer,
-        "features": item.features or [],
         "productUrl": item.product_url,
         "imageUrl": item.image_url,
-        "aiExtracted": item.ai_extracted,
-        "verifiedByUser": item.verified_by_user,
+        "sourceUrl": item.source_url,
+        "inStock": item.in_stock,
     }
 
 
@@ -97,15 +94,12 @@ def normalize_extracted_product(raw: Dict[str, Any], index: int) -> Dict[str, An
         "name": raw.get("name") or raw.get("productName") or f"Product {index + 1}",
         "category": raw.get("category") or "Uncategorized",
         "description": raw.get("description") or "",
-        "price": raw.get("price"),
-        "moq": raw.get("moq"),
-        "specs": raw.get("specs") or [],
-        "targetBuyer": raw.get("targetBuyer") or raw.get("target_buyer"),
-        "features": raw.get("features") or [],
-        "productUrl": raw.get("productUrl") or raw.get("product_url"),
-        "imageUrl": raw.get("imageUrl") or raw.get("image_url"),
-        "aiExtracted": bool(raw.get("aiExtracted", raw.get("ai_extracted", True))),
-        "verifiedByUser": bool(raw.get("verifiedByUser", raw.get("verified_by_user", False))),
+        "price": raw.get("price") or None,
+        "moq": raw.get("moq") or None,
+        "productUrl": raw.get("productUrl") or raw.get("product_url") or None,
+        "imageUrl": raw.get("imageUrl") or raw.get("image_url") or None,
+        "sourceUrl": raw.get("sourceUrl") or raw.get("source_url") or None,
+        "inStock": raw.get("inStock") if raw.get("inStock") is not None else raw.get("in_stock"),
     }
 
 

@@ -26,8 +26,7 @@ log = logging.getLogger(__name__)
 
 PRODUCT_HEADERS = [
     "ID", "Name", "Category", "Description",
-    "Price", "MOQ", "Target Buyer", "Product URL", "AI Extracted",
-    "Verified by User", "Last Updated",
+    "Price", "MOQ", "Product URL", "Image", "Source Page", "In Stock", "Last Updated",
 ]
 
 PROSPECT_HEADERS = [
@@ -130,6 +129,7 @@ def sync_products(company_name: str, products: list[dict]) -> dict:
     """
     Write/update products to a per-company worksheet named '<Company> — Products'.
     Upserts on Name+Category key.
+    Uses a single batch write — 2 API calls regardless of product count.
     Returns {"written": N, "url": "..."}
     """
     client = _get_client()
@@ -138,42 +138,50 @@ def sync_products(company_name: str, products: list[dict]) -> dict:
 
     sheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip()
     sh = client.open_by_key(sheet_id)
-    tab_name = f"{company_name[:30]} — Products"
+    tab_name = f"{company_name[:30]} - Products"
     ws = _get_or_create_sheet(sh, tab_name, PRODUCT_HEADERS)
 
-    written = 0
+    now = _now()
+
+    # Build new rows from products (dedupe by name+category in memory)
+    seen: dict[str, list] = {}
     for p in products:
-        key = f"{(p.get('name') or '').strip()}|{(p.get('category') or '').strip()}"
-        row_data = [
+        name = (p.get("name") or "").strip()
+        category = (p.get("category") or "").strip()
+        if not name:
+            continue
+        key = f"{name}|{category}"
+        image_url = p.get("imageUrl") or p.get("image_url") or ""
+        image_cell = f'=IMAGE("{image_url}")' if image_url else ""
+        in_stock = p.get("inStock") if p.get("inStock") is not None else p.get("in_stock")
+        in_stock_str = ("Yes" if in_stock else "No") if in_stock is not None else ""
+        seen[key] = [
             p.get("id", ""),
-            p.get("name", ""),
-            p.get("category", ""),
+            name,
+            category,
             p.get("description", ""),
-            p.get("price", ""),
-            p.get("moq", ""),
-            p.get("targetBuyer") or p.get("target_buyer", ""),
-            p.get("productUrl") or p.get("product_url", ""),
-            str(p.get("aiExtracted", p.get("ai_extracted", True))),
-            str(p.get("verifiedByUser", p.get("verified_by_user", False))),
-            _now(),
+            p.get("price", "") or "",
+            p.get("moq", "") or "",
+            p.get("productUrl") or p.get("product_url") or "",
+            image_cell,
+            p.get("sourceUrl") or p.get("source_url") or "",
+            in_stock_str,
+            now,
         ]
-        # Try to match by Name (col 2) + Category (col 3)
-        all_rows = ws.get_all_values()
-        matched_row = None
-        for idx, r in enumerate(all_rows[1:], start=2):
-            name_val = r[1] if len(r) > 1 else ""
-            cat_val = r[2] if len(r) > 2 else ""
-            if f"{name_val}|{cat_val}" == key:
-                matched_row = idx
-                break
-        if matched_row:
-            ws.update(f"A{matched_row}:K{matched_row}", [row_data], value_input_option="USER_ENTERED")
-        else:
-            ws.append_row(row_data, value_input_option="USER_ENTERED")
-        written += 1
+
+    # Fully replace the sheet content (clear + write header + all rows in one batch)
+    # This is the fastest approach and avoids row-by-row API limits entirely.
+    all_rows = [PRODUCT_HEADERS] + list(seen.values())
+
+    # Resize sheet if needed
+    if ws.row_count < len(all_rows) + 10:
+        ws.resize(rows=len(all_rows) + 100)
+
+    ws.clear()
+    ws.update("A1", all_rows, value_input_option="USER_ENTERED")
 
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-    return {"written": written, "url": url, "tab": tab_name}
+    return {"written": len(seen), "url": url, "tab": tab_name}
 
 
 def sync_prospect(prospect: dict) -> dict:
