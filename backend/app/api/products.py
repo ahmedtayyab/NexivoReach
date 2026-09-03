@@ -39,17 +39,26 @@ def _file_to_text(filename: str, raw: bytes) -> str:
 @router.post("/extract-url")
 async def extract_products_from_url(req: UrlParseRequest, _user: AuthUser = Depends(get_current_user)):
     scraper = WebSearchTool()
-    pages = await scraper.scrape_catalog_pages(req.url)
+    pages, shop_products = await scraper.scrape_shop_catalog(req.url)
     combined = "\n".join(text for _, text in pages) or req.url
     provider = get_ai_provider()
-    prods = await provider.extract_products(combined, source_type="url")
+    fallback_products = await provider.extract_products(combined, source_type="url")
+    merged: list[dict] = []
+    seen = set()
+    for raw in shop_products + fallback_products:
+        item = normalize_extracted_product(raw, len(merged))
+        key = (item.get("name") or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
     return {
         "sourceUrl": req.url,
         "pagesScanned": len(pages),
-        "products": [normalize_extracted_product(p, i) for i, p in enumerate(prods)],
+        "products": merged,
         "message": (
-            f"Found {len(prods)} product{'s' if len(prods) != 1 else ''} from the website."
-            if prods
+            f"Found {len(merged)} product{'s' if len(merged) != 1 else ''} from {len(pages)} page{'s' if len(pages) != 1 else ''}."
+            if merged
             else "No products were found on that page. Try a product or catalog URL, or add items manually."
         ),
     }

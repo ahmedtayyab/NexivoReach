@@ -1,7 +1,7 @@
 import asyncio
 import re
 from typing import List, Dict, Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -253,53 +253,114 @@ class WebSearchTool:
         return pages[0][1] if pages else ""
 
     async def scrape_catalog_pages(self, url: str) -> List[tuple[str, str]]:
+        pages, _ = await self.scrape_shop_catalog(url)
+        return pages
+
+    async def scrape_shop_catalog(self, url: str) -> tuple[List[tuple[str, str]], List[Dict[str, Any]]]:
         if not url or _should_skip(url):
-            return []
+            return [], []
         pages: List[tuple[str, str]] = []
+        products: List[Dict[str, Any]] = []
+        seen_names: set[str] = set()
         try:
             async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=HEADERS) as client:
                 first = await client.get(url)
                 if first.status_code != 200 or not first.text:
-                    return []
+                    return [], []
                 html = first.text
                 pages.append((str(first.url), _html_to_text(html)))
-                extra_urls = _catalog_links(html, str(first.url))[:4]
-                for extra in extra_urls:
+                products.extend(_shop_products(html, str(first.url), seen_names))
+                extra_urls = [item for item in _catalog_links(html, str(first.url)) if "/product-category/" in item]
+                extra_urls.sort()
+                for extra in extra_urls[:30]:
                     try:
                         res = await client.get(extra)
                         if res.status_code == 200 and res.text:
-                            pages.append((str(res.url), _html_to_text(res.text)))
+                            pages.append((str(res.url), _html_to_text(res.text, limit=16000)))
+                            products.extend(_shop_products(res.text, str(res.url), seen_names))
                     except Exception:
                         continue
         except Exception:
-            return pages
-        return pages
+            return pages, products
+        return pages, products
 
 
-def _html_to_text(html: str) -> str:
+def _html_to_text(html: str, limit: int = 12000) -> str:
     soup = BeautifulSoup(html or "", "html.parser")
     for tag in soup(["script", "style", "noscript", "svg", "nav", "footer", "form"]):
         tag.decompose()
     text = soup.get_text(separator="\n")
-    return "\n".join(line.strip() for line in text.splitlines() if line.strip())[:8000]
+    return "\n".join(line.strip() for line in text.splitlines() if line.strip())[:limit]
 
 
 def _catalog_links(html: str, base_url: str) -> List[str]:
     soup = BeautifulSoup(html or "", "html.parser")
     found: List[str] = []
     seen = set()
-    keywords = ("product", "catalog", "category", "shop", "collection", "glove", "fitness", "sport")
+    keywords = (
+        "product", "catalog", "category", "shop", "collection", "glove", "fitness",
+        "sport", "wear", "hoodie", "jacket", "belt", "strap", "bag",
+    )
     for anchor in soup.find_all("a", href=True):
         href = (anchor.get("href") or "").strip()
         label = anchor.get_text(" ", strip=True).lower()
         if href.startswith("#") or href.startswith("mailto:") or href.startswith("tel:"):
             continue
-        absolute = httpx.URL(base_url).join(href).human_repr()
+        absolute = urljoin(base_url, href).split("#")[0].rstrip("/") or urljoin(base_url, href)
         host = _registrable_domain(absolute)
         if host != _registrable_domain(base_url) or absolute in seen:
             continue
         path = (urlparse(absolute).path or "").lower()
-        if any(key in path or key in label for key in keywords):
+        if "/product-category/" in path or any(key in path or key in label for key in keywords):
+            if "/product/" in path and "/product-category/" not in path:
+                continue
             seen.add(absolute)
             found.append(absolute)
     return found
+
+
+def _shop_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
+    soup = BeautifulSoup(html or "", "html.parser")
+    category = _category_from_url(page_url)
+    products: List[Dict[str, Any]] = []
+    cards = soup.select("li.product") or soup.select(".product")
+    for card in cards:
+        link = card.select_one("a[href*='/product/']")
+        href = (link.get("href") if link else "") or ""
+        heading = ""
+        for sel in ("h2", "h3", ".woocommerce-loop-product__title", ".product-title"):
+            node = card.select_one(sel)
+            if node and node.get_text(" ", strip=True):
+                heading = node.get_text(" ", strip=True)
+                break
+        blob = re.sub(r"\s+", " ", card.get_text(" ", strip=True))
+        blob = re.sub(r"\s*Read more\s*", " ", blob, flags=re.I).strip()
+        sku_match = re.search(r"(AWE[-\s]?\d+)", blob, re.I)
+        name = heading or (link.get_text(" ", strip=True) if link else "")
+        name = re.split(r"\s*Art\s*#", name, maxsplit=1)[0].strip()
+        if not name or name.lower() in {"read more", "view product"}:
+            continue
+        sku = sku_match.group(1).upper().replace(" ", "-") if sku_match else ""
+        display = f"{name} ({sku})" if sku else name
+        key = href.lower() or display.lower()
+        if key in seen or len(display) < 3:
+            continue
+        seen.add(key)
+        products.append({
+            "name": display[:90],
+            "category": category,
+            "description": blob[:180],
+            "productUrl": href or page_url,
+            "ai_extracted": True,
+            "verified_by_user": False,
+        })
+    return products
+
+
+def _category_from_url(url: str) -> str:
+    path = (urlparse(url).path or "").strip("/")
+    parts = [p for p in path.split("/") if p and p != "product-category"]
+    if not parts:
+        return "Uncategorized"
+    slug = parts[0].replace("-", " ").replace("and", "&")
+    return slug.title()

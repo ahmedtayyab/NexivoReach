@@ -102,7 +102,7 @@ class FallbackProvider(AIProvider):
                 "ai_extracted": False,
                 "verified_by_user": False,
             })
-            if len(products) >= 16:
+            if len(products) >= 80:
                 break
         return products
 
