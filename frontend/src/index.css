@@ -82,3 +82,15 @@ input:focus, textarea:focus, select:focus {
   text-transform: uppercase;
   color: #8A8680;
 }
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}

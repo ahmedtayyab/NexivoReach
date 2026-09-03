@@ -20,12 +20,15 @@ import {
 } from './lib/navigation';
 
 import Sidebar from './components/layout/Sidebar';
+import MobileNav from './components/layout/MobileNav';
 import QueueView from './components/QueueView';
 import DiscoverView from './components/DiscoverView';
 import SettingsView from './components/SettingsView';
 import ReviewDrawer from './components/prospects/ReviewDrawer';
 import ActivityView from './components/ActivityView';
 import LoginView from './components/LoginView';
+import BrandLockup from './components/brand/BrandLockup';
+import { Menu } from 'lucide-react';
 
 export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
@@ -42,6 +45,7 @@ export default function App() {
   const [prospects, setProspects] = useState<Prospect[]>(emptyProspects);
   const [agentLogs, setAgentLogs] = useState<AgentRunLog[]>(emptyAgentLogs);
   const [selectedProspectId, setSelectedProspectId] = useState<string | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const selectedProspect = prospects.find(p => p.id === selectedProspectId) ?? null;
 
@@ -180,6 +184,7 @@ export default function App() {
 
   const handleSidebarChange = (tab: string) => {
     navigate(routeFromSidebarTab(tab));
+    setMobileNavOpen(false);
   };
 
   const handleSettingsSectionChange = (section: SettingsSection) => {
@@ -369,7 +374,20 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-canvas text-ink flex">
+    <div className="min-h-dvh bg-canvas text-ink flex flex-col md:flex-row">
+      <header className="md:hidden sticky top-0 z-30 h-12 px-3 flex items-center justify-between gap-3 bg-surface/95 backdrop-blur border-b border-border">
+        <button
+          type="button"
+          onClick={() => setMobileNavOpen(true)}
+          className="p-2 -ml-1 rounded-md text-ink-secondary hover:bg-muted"
+          aria-label="Open menu"
+        >
+          <Menu className="w-5 h-5" strokeWidth={1.75} />
+        </button>
+        <BrandLockup size="sm" className="absolute left-1/2 -translate-x-1/2 pointer-events-none" />
+        <span className="w-9" aria-hidden />
+      </header>
+
       <Sidebar
         activeTab={sidebarTabForRoute(activeRoute)}
         activeRoute={activeRoute}
@@ -381,9 +399,11 @@ export default function App() {
         onAddCompany={handleAddCompany}
         user={user}
         onLogout={authConfigured ? handleLogout : undefined}
+        mobileOpen={mobileNavOpen}
+        onMobileClose={() => setMobileNavOpen(false)}
       />
 
-      <main className="flex-1 min-w-0 px-10 py-8">
+      <main className="flex-1 min-w-0 px-4 py-5 sm:px-6 md:px-10 md:py-8 pb-20 md:pb-8">
         {activeRoute === 'queue' && (
           <QueueView
             prospects={prospects}
@@ -417,6 +437,13 @@ export default function App() {
         )}
         {activeRoute === 'activity' && <ActivityView agentLogs={agentLogs} />}
       </main>
+
+      <MobileNav
+        activeTab={sidebarTabForRoute(activeRoute)}
+        activeRoute={activeRoute}
+        onTabChange={handleSidebarChange}
+        pendingCount={pendingCount}
+      />
 
       <ReviewDrawer
         prospect={selectedProspect}

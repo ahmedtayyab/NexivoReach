@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from typing import Any, Dict
 from uuid import uuid4
 from sqlmodel import Session, select
@@ -39,16 +39,6 @@ def clear_prospects(request: Request, user: AuthUser = Depends(get_current_user)
             deleted += 1
         session.commit()
         return {"ok": True, "deleted": deleted}
-
-
-@router.get("/{prospect_id}")
-def get_prospect(prospect_id: str, request: Request, user: AuthUser = Depends(get_current_user)):
-    with Session(engine) as session:
-        business_id = resolve_business_id(request, user, session)
-        prospect = session.get(ProspectRecord, prospect_id)
-        if not prospect or prospect.business_id != business_id:
-            raise HTTPException(status_code=404, detail="Prospect not found")
-        return prospect_to_frontend(prospect)
 
 
 @router.post("/save")

@@ -19,17 +19,6 @@ from app.agents.qualify import qualify_account
 from app.tools.web_search import WebSearchTool
 
 
-LEAD_STAGES = (
-    "To contact",
-    "Contacted",
-    "Replied",
-    "Re-contact",
-    "Denied",
-    "Avoid",
-    "Meeting",
-    "Won",
-)
-
 FETCH_CAP = 12
 SAVE_CAP = 15
 WAVE1_RESULT_CAP = 40

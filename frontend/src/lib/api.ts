@@ -1,10 +1,6 @@
 let activeBusinessId: string | null =
   typeof window !== 'undefined' ? window.localStorage.getItem('nr_business_id') : null;
 
-export function getActiveBusinessId(): string | null {
-  return activeBusinessId;
-}
-
 export function setActiveBusinessId(id: string | null) {
   activeBusinessId = id;
   if (typeof window === 'undefined') return;

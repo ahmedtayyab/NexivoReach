@@ -368,12 +368,6 @@ def sync_leads(seller_name: str, prospects: list[dict]) -> dict:
     return {"written": written, "url": url, "tab": tab_name}
 
 
-def sync_prospect(prospect: dict) -> dict:
-    """Single-lead wrapper — writes to that seller's Leads tab."""
-    seller = prospect.get("seller_name") or prospect.get("sellerName") or "Company"
-    return sync_leads(seller, [prospect])
-
-
 def list_restore_tabs() -> list[dict[str, Any]]:
     """Return Products/Leads worksheet pairs found in the spreadsheet."""
     client = _get_client()

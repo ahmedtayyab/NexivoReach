@@ -66,7 +66,7 @@ export default function SettingsView({
         </p>
       </div>
 
-      <div className="flex space-x-6 border-b border-border mb-6">
+      <div className="flex gap-4 sm:gap-6 border-b border-border mb-6 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0">
         {([
           ['company', 'Company Profile'],
           ['catalog', 'Product Catalog'],
@@ -76,7 +76,7 @@ export default function SettingsView({
           <button
             key={id}
             onClick={() => onSectionChange(id)}
-            className={`pb-2.5 text-[13px] border-b-2 -mb-px transition-colors ${
+            className={`shrink-0 pb-2.5 text-[13px] border-b-2 -mb-px transition-colors ${
               section === id
                 ? 'border-accent text-accent font-medium'
                 : 'border-transparent text-ink-secondary hover:text-ink'

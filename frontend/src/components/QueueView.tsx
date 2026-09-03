@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
 
-export const LEAD_STAGES = [
+const EMPTY_QUEUE_IMG = '/brand/empty-queue.jpg';
+
+const LEAD_STAGES = [
   'To contact',
   'Contacted',
   'Replied',
@@ -62,9 +64,9 @@ export default function QueueView({
   });
 
   return (
-    <div className="max-w-3xl">
-      <div className="mb-6 flex items-start justify-between gap-4">
-        <div>
+    <div className="max-w-3xl w-full">
+      <div className="mb-6 flex items-start justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-[15px] font-semibold text-ink tracking-tight">Leads</h1>
           <p className="text-[13px] text-ink-secondary mt-0.5">
             {prospects.length} saved
@@ -78,12 +80,12 @@ export default function QueueView({
             disabled={clearing}
             className="shrink-0 px-3 py-1.5 text-[12px] border border-border rounded-md text-ink-secondary hover:text-ink hover:border-ink-muted disabled:opacity-40 transition-colors"
           >
-            {clearing ? 'Clearing…' : 'Clear all leads'}
+            {clearing ? 'Clearing…' : 'Clear all'}
           </button>
         )}
       </div>
 
-      <div className="flex flex-wrap gap-1.5 mb-4">
+      <div className="flex flex-nowrap sm:flex-wrap gap-1.5 mb-4 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-none">
         <FilterChip label="All" count={prospects.length} active={filter === 'All'} onClick={() => setFilter('All')} />
         {LEAD_STAGES.map(s => (
           <FilterChip
@@ -97,40 +99,42 @@ export default function QueueView({
       </div>
 
       {visible.length === 0 ? (
-        <div className="bg-panel border border-border rounded-lg px-5 py-10 text-center">
+        <div className="bg-panel border border-border rounded-lg px-5 py-8 sm:py-10 text-center">
+          <img
+            src={EMPTY_QUEUE_IMG}
+            alt="Empty leads queue"
+            className="mx-auto mb-5 w-full max-w-[280px] sm:max-w-[360px] rounded-lg border border-border-subtle shadow-sm object-cover"
+          />
           <p className="text-[13.5px] font-medium text-ink-secondary">No leads in this bucket</p>
-          <p className="text-[13px] text-ink-muted mt-1">
+          <p className="text-[13px] text-ink-muted mt-1 max-w-sm mx-auto">
             Run Discover to hunt buyers from your catalog, then update their status here.
           </p>
         </div>
       ) : (
-        <div className="bg-panel border border-border rounded-lg overflow-hidden">
-          <div className="grid grid-cols-[1fr_90px_72px_56px_140px] items-center px-4 py-2 border-b border-border-subtle bg-muted">
-            <span className="section-label">Lead</span>
-            <span className="section-label">Source</span>
-            <span className="section-label">Intent</span>
-            <span className="section-label text-right">Fit</span>
-            <span className="section-label text-right">Status</span>
-          </div>
-          <div className="divide-y divide-border-subtle">
+        <>
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-2">
             {visible.map(prospect => (
-              <div
-                key={prospect.id}
-                className="grid grid-cols-[1fr_90px_72px_56px_140px] items-center px-4 py-3 gap-2 hover:bg-canvas/60"
-              >
-                <button type="button" className="text-left min-w-0" onClick={() => onReviewProspect(prospect.id)}>
-                  <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
-                  <p className="text-[12px] text-ink-muted truncate mt-px">
-                    {prospect.location || prospect.website || '—'}
-                  </p>
+              <div key={prospect.id} className="bg-panel border border-border rounded-lg p-3.5">
+                <button type="button" className="text-left w-full min-w-0" onClick={() => onReviewProspect(prospect.id)}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
+                      <p className="text-[12px] text-ink-muted truncate mt-0.5">
+                        {prospect.location || prospect.website || '—'}
+                      </p>
+                    </div>
+                    <span className="text-[14px] font-semibold tabular-nums shrink-0">{prospect.fitScore}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-[12px] text-ink-muted">
+                    <span className="capitalize">{prospect.source || 'web'}</span>
+                    <span className="capitalize">Intent {prospect.intent || prospect.fitBreakdown?.intent || '—'}</span>
+                  </div>
                 </button>
-                <span className="text-[12px] text-ink-muted capitalize">{prospect.source || 'web'}</span>
-                <span className="text-[12px] text-ink-muted capitalize">{prospect.intent || prospect.fitBreakdown?.intent || '—'}</span>
-                <span className="text-[13px] font-semibold text-right tabular-nums">{prospect.fitScore}</span>
                 <select
                   value={normalizeStage(prospect.stage)}
                   onChange={e => onUpdateStage(prospect.id, e.target.value as Prospect['stage'])}
-                  className="text-[12px] border border-border rounded-md px-1.5 py-1 bg-panel text-ink-secondary"
+                  className="mt-3 w-full text-[12px] border border-border rounded-md px-2 py-1.5 bg-panel text-ink-secondary"
                 >
                   {LEAD_STAGES.map(s => (
                     <option key={s} value={s}>{s}</option>
@@ -139,7 +143,45 @@ export default function QueueView({
               </div>
             ))}
           </div>
-        </div>
+
+          {/* Desktop table */}
+          <div className="hidden md:block bg-panel border border-border rounded-lg overflow-hidden">
+            <div className="grid grid-cols-[1fr_90px_72px_56px_140px] items-center px-4 py-2 border-b border-border-subtle bg-muted">
+              <span className="section-label">Lead</span>
+              <span className="section-label">Source</span>
+              <span className="section-label">Intent</span>
+              <span className="section-label text-right">Fit</span>
+              <span className="section-label text-right">Status</span>
+            </div>
+            <div className="divide-y divide-border-subtle">
+              {visible.map(prospect => (
+                <div
+                  key={prospect.id}
+                  className="grid grid-cols-[1fr_90px_72px_56px_140px] items-center px-4 py-3 gap-2 hover:bg-canvas/60"
+                >
+                  <button type="button" className="text-left min-w-0" onClick={() => onReviewProspect(prospect.id)}>
+                    <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
+                    <p className="text-[12px] text-ink-muted truncate mt-px">
+                      {prospect.location || prospect.website || '—'}
+                    </p>
+                  </button>
+                  <span className="text-[12px] text-ink-muted capitalize">{prospect.source || 'web'}</span>
+                  <span className="text-[12px] text-ink-muted capitalize">{prospect.intent || prospect.fitBreakdown?.intent || '—'}</span>
+                  <span className="text-[13px] font-semibold text-right tabular-nums">{prospect.fitScore}</span>
+                  <select
+                    value={normalizeStage(prospect.stage)}
+                    onChange={e => onUpdateStage(prospect.id, e.target.value as Prospect['stage'])}
+                    className="text-[12px] border border-border rounded-md px-1.5 py-1 bg-panel text-ink-secondary"
+                  >
+                    {LEAD_STAGES.map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
@@ -160,7 +202,7 @@ function FilterChip({
     <button
       type="button"
       onClick={onClick}
-      className={`px-2.5 py-1 rounded-full text-[12px] border transition-colors ${
+      className={`shrink-0 px-2.5 py-1 rounded-full text-[12px] border transition-colors ${
         active ? 'bg-ink text-panel-elevated border-ink' : 'bg-panel border-border text-ink-secondary hover:border-ink-muted'
       }`}
     >

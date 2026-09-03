@@ -423,17 +423,6 @@ class WebSearchTool:
         except Exception:
             return {"text": "", "title": "", "url": url, "ok": False}
 
-    async def scrape_site_content(self, url: str) -> str:
-        page = await self.scrape_homepage(url)
-        if page.get("text"):
-            return page["text"]
-        pages = await self.scrape_catalog_pages(url)
-        return pages[0][1] if pages else ""
-
-    async def scrape_catalog_pages(self, url: str) -> List[tuple[str, str]]:
-        pages, _ = await self.scrape_shop_catalog(url)
-        return pages
-
     async def scrape_shop_catalog(self, url: str) -> tuple[List[tuple[str, str]], List[Dict[str, Any]]]:
         if not url or _should_skip(url):
             return [], []

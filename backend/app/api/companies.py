@@ -1,7 +1,6 @@
 """Multi-company CRUD + activate."""
 
 from datetime import datetime, timezone
-from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -41,12 +40,6 @@ class CompanyCreate(BaseModel):
     name: str = "New company"
     website: str = ""
     description: str = ""
-
-
-class CompanyUpdate(BaseModel):
-    name: Optional[str] = None
-    website: Optional[str] = None
-    description: Optional[str] = None
 
 
 @router.get("/")

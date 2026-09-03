@@ -18,10 +18,7 @@ LOCAL_BUYERS = (
     "gym", "clinic", "hotel", "restaurant", "salon", "spa", "contractor",
     "workshop", "school", "hospital", "studio", "club",
 )
-MANUFACTURER_HINTS = ("manufacturer", "factory", "manufacturing", "plant")
 NEGATIVE_BASE = ("-jobs", "-wikipedia", "-pdf", "-salary", "-career")
-
-DIRECTORY_JUNK = ("directory", "listicle", "top 10", "best companies")
 
 
 def _uniq(items: List[str], limit: int = 8) -> List[str]:

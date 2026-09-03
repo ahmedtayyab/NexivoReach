@@ -1,6 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from uuid import uuid4
 from sqlmodel import Session, select
 from app.agents.prospecting_agent import ProspectingAgent
@@ -21,7 +21,6 @@ class DiscoveryRunRequest(BaseModel):
     products: List[Dict[str, Any]] = []
     icp: Dict[str, Any] = {}
     business: Dict[str, Any] = {}
-    keep_scanning: bool = False
 
 
 def _domain(url: str) -> str:

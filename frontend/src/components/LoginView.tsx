@@ -1,19 +1,25 @@
+import BrandLockup from './brand/BrandLockup';
+
 interface Props {
   error?: string | null;
 }
 
 export default function LoginView({ error }: Props) {
   return (
-    <div className="min-h-screen bg-canvas flex items-center justify-center px-6">
-      <div className="w-full max-w-sm">
-        <div className="flex items-center space-x-2 mb-8 justify-center">
-          <div className="w-8 h-8 rounded-lg bg-ink flex items-center justify-center">
-            <span className="text-panel-elevated font-bold text-xs">NR</span>
-          </div>
-          <span className="font-semibold text-ink text-lg tracking-tight">NexivoReach</span>
+    <div className="min-h-dvh flex items-center justify-center px-4 sm:px-6 relative overflow-hidden bg-canvas">
+      <img
+        src="/brand/login-atmosphere.jpg"
+        alt=""
+        className="absolute inset-0 w-full h-full object-cover"
+      />
+      <div className="absolute inset-0 bg-canvas/40" aria-hidden />
+
+      <div className="relative w-full max-w-sm">
+        <div className="mb-8 flex justify-center">
+          <BrandLockup size="md" />
         </div>
 
-        <div className="bg-panel-elevated border border-border rounded-lg p-6">
+        <div className="bg-panel-elevated border border-border rounded-lg p-5 sm:p-6 shadow-sm">
           <h1 className="text-[15px] font-semibold text-ink">Sign in to continue</h1>
           <p className="text-[13px] text-ink-secondary mt-1 mb-6">
             Use your Google account to save your companies, catalogs, and prospect queues — and pick up where you left off.
@@ -34,8 +40,8 @@ export default function LoginView({ error }: Props) {
           </a>
         </div>
 
-        <p className="text-[12px] text-ink-muted text-center mt-6">
-          Your session is stored in a secure HTTP-only cookie.
+        <p className="text-[12px] text-ink-muted text-center mt-6 px-2">
+          Turn products into qualified buyers.
         </p>
       </div>
     </div>

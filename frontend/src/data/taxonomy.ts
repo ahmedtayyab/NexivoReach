@@ -174,10 +174,6 @@ export function csvIncludes(current: string, value: string): boolean {
     .includes(value.toLowerCase());
 }
 
-export function csvTokens(value: string): string[] {
-  return value.split(',').map(s => s.trim()).filter(Boolean);
-}
-
 /** Last incomplete token the user is currently typing (after the last comma). */
 export function activeToken(value: string): string {
   const parts = value.split(',');

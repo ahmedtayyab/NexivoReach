@@ -155,8 +155,3 @@ export interface AuthUser {
   name: string;
   picture?: string;
 }
-
-export interface AuthState {
-  configured: boolean;
-  user: AuthUser | null;
-}

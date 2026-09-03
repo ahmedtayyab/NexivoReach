@@ -5,6 +5,8 @@ import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
 import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
 
+const EMPTY_DISCOVER_IMG = '/brand/empty-discover.jpg';
+
 interface Props {
   businessInfo: BusinessInfo;
   icp: IdealCustomerProfile;
@@ -67,7 +69,6 @@ export default function DiscoverView({
           products,
           icp,
           business: businessInfo,
-          keep_scanning: true,
         }),
       });
 
@@ -106,7 +107,7 @@ export default function DiscoverView({
   const lastRun = runHistory[0];
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl w-full">
       <div className="mb-6">
         <h1 className="text-lg font-semibold text-ink">Discover</h1>
         <p className="text-sm text-ink-secondary mt-0.5">
@@ -114,7 +115,15 @@ export default function DiscoverView({
         </p>
       </div>
 
-      <div className="bg-panel border border-border rounded-md p-4 space-y-3">
+      <div className="mb-5 rounded-lg border border-border bg-panel overflow-hidden">
+        <img
+          src={EMPTY_DISCOVER_IMG}
+          alt="Discover buyers"
+          className="w-full max-h-44 sm:max-h-52 object-cover object-center"
+        />
+      </div>
+
+      <div className="bg-panel border border-border rounded-md p-3.5 sm:p-4 space-y-3">
         <PredictiveField
           label="Who should we find?"
           hint="Example: type “distributor” or “hospital” — related scan ideas appear."
@@ -131,21 +140,21 @@ export default function DiscoverView({
               : businessInfo.primaryCategories,
           }}
         />
-        <div className="flex items-center justify-between pt-2 border-t border-border-subtle">
+        <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-border-subtle">
           {isRunning ? (
             <span className="flex items-center space-x-2 text-sm text-ink-secondary">
-              <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.75} />
+              <Loader2 className="w-4 h-4 animate-spin shrink-0" strokeWidth={1.75} />
               <span>{statusText}</span>
             </span>
           ) : (
-            <span className="text-xs text-ink-muted max-w-[70%]">
+            <span className="text-xs text-ink-muted sm:max-w-[70%]">
               {statusText || (lastRun ? `Last run ${formatRelative(lastRun.startedAt)}` : 'Uses catalog + ICP if you leave the box empty')}
             </span>
           )}
           <button
             onClick={handleRun}
             disabled={isRunning || !canRun}
-            className="px-4 py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-sm font-medium rounded-md transition-colors"
+            className="w-full sm:w-auto px-4 py-2 sm:py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-sm font-medium rounded-md transition-colors"
           >
             {isRunning ? 'Searching…' : 'Find leads'}
           </button>
@@ -157,12 +166,12 @@ export default function DiscoverView({
           <p className="text-xs font-medium text-ink-muted uppercase tracking-widest mb-3">Recent Runs</p>
           <div className="divide-y divide-border-subtle">
             {runHistory.map(run => (
-              <div key={run.id} className="py-2.5 flex items-center justify-between text-sm">
-                <div>
+              <div key={run.id} className="py-2.5 flex items-center justify-between text-sm gap-3">
+                <div className="min-w-0">
                   <p className="text-ink-secondary">{run.foundCount} new lead{run.foundCount === 1 ? '' : 's'}</p>
                   <p className="text-xs text-ink-muted">{formatRelative(run.startedAt)}</p>
                 </div>
-                <span className="text-xs text-ink-muted font-mono">{run.durationSec}s</span>
+                <span className="text-xs text-ink-muted font-mono shrink-0">{run.durationSec}s</span>
               </div>
             ))}
           </div>

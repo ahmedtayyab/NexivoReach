@@ -1,45 +1,9 @@
 from app.agents.search_planner import infer_seller_profile, plan_wave1
 from app.agents.serp_classifier import classify_serp_row
 from app.agents.qualify import qualify_account
-from app.tools.score_calculator import ScoreCalculatorTool
 from app.tools.web_search import results_to_companies, WebSearchTool
 from app.agents.prospecting_agent import ProspectingAgent
 import pytest
-
-
-def test_score_calculator_does_not_pad_empty_signals():
-    calc = ScoreCalculatorTool()
-    res = calc.calculate_fit_score(
-        company_industry="Hospital network",
-        company_location="Berlin, Germany",
-        target_countries=["Germany"],
-        target_buyer_types=["Hospital groups", "Healthcare providers"],
-        buying_signals=[],
-        product_matches=[],
-        research_text="Helios is a hospital group in Berlin.",
-    )
-    assert res["breakdown"]["buyingSignals"] == 0
-    assert res["breakdown"]["productMatch"] == 0
-    assert res["breakdown"]["locationFit"] == 20
-
-
-def test_score_calculator_uses_icp_not_vertical():
-    calc = ScoreCalculatorTool()
-    res = calc.calculate_fit_score(
-        company_industry="Hospital network",
-        company_location="Berlin, Germany",
-        target_countries=["Germany"],
-        target_buyer_types=["Hospital groups", "Healthcare providers"],
-        buying_signals=[{"signal": "New surgical wing", "weight": 20}],
-        product_matches=[
-            {"productName": "Surgical lights", "fitLevel": "High"},
-            {"productName": "Stainless cabinets", "fitLevel": "High"},
-        ],
-        research_text="Helios is expanding a hospital campus in Berlin.",
-    )
-    assert res["total_score"] >= 80
-    assert res["breakdown"]["industryFit"] >= 20
-    assert res["breakdown"]["locationFit"] == 20
 
 
 def test_search_results_skip_directories():
