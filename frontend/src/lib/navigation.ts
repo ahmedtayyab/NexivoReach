@@ -1,6 +1,6 @@
-export type AppRoute = 'queue' | 'discover' | 'catalog' | 'company' | 'icp' | 'activity';
+export type AppRoute = 'queue' | 'discover' | 'catalog' | 'company' | 'icp' | 'activity' | 'integrations';
 
-export type SettingsSection = 'company' | 'catalog' | 'icp';
+export type SettingsSection = 'company' | 'catalog' | 'icp' | 'integrations';
 
 export const APP_ROUTES: AppRoute[] = [
   'queue',
@@ -8,10 +8,11 @@ export const APP_ROUTES: AppRoute[] = [
   'catalog',
   'company',
   'icp',
+  'integrations',
   'activity',
 ];
 
-export const SETTINGS_SECTIONS: SettingsSection[] = ['company', 'catalog', 'icp'];
+export const SETTINGS_SECTIONS: SettingsSection[] = ['company', 'catalog', 'icp', 'integrations'];
 
 const ROUTE_ALIASES: Record<string, AppRoute> = {
   settings: 'company',
@@ -56,7 +57,7 @@ export function isSettingsRoute(route: AppRoute): route is SettingsSection {
 
 export function sidebarTabForRoute(route: AppRoute): string {
   if (route === 'catalog') return 'catalog';
-  if (route === 'company' || route === 'icp') return 'settings';
+  if (route === 'company' || route === 'icp' || route === 'integrations') return 'settings';
   return route;
 }
 

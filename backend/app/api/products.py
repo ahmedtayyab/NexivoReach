@@ -8,6 +8,8 @@ from app.database.session import engine
 from app.models.schemas import ProductItem
 from app.api.serializers import product_to_frontend, normalize_extracted_product
 from app.api.deps import AuthUser, get_current_user
+from app.models.schemas import Business
+from app.integrations import sheets as sheets_mod
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
@@ -110,4 +112,16 @@ def save_products(req: ProductSaveRequest, user: AuthUser = Depends(get_current_
             session.add(item)
             saved.append(item)
         session.commit()
-        return [product_to_frontend(item) for item in saved]
+        result = [product_to_frontend(item) for item in saved]
+
+        # Auto-sync to Google Sheets if configured
+        if sheets_mod.is_configured():
+            try:
+                biz = session.get(Business, user.id)
+                company_name = biz.name if biz else "My Company"
+                sheets_mod.sync_products(company_name, result)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("Sheets sync failed: %s", exc)
+
+        return result

@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { BusinessInfo, Product, IdealCustomerProfile } from '../types';
-import { Loader2, Plus, Trash2 } from 'lucide-react';
+import { CheckCircle2, ExternalLink, Loader2, Plus, Trash2, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import SuggestionChips from './SuggestionChips';
 import { BUYER_SUGGESTIONS, CATEGORY_SUGGESTIONS, MARKET_SUGGESTIONS } from '../data/suggestions';
@@ -32,6 +32,7 @@ export default function SettingsView({
     company: 'Company Profile',
     catalog: 'Product Catalog',
     icp: 'ICP & Signals',
+    integrations: 'Integrations',
   };
 
   return (
@@ -50,6 +51,7 @@ export default function SettingsView({
           ['company', 'Company Profile'],
           ['catalog', 'Product Catalog'],
           ['icp', 'ICP & Signals'],
+          ['integrations', 'Integrations'],
         ] as [SettingsSection, string][]).map(([id, label]) => (
           <button
             key={id}
@@ -72,6 +74,7 @@ export default function SettingsView({
       {section === 'icp' && (
         <ICPSection key={icp.companySize + icp.targetCountries.join('|')} icp={icp} onSave={onSaveICP} />
       )}
+      {section === 'integrations' && <IntegrationsSection />}
     </div>
   );
 }
@@ -492,6 +495,110 @@ function ICPSection({ icp, onSave }: { icp: IdealCustomerProfile; onSave: (i: Id
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Integrations Section ─────────────────────────────────────────────────────
+
+type SheetsStatus =
+  | { connected: true; spreadsheet_title: string; url: string }
+  | { connected: false; reason: string };
+
+function IntegrationsSection() {
+  const [status, setStatus] = useState<SheetsStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await apiFetch('/api/sheets/status');
+      if (r.ok) setStatus(await r.json());
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div className="space-y-8">
+      {/* Google Sheets card */}
+      <div className="rounded-xl border border-border bg-surface p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-[14px] font-semibold text-ink">Google Sheets</h3>
+            <p className="text-[12.5px] text-ink-secondary mt-0.5">
+              Automatically sync your product catalog and prospect activity to a shared spreadsheet.
+            </p>
+          </div>
+          {loading ? (
+            <Loader2 className="w-4 h-4 animate-spin text-ink-secondary" />
+          ) : status?.connected ? (
+            <span className="flex items-center gap-1.5 text-[12px] text-emerald-600 font-medium">
+              <CheckCircle2 className="w-4 h-4" /> Connected
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-[12px] text-amber-600 font-medium">
+              <XCircle className="w-4 h-4" /> Not connected
+            </span>
+          )}
+        </div>
+
+        {status?.connected && (
+          <a
+            href={status.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-[12.5px] text-accent hover:underline"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            {status.spreadsheet_title}
+          </a>
+        )}
+
+        {!status?.connected && !loading && (
+          <div className="space-y-3 pt-1">
+            <p className="text-[12.5px] text-ink-secondary leading-relaxed">
+              To connect, add these two variables to your <code className="bg-canvas px-1 rounded text-[11.5px]">backend/.env</code> file and restart the server:
+            </p>
+            <div className="rounded-lg bg-canvas border border-border p-3 font-mono text-[11.5px] text-ink-secondary space-y-1 select-all">
+              <div>GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON={"<paste service-account JSON>"}</div>
+              <div>GOOGLE_SHEETS_SPREADSHEET_ID={"<your spreadsheet ID>"}</div>
+            </div>
+            <ol className="text-[12px] text-ink-secondary space-y-1 list-decimal list-inside leading-relaxed">
+              <li>Go to <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Google Cloud Console</a> → Create a service account → Download JSON key.</li>
+              <li>Enable the <strong>Google Sheets API</strong> and <strong>Google Drive API</strong> in your project.</li>
+              <li>Create a new Google Sheet, then share it with the service account email (<em>Editor</em> access).</li>
+              <li>Copy the spreadsheet ID from the URL (the long string between <code>/d/</code> and <code>/edit</code>).</li>
+              <li>Paste the JSON (as a single line) and the ID into your <code>.env</code>, then restart.</li>
+            </ol>
+            <button
+              onClick={load}
+              className="btn-secondary text-[12.5px] py-1.5 px-4"
+            >
+              Refresh status
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* What syncs */}
+      <div className="rounded-xl border border-border bg-surface p-6">
+        <h4 className="text-[13px] font-semibold text-ink mb-3">What gets synced</h4>
+        <ul className="space-y-2 text-[12.5px] text-ink-secondary">
+          <li className="flex gap-2">
+            <span className="text-accent font-bold mt-0.5">→</span>
+            <span><strong className="text-ink">Product Catalog</strong> — every time you save your catalog, all products are upserted into a per-company tab (e.g. <em>"Acme — Products"</em>).</span>
+          </li>
+          <li className="flex gap-2">
+            <span className="text-accent font-bold mt-0.5">→</span>
+            <span><strong className="text-ink">Prospects</strong> — written to a shared <em>Prospects</em> tab (keyed on website). Stage changes (Qualified → Contacted → Replied, etc.) are recorded in a <em>Timeline</em> tab.</span>
+          </li>
+        </ul>
       </div>
     </div>
   );

@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     APP_URL: str = "http://localhost:3000"
     AUTH_DISABLED: bool = False
     DATABASE_URL: str = "sqlite:///./nexivoreach.db"
+    GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON: str = ""
+    GOOGLE_SHEETS_SPREADSHEET_ID: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
