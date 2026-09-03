@@ -23,7 +23,7 @@ export default function CatalogView({ products, onSaveProducts, onNext }: Props)
   const [activeInputMethod, setActiveInputMethod] = useState<'url' | 'file' | 'manual'>('url');
   
   // URL state
-  const [urlInput, setUrlInput] = useState<string>('https://apexfitnessequipment.example.com');
+  const [urlInput, setUrlInput] = useState<string>('');
   const [isUrlExtracting, setIsUrlExtracting] = useState<boolean>(false);
 
   // File state
@@ -49,11 +49,9 @@ export default function CatalogView({ products, onSaveProducts, onNext }: Props)
     setTimeout(() => {
       const newProduct: Product = {
         id: `prod-url-${Date.now()}`,
-        name: 'High-Performance Cable Fly Machine',
-        category: 'Commercial Strength',
-        description: 'Single and dual-arm cable fly station with independent weight stacks and variable resistance cams.',
-        price: '$2,750',
-        moq: '2 Units',
+        name: 'Sample Product from URL',
+        category: 'Uncategorized',
+        description: 'Replace this with a real extraction from your catalog URL.',
         productUrl: urlInput,
         sourceUrl: urlInput,
       };
@@ -70,11 +68,9 @@ export default function CatalogView({ products, onSaveProducts, onNext }: Props)
     setTimeout(() => {
       const newProduct: Product = {
         id: `prod-file-${Date.now()}`,
-        name: 'Hex Dumbbell Rack & CPU Set',
-        category: 'Free Weights',
-        description: '3-tier commercial heavy-duty dumbbell storage rack pre-loaded with CPU rubber dumbbells.',
-        price: '$1,950',
-        moq: '1 Rack Set',
+        name: 'Sample Product from File',
+        category: 'Uncategorized',
+        description: 'Replace this with a real extraction from your uploaded catalog.',
       };
       onSaveProducts([newProduct, ...products]);
       setIsFileParsing(false);
@@ -84,7 +80,7 @@ export default function CatalogView({ products, onSaveProducts, onNext }: Props)
   const handleOpenAddManual = () => {
     setEditingProduct(null);
     setName('');
-    setCategory('Commercial Strength');
+    setCategory('');
     setDescription('');
     setPrice('');
     setMoq('');

@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BusinessInfo, Product, IdealCustomerProfile } from '../types';
 import { CheckCircle2, ExternalLink, Loader2, Plus, Trash2, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
-import SuggestionChips from './SuggestionChips';
-import { BUYER_SUGGESTIONS, CATEGORY_SUGGESTIONS, MARKET_SUGGESTIONS } from '../data/suggestions';
+import PredictiveField from './PredictiveField';
+import {
+  categoriesFromProducts,
+  suggestionsForField,
+} from '../data/taxonomy';
 
 import type { SettingsSection } from '../lib/navigation';
 
@@ -68,18 +71,37 @@ export default function SettingsView({
       </div>
 
       {section === 'company' && (
-        <CompanySection key={businessInfo.id ?? 'company'} businessInfo={businessInfo} onSave={onSaveBusiness} />
+        <CompanySection
+          key={businessInfo.id ?? 'company'}
+          businessInfo={businessInfo}
+          products={products}
+          onSave={onSaveBusiness}
+        />
       )}
       {section === 'catalog' && <CatalogSection products={products} onSave={onSaveProducts} />}
       {section === 'icp' && (
-        <ICPSection key={icp.companySize + icp.targetCountries.join('|')} icp={icp} onSave={onSaveICP} />
+        <ICPSection
+          key={icp.companySize + icp.targetCountries.join('|')}
+          icp={icp}
+          businessInfo={businessInfo}
+          products={products}
+          onSave={onSaveICP}
+        />
       )}
       {section === 'integrations' && <IntegrationsSection />}
     </div>
   );
 }
 
-function CompanySection({ businessInfo, onSave }: { businessInfo: BusinessInfo; onSave: (b: BusinessInfo) => void }) {
+function CompanySection({
+  businessInfo,
+  products,
+  onSave,
+}: {
+  businessInfo: BusinessInfo;
+  products: Product[];
+  onSave: (b: BusinessInfo) => void;
+}) {
   const [name, setName] = useState(businessInfo.name ?? '');
   const [website, setWebsite] = useState(businessInfo.website ?? '');
   const [description, setDescription] = useState(businessInfo.description ?? '');
@@ -88,6 +110,17 @@ function CompanySection({ businessInfo, onSave }: { businessInfo: BusinessInfo; 
   const [extracting, setExtracting] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+
+  const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
+  const context = `${description} ${categories} ${catalogCats.join(' ')}`;
+  const marketSuggestions = useMemo(
+    () => suggestionsForField('markets', context, catalogCats),
+    [context, catalogCats],
+  );
+  const categorySuggestions = useMemo(
+    () => suggestionsForField('categories', context, catalogCats),
+    [context, catalogCats],
+  );
 
   const handleExtract = async () => {
     if (!description.trim()) return;
@@ -149,25 +182,41 @@ function CompanySection({ businessInfo, onSave }: { businessInfo: BusinessInfo; 
           </button>
         </div>
         {error && <p className="text-[12px] text-amber-600 mt-1">{error}</p>}
+        {catalogCats.length > 0 && (
+          <p className="text-[12px] text-ink-muted mt-2">
+            From your catalog: {catalogCats.slice(0, 5).join(', ')}
+            {catalogCats.length > 5 ? '…' : ''} — used to refine suggestions below.
+          </p>
+        )}
       </div>
 
       <Field label="Business name" value={name} onChange={setName} placeholder="Acme Manufacturing" />
       <Field label="Website" value={website} onChange={setWebsite} placeholder="https://..." />
-      <SuggestionChips
+      <PredictiveField
         label="Target markets"
-        hint="Click a market to add it, or type your own."
+        hint="Start typing a country — matching options appear. Or click a chip."
         value={markets}
         onChange={setMarkets}
-        suggestions={MARKET_SUGGESTIONS}
+        suggestions={marketSuggestions}
         placeholder="United States, United Kingdom, UAE"
+        aiContext={{
+          field: 'markets',
+          description,
+          catalogCategories: catalogCats,
+        }}
       />
-      <SuggestionChips
+      <PredictiveField
         label="Product categories"
-        hint="Pick the closest categories so discovery knows what you sell."
+        hint="Type a word like “gym” or “industrial” — related categories appear instantly."
         value={categories}
         onChange={setCategories}
-        suggestions={CATEGORY_SUGGESTIONS}
-        placeholder="Fitness & Bodybuilding, Sportswear, Gloves"
+        suggestions={categorySuggestions}
+        placeholder="e.g. Sportswear, Industrial Equipment, SaaS"
+        aiContext={{
+          field: 'categories',
+          description,
+          catalogCategories: catalogCats,
+        }}
       />
 
       <div className="pt-1">
@@ -436,13 +485,44 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
   );
 }
 
-function ICPSection({ icp, onSave }: { icp: IdealCustomerProfile; onSave: (i: IdealCustomerProfile) => void }) {
+function ICPSection({
+  icp,
+  businessInfo,
+  products,
+  onSave,
+}: {
+  icp: IdealCustomerProfile;
+  businessInfo: BusinessInfo;
+  products: Product[];
+  onSave: (i: IdealCustomerProfile) => void;
+}) {
   const [buyerTypes, setBuyerTypes] = useState((icp.targetBuyerTypes ?? []).join(', '));
   const [countries, setCountries] = useState((icp.targetCountries ?? []).join(', '));
   const [companySize, setCompanySize] = useState(icp.companySize ?? 'Any');
   const [minDealSize, setMinDealSize] = useState(icp.minDealSize || '');
   const [signals] = useState(icp.buyingSignals ?? []);
   const [saved, setSaved] = useState(false);
+
+  const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
+  const context = useMemo(
+    () =>
+      [
+        businessInfo.description,
+        ...(businessInfo.primaryCategories ?? []),
+        ...(businessInfo.targetMarkets ?? []),
+        buyerTypes,
+        ...catalogCats,
+      ].join(' '),
+    [businessInfo, buyerTypes, catalogCats],
+  );
+  const buyerSuggestions = useMemo(
+    () => suggestionsForField('buyers', context, catalogCats),
+    [context, catalogCats],
+  );
+  const countrySuggestions = useMemo(
+    () => suggestionsForField('markets', context, catalogCats),
+    [context, catalogCats],
+  );
 
   const handleSave = () => {
     onSave({
@@ -461,21 +541,31 @@ function ICPSection({ icp, onSave }: { icp: IdealCustomerProfile; onSave: (i: Id
     <div className="grid grid-cols-1 md:grid-cols-2 gap-10 max-w-3xl">
       <div className="space-y-4">
         <p className="section-label">Target Buyer Criteria</p>
-        <SuggestionChips
+        <PredictiveField
           label="Buyer types"
-          hint="Who typically buys from you? Click to add."
+          hint="Type who you sell to (e.g. “gym”, “hospital”, “distributor”) — options appear as you type."
           value={buyerTypes}
           onChange={setBuyerTypes}
-          suggestions={BUYER_SUGGESTIONS}
-          placeholder="Gyms & fitness clubs, Sports retailers"
+          suggestions={buyerSuggestions}
+          placeholder="Distributors, Retailers, Hospitals…"
+          aiContext={{
+            field: 'buyers',
+            description: businessInfo.description,
+            catalogCategories: catalogCats.length ? catalogCats : businessInfo.primaryCategories,
+          }}
         />
-        <SuggestionChips
+        <PredictiveField
           label="Target countries"
-          hint="Choose the markets you want the agent to search first."
+          hint="Start typing a country name — matching markets appear."
           value={countries}
           onChange={setCountries}
-          suggestions={MARKET_SUGGESTIONS}
+          suggestions={countrySuggestions}
           placeholder="United Arab Emirates, Germany"
+          aiContext={{
+            field: 'markets',
+            description: businessInfo.description,
+            catalogCategories: catalogCats,
+          }}
         />
         <div>
           <label className="block text-[12px] font-medium text-ink-secondary mb-1">Company size</label>

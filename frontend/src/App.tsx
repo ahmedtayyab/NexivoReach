@@ -278,6 +278,7 @@ export default function App() {
           <DiscoverView
             businessInfo={businessInfo}
             icp={icp}
+            products={products}
             onAddProspect={handleAddProspect}
             onAddLog={handleAddLog}
           />

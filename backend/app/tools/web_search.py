@@ -332,8 +332,9 @@ def _catalog_links(html: str, base_url: str) -> List[str]:
     found: List[str] = []
     seen = set()
     keywords = (
-        "product", "catalog", "category", "shop", "collection", "glove", "fitness",
-        "sport", "wear", "hoodie", "jacket", "belt", "strap", "bag",
+        "product", "catalog", "category", "shop", "collection", "store",
+        "item", "range", "series", "solutions", "equipment", "supplies",
+        "wear", "apparel", "parts", "goods",
     )
     for anchor in soup.find_all("a", href=True):
         href = (anchor.get("href") or "").strip()

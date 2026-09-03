@@ -1,26 +1,49 @@
-import { useState } from 'react';
-import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog } from '../types';
+import { useMemo, useState } from 'react';
+import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product } from '../types';
 import { Loader2 } from 'lucide-react';
+import { apiFetch } from '../lib/api';
+import PredictiveField from './PredictiveField';
+import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
 
 interface Props {
   businessInfo: BusinessInfo;
   icp: IdealCustomerProfile;
+  products?: Product[];
   onAddProspect: (prospect: Prospect) => void;
   onAddLog: (log: AgentRunLog) => void;
 }
 
-export default function DiscoverView({ onAddProspect, onAddLog }: Props) {
-  const [query, setQuery] = useState(
-    'Find commercial gyms expanding in the GCC region needing heavy-duty strength equipment.'
-  );
+export default function DiscoverView({
+  businessInfo,
+  icp,
+  products = [],
+  onAddProspect,
+  onAddLog,
+}: Props) {
+  const [query, setQuery] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [runHistory, setRunHistory] = useState<
     Array<{ id: string; startedAt: Date; foundCount: number; durationSec: number }>
-  >([
-    { id: 'run-1', startedAt: new Date(Date.now() - 7200000), foundCount: 3, durationSec: 118 },
-    { id: 'run-2', startedAt: new Date(Date.now() - 86400000 * 1.4), foundCount: 1, durationSec: 74 },
-  ]);
+  >([]);
+
+  const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
+  const context = useMemo(
+    () =>
+      [
+        query,
+        businessInfo.description,
+        ...(businessInfo.primaryCategories ?? []),
+        ...(icp.targetBuyerTypes ?? []),
+        ...(icp.targetCountries ?? []),
+        ...catalogCats,
+      ].join(' '),
+    [query, businessInfo, icp, catalogCats],
+  );
+  const discoverSuggestions = useMemo(
+    () => suggestionsForField('discover', context, catalogCats),
+    [context, catalogCats],
+  );
 
   const handleRun = async () => {
     if (!query.trim() || isRunning) return;
@@ -32,10 +55,15 @@ export default function DiscoverView({ onAddProspect, onAddLog }: Props) {
 
     try {
       setStatusText('Sending query to discovery agent...');
-      const resp = await fetch('/api/discovery/run', {
+      const resp = await apiFetch('/api/discovery/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_prompt: query, products: [], icp: {} }),
+        body: JSON.stringify({
+          user_prompt: query,
+          products,
+          icp,
+          business: businessInfo,
+        }),
       });
 
       if (!resp.ok) {
@@ -46,7 +74,6 @@ export default function DiscoverView({ onAddProspect, onAddLog }: Props) {
       setStatusText('Processing agent results...');
       const data = await resp.json();
 
-      // Expecting { prospect, agent_log }
       if (data.prospect) {
         onAddProspect(data.prospect as Prospect);
       }
@@ -55,11 +82,14 @@ export default function DiscoverView({ onAddProspect, onAddLog }: Props) {
       }
 
       const durationSec = Math.max(1, Math.round((Date.now() - startedAt.getTime()) / 1000));
-      setRunHistory(prev => [{ id: runId, startedAt, foundCount: data.prospect ? 1 : 0, durationSec }, ...prev]);
+      setRunHistory(prev => [
+        { id: runId, startedAt, foundCount: data.prospect ? 1 : 0, durationSec },
+        ...prev,
+      ]);
       setStatusText('Completed');
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Discovery failed', err);
-      setStatusText(err?.message || 'Discovery failed');
+      setStatusText(err instanceof Error ? err.message : 'Discovery failed');
     } finally {
       setIsRunning(false);
       setTimeout(() => setStatusText(''), 2000);
@@ -73,19 +103,26 @@ export default function DiscoverView({ onAddProspect, onAddLog }: Props) {
       <div className="mb-6">
         <h1 className="text-lg font-semibold text-ink">Discover</h1>
         <p className="text-sm text-ink-secondary mt-0.5">
-          Describe the type of buyer you are looking for. Results appear in your Queue.
+          Describe the buyers you want. Suggestions adapt to your catalog and ICP — click one or type your own.
         </p>
       </div>
 
-      {/* Prompt area */}
       <div className="bg-panel border border-border rounded-md p-4 space-y-3">
-        <textarea
+        <PredictiveField
+          label="Who should we find?"
+          hint="Example: type “distributor” or “hospital” — related scan ideas appear."
           value={query}
-          onChange={e => setQuery(e.target.value)}
-          disabled={isRunning}
-          rows={3}
-          placeholder="Find commercial fitness centers expanding in the GCC region..."
-          className="w-full text-sm text-ink-secondary placeholder-ink-muted resize-none focus:outline-none border-none p-0 bg-transparent"
+          onChange={setQuery}
+          suggestions={discoverSuggestions}
+          placeholder="Find distributors expanding in my target markets…"
+          single
+          aiContext={{
+            field: 'discover',
+            description: businessInfo.description,
+            catalogCategories: catalogCats.length
+              ? catalogCats
+              : businessInfo.primaryCategories,
+          }}
         />
         <div className="flex items-center justify-between pt-2 border-t border-border-subtle">
           {isRunning ? (
@@ -110,7 +147,6 @@ export default function DiscoverView({ onAddProspect, onAddLog }: Props) {
         </div>
       </div>
 
-      {/* Run history */}
       {runHistory.length > 0 && (
         <div className="mt-8">
           <p className="text-xs font-medium text-ink-muted uppercase tracking-widest mb-3">Recent Runs</p>
@@ -118,18 +154,10 @@ export default function DiscoverView({ onAddProspect, onAddLog }: Props) {
             {runHistory.map(run => (
               <div key={run.id} className="py-2.5 flex items-center justify-between text-sm">
                 <div>
-                  <span className="text-ink-secondary">
-                    {run.startedAt.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
-                    {' '}
-                    {run.startedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                  <span className="text-ink-muted ml-2">
-                    · Found {run.foundCount} prospect{run.foundCount !== 1 ? 's' : ''}
-                  </span>
+                  <p className="text-ink-secondary">{run.foundCount} prospect{run.foundCount === 1 ? '' : 's'} found</p>
+                  <p className="text-xs text-ink-muted">{formatRelative(run.startedAt)}</p>
                 </div>
-                <span className="text-slate-400 text-xs tabular-nums">
-                  {run.durationSec < 60 ? `${run.durationSec}s` : `${Math.round(run.durationSec / 60)}m`}
-                </span>
+                <span className="text-xs text-ink-muted font-mono">{run.durationSec}s</span>
               </div>
             ))}
           </div>
@@ -140,11 +168,12 @@ export default function DiscoverView({ onAddProspect, onAddLog }: Props) {
 }
 
 function formatRelative(date: Date): string {
-  const diff = Date.now() - date.getTime();
-  const mins = Math.floor(diff / 60000);
+  const diffMs = Date.now() - date.getTime();
+  const mins = Math.floor(diffMs / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
