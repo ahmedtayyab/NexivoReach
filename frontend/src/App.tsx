@@ -255,9 +255,23 @@ export default function App() {
     );
   };
 
-  const handleAddProspect = (p: Prospect) => {
-    setProspects(prev => [p, ...prev]);
-    setSelectedProspectId(p.id);
+  const handleAddProspects = (list: Prospect[]) => {
+    setProspects(prev => {
+      const seen = new Set(prev.map(p => p.website || p.id));
+      const extra = list.filter(p => !seen.has(p.website || p.id));
+      return [...extra, ...prev];
+    });
+  };
+
+  const handleUpdateStage = (prospectId: string, stage: Prospect['stage']) => {
+    setProspects(prev =>
+      prev.map(p => {
+        if (p.id !== prospectId) return p;
+        const updated = { ...p, stage };
+        void persistProspect(updated);
+        return updated;
+      })
+    );
   };
 
   const handleAddLog = (log: AgentRunLog) => {
@@ -340,6 +354,7 @@ export default function App() {
             prospects={prospects}
             agentLogs={agentLogs}
             onReviewProspect={id => setSelectedProspectId(id)}
+            onUpdateStage={handleUpdateStage}
           />
         )}
         {activeRoute === 'discover' && (
@@ -347,7 +362,7 @@ export default function App() {
             businessInfo={businessInfo}
             icp={icp}
             products={products}
-            onAddProspect={handleAddProspect}
+            onAddProspects={handleAddProspects}
             onAddLog={handleAddLog}
           />
         )}

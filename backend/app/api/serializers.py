@@ -21,6 +21,8 @@ def prospect_to_frontend(pr: ProspectRecord) -> Dict[str, Any]:
         "stage": pr.stage,
         "discoveredAt": pr.discovered_at,
         "agentTimeline": pr.agent_timeline or [],
+        "source": getattr(pr, "source", None) or "",
+        "phone": getattr(pr, "phone", None) or "",
     }
 
 
@@ -43,6 +45,8 @@ def prospect_from_frontend(payload: Dict[str, Any]) -> Dict[str, Any]:
         "stage": payload.get("stage") or "Qualified",
         "discovered_at": payload.get("discoveredAt") or payload.get("discovered_at") or "",
         "agent_timeline": payload.get("agentTimeline") or payload.get("agent_timeline") or [],
+        "source": payload.get("source") or "",
+        "phone": payload.get("phone") or "",
     }
 
 

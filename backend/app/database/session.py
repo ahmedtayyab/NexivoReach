@@ -49,6 +49,8 @@ def _ensure_sqlite_columns():
             ("icpconfig", "business_id", "VARCHAR"),
             ("prospectrecord", "user_id", "VARCHAR"),
             ("prospectrecord", "business_id", "VARCHAR"),
+            ("prospectrecord", "source", "VARCHAR"),
+            ("prospectrecord", "phone", "VARCHAR"),
             ("agentrunrecord", "user_id", "VARCHAR"),
             ("agentrunrecord", "business_id", "VARCHAR"),
             ("user", "active_business_id", "VARCHAR"),

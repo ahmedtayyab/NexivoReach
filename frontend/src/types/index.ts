@@ -71,6 +71,8 @@ export interface Prospect {
   buyingSignals: BuyingSignalDetected[];
   productFit: ProductFitMatch[];
   recommendedApproach: string;
+  source?: string;
+  phone?: string;
   outreachDraft?: {
     id: string;
     subject: string;
@@ -79,7 +81,18 @@ export interface Prospect {
     status: 'Draft' | 'Approved' | 'Sent' | 'Replied';
     createdAt: string;
   };
-  stage: 'New' | 'Researched' | 'Qualified' | 'Contacted' | 'Replied' | 'Meeting' | 'Won';
+  stage:
+    | 'To contact'
+    | 'Contacted'
+    | 'Replied'
+    | 'Re-contact'
+    | 'Denied'
+    | 'Avoid'
+    | 'Meeting'
+    | 'Won'
+    | 'New'
+    | 'Researched'
+    | 'Qualified';
   discoveredAt: string;
   agentTimeline: {
     time: string;

@@ -1,79 +1,106 @@
+import { useMemo, useState } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
+
+export const LEAD_STAGES = [
+  'To contact',
+  'Contacted',
+  'Replied',
+  'Re-contact',
+  'Denied',
+  'Avoid',
+  'Meeting',
+  'Won',
+] as const;
 
 interface Props {
   prospects: Prospect[];
   agentLogs: AgentRunLog[];
   onReviewProspect: (id: string) => void;
+  onUpdateStage: (id: string, stage: Prospect['stage']) => void;
 }
 
-export default function QueueView({ prospects, agentLogs, onReviewProspect }: Props) {
-  const pending = prospects.filter(
-    p => !p.outreachDraft || p.outreachDraft.status === 'Draft'
-  );
-  const reviewed = prospects.filter(
-    p => p.outreachDraft && p.outreachDraft.status !== 'Draft'
-  );
-
+export default function QueueView({ prospects, agentLogs, onReviewProspect, onUpdateStage }: Props) {
+  const [filter, setFilter] = useState<string>('To contact');
   const lastRun = agentLogs[0];
   const lastRunLabel = lastRun ? formatRelative(lastRun.timestamp) : null;
 
-  return (
-    <div className="max-w-2xl">
+  const counts = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const s of LEAD_STAGES) map[s] = 0;
+    for (const p of prospects) {
+      const key = normalizeStage(p.stage);
+      map[key] = (map[key] || 0) + 1;
+    }
+    return map;
+  }, [prospects]);
 
-      {/* Page heading */}
-      <div className="mb-7">
-        <h1 className="text-[15px] font-semibold text-ink tracking-tight">Review Queue</h1>
+  const visible = prospects.filter(p => {
+    if (filter === 'All') return true;
+    return normalizeStage(p.stage) === filter;
+  });
+
+  return (
+    <div className="max-w-3xl">
+      <div className="mb-6">
+        <h1 className="text-[15px] font-semibold text-ink tracking-tight">Leads</h1>
         <p className="text-[13px] text-ink-secondary mt-0.5">
-          <span className="font-medium text-ink-secondary">{pending.length}</span>{' '}
-          prospect{pending.length !== 1 ? 's' : ''} awaiting approval
-          {lastRunLabel && (
-            <span className="text-ink-muted"> · Last scan {lastRunLabel}</span>
-          )}
+          {prospects.length} saved
+          {lastRunLabel && <span className="text-ink-muted"> · Last scan {lastRunLabel}</span>}
         </p>
       </div>
 
-      {/* Active queue */}
-      {pending.length === 0 ? (
+      <div className="flex flex-wrap gap-1.5 mb-4">
+        <FilterChip label="All" count={prospects.length} active={filter === 'All'} onClick={() => setFilter('All')} />
+        {LEAD_STAGES.map(s => (
+          <FilterChip
+            key={s}
+            label={s}
+            count={counts[s] || 0}
+            active={filter === s}
+            onClick={() => setFilter(s)}
+          />
+        ))}
+      </div>
+
+      {visible.length === 0 ? (
         <div className="bg-panel border border-border rounded-lg px-5 py-10 text-center">
-          <p className="text-[13.5px] font-medium text-ink-secondary">Queue is clear</p>
+          <p className="text-[13.5px] font-medium text-ink-secondary">No leads in this bucket</p>
           <p className="text-[13px] text-ink-muted mt-1">
-            Switch to <strong className="font-medium text-ink-secondary">Discover</strong> to find new prospects.
+            Run Discover to hunt buyers from your catalog, then update their status here.
           </p>
         </div>
       ) : (
         <div className="bg-panel border border-border rounded-lg overflow-hidden">
-          {/* Column header */}
-          <div className="grid grid-cols-[1fr_160px_64px_88px] items-center px-4 py-2 border-b border-border-subtle bg-muted">
-            <span className="section-label">Company</span>
-            <span className="section-label">Top Signal</span>
+          <div className="grid grid-cols-[1fr_90px_56px_140px] items-center px-4 py-2 border-b border-border-subtle bg-muted">
+            <span className="section-label">Lead</span>
+            <span className="section-label">Source</span>
             <span className="section-label text-right">Fit</span>
-            <span className="section-label text-right">Action</span>
+            <span className="section-label text-right">Status</span>
           </div>
           <div className="divide-y divide-border-subtle">
-            {pending.map(prospect => (
-              <QueueRow
+            {visible.map(prospect => (
+              <div
                 key={prospect.id}
-                prospect={prospect}
-                isNew
-                onReview={() => onReviewProspect(prospect.id)}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Reviewed section */}
-      {reviewed.length > 0 && (
-        <div className="mt-8">
-          <p className="section-label mb-3">Reviewed</p>
-          <div className="bg-panel border border-border rounded-lg overflow-hidden divide-y divide-border-subtle">
-            {reviewed.map(prospect => (
-              <QueueRow
-                key={prospect.id}
-                prospect={prospect}
-                isNew={false}
-                onReview={() => onReviewProspect(prospect.id)}
-              />
+                className="grid grid-cols-[1fr_90px_56px_140px] items-center px-4 py-3 gap-2 hover:bg-canvas/60"
+              >
+                <button type="button" className="text-left min-w-0" onClick={() => onReviewProspect(prospect.id)}>
+                  <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
+                  <p className="text-[12px] text-ink-muted truncate mt-px">
+                    {prospect.location || prospect.website || '—'}
+                  </p>
+                </button>
+                <span className="text-[12px] text-ink-muted capitalize">{prospect.source || 'web'}</span>
+                <span className="text-[13px] font-semibold text-right tabular-nums">{prospect.fitScore}</span>
+                <select
+                  value={normalizeStage(prospect.stage)}
+                  onChange={e => onUpdateStage(prospect.id, e.target.value as Prospect['stage'])}
+                  className="text-[12px] border border-border rounded-md px-1.5 py-1 bg-panel text-ink-secondary"
+                >
+                  {LEAD_STAGES.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
             ))}
           </div>
         </div>
@@ -82,69 +109,37 @@ export default function QueueView({ prospects, agentLogs, onReviewProspect }: Pr
   );
 }
 
-function QueueRow({
-  prospect,
-  isNew,
-  onReview,
+function FilterChip({
+  label,
+  count,
+  active,
+  onClick,
 }: {
-  prospect: Prospect;
-  isNew: boolean;
-  onReview: () => void;
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
 }) {
-  const topSignal = prospect.buyingSignals?.[0]?.signal ?? '—';
-  const status = prospect.outreachDraft?.status;
-  const statusLabel =
-    status === 'Approved' ? 'Approved'
-    : status === 'Sent' ? 'Sent'
-    : status === 'Replied' ? 'Replied'
-    : null;
-
-  const scoreClass =
-    prospect.fitScore >= 90 ? 'score-high'
-    : prospect.fitScore >= 80 ? 'score-mid'
-    : 'score-low';
-
   return (
-    <div
-      className="queue-row grid grid-cols-[1fr_160px_64px_88px] items-center px-4 py-3 gap-2"
-      onClick={onReview}
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-2.5 py-1 rounded-full text-[12px] border transition-colors ${
+        active ? 'bg-ink text-panel-elevated border-ink' : 'bg-panel border-border text-ink-secondary hover:border-ink-muted'
+      }`}
     >
-      {/* Company col */}
-      <div className="flex items-center gap-2.5 min-w-0">
-        <div
-          className={`w-1.5 h-1.5 rounded-full shrink-0 ${isNew ? 'bg-accent' : 'bg-border'}`}
-        />
-        <div className="min-w-0">
-          <p className={`text-[13.5px] truncate ${isNew ? 'font-medium text-ink' : 'text-ink-muted'}`}>
-            {prospect.companyName}
-          </p>
-          <p className="text-[12px] text-ink-muted truncate mt-px">{prospect.location}</p>
-        </div>
-      </div>
-
-      {/* Top signal col */}
-      <p className="text-[12.5px] text-ink-secondary truncate">{topSignal}</p>
-
-      {/* Score col */}
-      <p className={`text-[13px] font-semibold text-right tabular-nums ${isNew ? scoreClass : 'text-slate-300'}`}>
-        {prospect.fitScore}%
-      </p>
-
-      {/* Action col */}
-      <div className="text-right">
-        {statusLabel ? (
-          <span className="text-[12px] text-ink-muted">{statusLabel}</span>
-        ) : (
-          <button
-            onClick={e => { e.stopPropagation(); onReview(); }}
-            className="text-[13px] text-blue-600 hover:text-blue-800 font-medium transition-colors"
-          >
-            Review →
-          </button>
-        )}
-      </div>
-    </div>
+      {label} {count}
+    </button>
   );
+}
+
+function normalizeStage(stage: string): string {
+  const map: Record<string, string> = {
+    New: 'To contact',
+    Qualified: 'To contact',
+    Researched: 'To contact',
+  };
+  return map[stage] || stage || 'To contact';
 }
 
 function formatRelative(timestamp: string): string {

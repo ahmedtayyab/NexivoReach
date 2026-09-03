@@ -61,6 +61,8 @@ def save_prospect(payload: Dict[str, Any], request: Request, user: AuthUser = De
             existing.agent_timeline = data["agent_timeline"]
             existing.user_id = user.id
             existing.business_id = business_id
+            existing.source = data.get("source") or existing.source
+            existing.phone = data.get("phone") or existing.phone
             session.add(existing)
             session.commit()
             session.refresh(existing)
@@ -86,6 +88,8 @@ def save_prospect(payload: Dict[str, Any], request: Request, user: AuthUser = De
             agent_timeline=data["agent_timeline"],
             user_id=user.id,
             business_id=business_id,
+            source=data.get("source") or "",
+            phone=data.get("phone") or "",
         )
         session.add(record)
         session.commit()
@@ -98,18 +102,26 @@ def _maybe_sync_prospect(record: ProspectRecord):
     if not sheets_mod.is_configured():
         return
     try:
-        sheets_mod.sync_prospect({
+        seller = "Company"
+        if record.business_id:
+            from app.models.schemas import Business
+            with Session(engine) as session:
+                biz = session.get(Business, record.business_id)
+                if biz and biz.name:
+                    seller = biz.name
+        sheets_mod.sync_leads(seller, [{
             "id": record.id,
             "company_name": record.company_name,
             "website": record.website,
             "location": record.location,
             "industry": record.industry,
-            "company_size": record.company_size,
             "fit_score": record.fit_score,
             "why_this_prospect": record.why_this_prospect,
-            "recommended_approach": record.recommended_approach,
             "stage": record.stage,
             "discovered_at": record.discovered_at,
-        })
+            "source": record.source,
+            "phone": record.phone,
+            "seller_name": seller,
+        }])
     except Exception as exc:
         log.warning("Sheets prospect sync failed: %s", exc)

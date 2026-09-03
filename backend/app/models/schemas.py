@@ -60,6 +60,8 @@ class ProspectRecord(SQLModel, table=True):
     agent_timeline: List[dict] = Field(default=[], sa_type=JSON)
     user_id: Optional[str] = Field(default=None, index=True)
     business_id: Optional[str] = Field(default=None, index=True)
+    source: Optional[str] = None
+    phone: Optional[str] = None
 
 
 class AgentRunRecord(SQLModel, table=True):

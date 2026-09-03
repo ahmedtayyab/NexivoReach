@@ -1,257 +1,236 @@
+"""Lead-hunting agent: many companies from web + maps, catalog-aware, no mock data."""
+
+from __future__ import annotations
+
+import re
 import time
-import asyncio
-import json
-from typing import Dict, Any, List
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
+from urllib.parse import urlparse
+
 from app.tools.web_search import WebSearchTool
 from app.tools.score_calculator import ScoreCalculatorTool
-from app.providers.factory import get_ai_provider
+
+
+LEAD_STAGES = (
+    "To contact",
+    "Contacted",
+    "Replied",
+    "Re-contact",
+    "Denied",
+    "Avoid",
+    "Meeting",
+    "Won",
+)
+
+
+def _domain(url: str) -> str:
+    host = (urlparse(url or "").hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def build_hunt_queries(
+    user_prompt: str,
+    products: List[Dict[str, Any]],
+    icp: Dict[str, Any],
+    business: Dict[str, Any],
+) -> tuple[list[str], str]:
+    categories = [
+        *(business.get("primaryCategories") or business.get("primary_categories") or []),
+        *[p.get("category") for p in products if p.get("category") and p.get("category") != "Uncategorized"],
+    ]
+    # unique, keep order
+    seen = set()
+    cats: List[str] = []
+    for c in categories:
+        key = (c or "").strip()
+        if not key or key.lower() in seen:
+            continue
+        seen.add(key.lower())
+        cats.append(key)
+    cats = cats[:4] or ["wholesale"]
+
+    buyers = list(icp.get("targetBuyerTypes") or icp.get("target_buyer_types") or [])[:4]
+    if not buyers:
+        buyers = ["distributors", "retailers", "wholesalers", "importers"]
+
+    countries = list(icp.get("targetCountries") or icp.get("target_countries") or [])[:4]
+    markets = list(business.get("targetMarkets") or business.get("target_markets") or [])[:4]
+    places = []
+    for p in countries + markets:
+        if p and p not in places:
+            places.append(p)
+    if not places:
+        places = [""]
+
+    queries: List[str] = []
+    if user_prompt.strip():
+        queries.append(user_prompt.strip())
+
+    for place in places[:3]:
+        loc = place.strip()
+        for buyer in buyers[:2]:
+            for cat in cats[:2]:
+                q = f"{buyer} {cat} {loc}".strip()
+                if q and q not in queries:
+                    queries.append(q)
+        queries.append(f"{cats[0]} distributors {loc}".strip())
+        queries.append(f"{cats[0]} retailers {loc}".strip())
+
+    # de-dupe / trim
+    out: List[str] = []
+    seen_q = set()
+    for q in queries:
+        key = re.sub(r"\s+", " ", q.lower()).strip()
+        if not key or key in seen_q:
+            continue
+        seen_q.add(key)
+        out.append(q)
+        if len(out) >= 8:
+            break
+    primary_place = next((p for p in places if p), "")
+    return out, primary_place
+
 
 class ProspectingAgent:
     def __init__(self):
         self.web_search = WebSearchTool()
         self.score_calc = ScoreCalculatorTool()
-        self.ai_provider = get_ai_provider()
 
     async def execute_discovery_goal(
-        self, 
-        user_prompt: str, 
-        products: List[Dict[str, Any]], 
-        icp: Dict[str, Any]
+        self,
+        user_prompt: str,
+        products: List[Dict[str, Any]],
+        icp: Dict[str, Any],
+        business: Optional[Dict[str, Any]] = None,
+        exclude_websites: Optional[List[str]] = None,
+        limit: int = 35,
     ) -> Dict[str, Any]:
-        """
-        Executes autonomous prospecting loop:
-        Observe -> Decide -> Tool -> Inspect -> Next Step -> Complete
-        """
         start_time = time.time()
-        decisions_log = []
+        decisions_log: List[Dict[str, Any]] = []
+        business = business or {}
+        queries, location = build_hunt_queries(user_prompt, products, icp, business)
 
-        async def _retry_async(callable_coro, tool_name: str, step: int, max_attempts: int = 3, base_delay: float = 0.5):
-            attempts = 0
-            last_exc = None
-            while attempts < max_attempts:
-                try:
-                    attempts += 1
-                    res = await callable_coro
-                    if attempts > 1:
-                        decisions_log.append({
-                            "step": step,
-                            "observation": f"{tool_name} succeeded on attempt {attempts}.",
-                            "decision": f"Retry succeeded for {tool_name}",
-                            "toolCalled": tool_name,
-                            "toolResultSnippet": str(res)[:200]
-                        })
-                    return res
-                except Exception as e:
-                    last_exc = e
-                    decisions_log.append({
-                        "step": step,
-                        "observation": f"{tool_name} attempt {attempts} failed.",
-                        "decision": f"Retry {attempts}/{max_attempts} for {tool_name}",
-                        "toolCalled": tool_name,
-                        "toolError": repr(e)
-                    })
-                    await asyncio.sleep(base_delay * attempts)
-            # all attempts failed
-            decisions_log.append({
-                "step": step,
-                "observation": f"{tool_name} failed after {max_attempts} attempts.",
-                "decision": f"Marking partial failure for {tool_name}",
-                "toolCalled": tool_name,
-                "toolError": repr(last_exc)
-            })
-            raise last_exc
+        exclude_domains = {_domain(u) for u in (exclude_websites or []) if _domain(u)}
 
-        # Step 1: Observe Goal
         decisions_log.append({
             "step": 1,
-            "observation": f"Goal Prompt Received: '{user_prompt}'",
-            "decision": "Structure target criteria and identify catalog products to match.",
-            "toolCalled": "GoalParser",
-            "toolResultSnippet": f"Catalog Items Available: {len(products)}. Target Countries: {', '.join(icp.get('targetCountries', ['UAE']))}."
+            "observation": f"Hunt for buyers of {len(products)} catalog items in {location or 'target markets'}.",
+            "decision": f"Run {len(queries)} web + Maps searches (skip {len(exclude_domains)} already-known domains).",
+            "toolCalled": "QueryBuilder",
+            "toolResultSnippet": "; ".join(queries[:4]),
         })
 
-        # Step 2: Web Search & Company Discovery Tool
-        try:
-            companies = await _retry_async(self.web_search.search_companies(user_prompt, target_location="UAE"),
-                                           tool_name="WebSearchTool", step=2)
-        except Exception:
-            # if search fails completely, return a failed agent log
-            duration_ms = int((time.time() - start_time) * 1000)
-            agent_log = {
-                "id": f"run-{int(time.time())}",
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "task": user_prompt,
-                "durationMs": duration_ms,
-                "toolsUsed": ["WebSearchTool"],
-                "sourcesCount": 0,
-                "status": "Failed",
-                "decisions": decisions_log,
-            }
-            return {"prospect": None, "agent_log": agent_log}
-        decisions_log.append({
-            "step": 2,
-            "observation": f"Found {len(companies)} candidate companies matching search criteria.",
-            "decision": "Query WebSearchTool for public company profiles and recent expansion news.",
-            "toolCalled": "WebSearchTool",
-            "toolResultSnippet": f"Candidates: {', '.join([c['company_name'] for c in companies])}"
-        })
-
-        # Step 3: Deep Research & Signal Detection
-        if not companies:
-            # no companies found — return partial result
-            duration_ms = int((time.time() - start_time) * 1000)
-            agent_log = {
-                "id": f"run-{int(time.time())}",
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "task": user_prompt,
-                "durationMs": duration_ms,
-                "toolsUsed": ["WebSearchTool"],
-                "sourcesCount": 0,
-                "status": "CompletedWithNoCandidates",
-                "decisions": decisions_log,
-            }
-            return {"prospect": None, "agent_log": agent_log}
-
-        target_co = companies[0]
-        try:
-            site_text = await _retry_async(self.web_search.scrape_site_content(target_co['website']),
-                                           tool_name="SiteScraperTool", step=3)
-        except Exception:
-            site_text = ""
-        
-        detected_signals = [
-          {
-            "signal": "New Flagship Location Announced",
-            "whyItMatters": "Indicates immediate need for new commercial equipment procurement prior to grand opening.",
-            "sourceUrl": "https://gulfbusiness-news.example.com/abc-fitness-dubai-expansion",
-            "sourceExcerpt": "ABC Fitness is investing AED 4.5 million into its new 15,000 sq ft flagship health club in Business Bay, set to open in Q4."
-          },
-          {
-            "signal": "Facility Equipment Upgrade Notice",
-            "whyItMatters": "Existing locations are refreshing free weight areas with high-durability urethane dumbbells.",
-            "sourceUrl": "https://abcfitness-dubai.example.com/blog/upgrades",
-            "sourceExcerpt": "We are upgrading our strength zones across all branches with commercial-grade power racks and heavy dumbbells."
-          }
-        ]
-
-        decisions_log.append({
-            "step": 3,
-            "observation": f"Retrieved public site content for {target_co['company_name']}.",
-            "decision": "Inspect page text for expansion, renovation, and hiring buying signals.",
-            "toolCalled": "SignalDetectorTool",
-            "toolResultSnippet": f"Detected 2 signals: '{detected_signals[0]['signal']}' and '{detected_signals[1]['signal']}'."
-        })
-
-        # Step 4: Product Catalog Matching
-        product_fit_matrix = [
-            {"productName": "Commercial Heavy-Duty Power Rack", "fitLevel": "High", "reasoning": "New 15,000 sq ft facility requires 8-10 power racks for peak-hour member throughput."},
-            {"productName": "Dual-Stack Cable Crossover", "fitLevel": "High", "reasoning": "Key feature request for functional training area in new location."},
-            {"productName": "Urethane Dumbbell Set (2.5kg - 50kg)", "fitLevel": "High", "reasoning": "Matches their public commitment to upgrade strength zones."}
-        ]
-
-        decisions_log.append({
-            "step": 4,
-            "observation": "Company has immediate floor plan space requirement.",
-            "decision": "Execute ProductMatcherTool to cross-reference catalog specifications against buyer needs.",
-            "toolCalled": "ProductMatcherTool",
-            "toolResultSnippet": f"Matched {len(product_fit_matrix)} High-Fit products (Power Rack, Cable Crossover, Urethane Dumbbells)."
-        })
-
-        # Step 5: Score Calculation
-        score_res = self.score_calc.calculate_fit_score(
-            company_industry="Commercial Fitness Club",
-            company_location=target_co['location'],
-            target_countries=icp.get('targetCountries', ['United Arab Emirates']),
-            buying_signals=detected_signals,
-            product_matches=product_fit_matrix
+        leads = await self.web_search.hunt_leads(
+            queries,
+            target_location=location,
+            exclude_domains=exclude_domains,
+            limit=limit,
         )
 
         decisions_log.append({
-            "step": 5,
-            "observation": "Product fit matrix and signal evidence assembled.",
-            "decision": "Execute transparent 100-point scoring formula.",
-            "toolCalled": "ScoreCalculatorTool",
-            "toolResultSnippet": f"Total Fit Score: {score_res['total_score']}% Match (Industry: {score_res['breakdown']['industryFit']}, Location: {score_res['breakdown']['locationFit']}, Product: {score_res['breakdown']['productMatch']})."
+            "step": 2,
+            "observation": f"Found {len(leads)} unique companies (web + Google Maps).",
+            "decision": "Score each lead against catalog, buyers, and target countries. Skip mock/gym templates.",
+            "toolCalled": "WebSearchTool",
+            "toolResultSnippet": ", ".join(c.get("company_name", "") for c in leads[:8]),
         })
 
-        # Step 6: Personalized Outreach Generation
-        why_prospect_text = f"{target_co['company_name']} operates commercial facilities in Dubai and recently announced a 15,000 sq ft flagship expansion in Business Bay, creating immediate demand for heavy-duty commercial strength equipment."
-        try:
-            outreach_data = await _retry_async(self.ai_provider.generate_personalized_outreach(
-                company_name=target_co['company_name'],
-                why_prospect=why_prospect_text,
-                signals=detected_signals,
-                matched_products=product_fit_matrix
-            ), tool_name="OutreachEngine", step=6)
-        except Exception:
-            # fallback to a minimal outreach draft
-            outreach_data = {
-                "subject": "Commercial equipment inquiry",
-                "body": "Hello, we noticed your expansion and can help supply equipment.",
-                "personalizedReason": why_prospect_text
+        if not leads:
+            duration_ms = int((time.time() - start_time) * 1000)
+            return {
+                "prospects": [],
+                "agent_log": {
+                    "id": f"run-{int(time.time())}",
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "task": user_prompt or "Lead hunt",
+                    "durationMs": duration_ms,
+                    "toolsUsed": ["WebSearchTool"],
+                    "sourcesCount": 0,
+                    "status": "CompletedWithNoCandidates",
+                    "decisions": decisions_log,
+                },
             }
-            decisions_log.append({
-                "step": 6,
-                "observation": "Outreach generation failed and fallback was used.",
-                "decision": "Used conservative fallback outreach draft.",
-                "toolCalled": "OutreachEngine",
+
+        product_names = [p.get("name") for p in products if p.get("name")][:6]
+        cats = list({p.get("category") for p in products if p.get("category")})[:4]
+        seller = (business.get("name") or "your catalog").strip()
+        countries = icp.get("targetCountries") or icp.get("target_countries") or []
+        buyers = icp.get("targetBuyerTypes") or icp.get("target_buyer_types") or []
+
+        prospects: List[Dict[str, Any]] = []
+        for co in leads:
+            snippet = co.get("snippet") or ""
+            industry = co.get("industry") or snippet or (cats[0] if cats else "Buyer")
+            matches = [
+                {
+                    "productName": name,
+                    "fitLevel": "Medium",
+                    "reasoning": f"Possible buyer for {name} based on {co.get('company_name')} appearing in {co.get('source') or 'search'} for {cats[0] if cats else 'your category'}.",
+                }
+                for name in product_names[:3]
+            ]
+            score_res = self.score_calc.calculate_fit_score(
+                company_industry=industry,
+                company_location=co.get("location") or "",
+                target_countries=list(countries),
+                buying_signals=[],
+                product_matches=matches,
+                target_buyer_types=list(buyers),
+                research_text=f"{co.get('company_name')} {snippet}",
+            )
+            source = co.get("source") or "web"
+            why = (
+                f"{co.get('company_name')} showed up as a {source} result for "
+                f"{(cats[0] if cats else 'your products')} in {co.get('location') or location or 'your target market'}."
+            )
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            prospects.append({
+                "id": f"prospect-{uuid4().hex[:10]}",
+                "companyName": co.get("company_name") or "Unknown",
+                "website": co.get("website") or "",
+                "location": co.get("location") or location or "",
+                "industry": industry[:80],
+                "companySize": "",
+                "phone": co.get("phone") or "",
+                "source": source,
+                "fitScore": score_res["total_score"],
+                "fitBreakdown": score_res["breakdown"],
+                "whyThisProspect": why,
+                "buyingSignals": [],
+                "productFit": matches,
+                "recommendedApproach": (
+                    f"Reach out as {seller}. Lead with {product_names[0] if product_names else 'your catalog'} "
+                    f"and confirm they buy {cats[0] if cats else 'this category'}."
+                ),
+                "outreachDraft": None,
+                "stage": "To contact",
+                "discoveredAt": now,
+                "agentTimeline": [
+                    {"time": time.strftime("%H:%M"), "action": f"Discovered via {source} search"},
+                    {"time": time.strftime("%H:%M"), "action": f"Scored {score_res['total_score']}/100 against catalog/ICP"},
+                ],
             })
 
-        decisions_log.append({
-            "step": 6,
-            "observation": "Prospect qualified. Outreach generation triggered.",
-            "decision": "Draft personalized email tied to Business Bay flagship opening evidence.",
-            "toolCalled": "OutreachEngine",
-            "toolResultSnippet": f"Subject: '{outreach_data.get('subject')}'. Status: Draft (Requires Human Approval)."
-        })
+        prospects.sort(key=lambda p: int(p.get("fitScore") or 0), reverse=True)
 
         duration_ms = int((time.time() - start_time) * 1000)
-
-        prospect_result = {
-            "id": f"prospect-{int(time.time())}",
-            "companyName": target_co['company_name'],
-            "website": target_co['website'],
-            "location": target_co['location'],
-            "industry": "Commercial Fitness Club",
-            "companySize": "50-100 Employees (3 Locations)",
-            "fitScore": score_res['total_score'],
-            "fitBreakdown": score_res['breakdown'],
-            "whyThisProspect": why_prospect_text,
-            "buyingSignals": detected_signals,
-            "productFit": product_fit_matrix,
-            "recommendedApproach": "Lead with custom-branded heavy-duty Power Racks and direct factory pricing from Sialkot with short GCC transit times.",
-            "outreachDraft": {
-                "id": f"out-{int(time.time())}",
-                "subject": outreach_data.get('subject', 'Custom Power Racks for Expansion'),
-                "body": outreach_data.get('body', ''),
-                "personalizedReason": outreach_data.get('personalizedReason', ''),
-                "status": "Draft",
-                "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ")
-            },
-            "stage": "Qualified",
-            "discoveredAt": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "agentTimeline": [
-                {"time": time.strftime("%H:%M"), "action": "Discovered company via UAE commercial fitness search query"},
-                {"time": time.strftime("%H:%M"), "action": "Researched website and extracted Business Bay expansion announcement"},
-                {"time": time.strftime("%H:%M"), "action": "Identified 2 strong buying signals"},
-                {"time": time.strftime("%H:%M"), "action": "Matched 3 catalog products (High Fit)"},
-                {"time": time.strftime("%H:%M"), "action": f"Calculated fit score: {score_res['total_score']}/100"},
-                {"time": time.strftime("%H:%M"), "action": "Drafted personalized outreach (Requires Human Approval)"}
-            ]
-        }
-
         agent_log = {
             "id": f"run-{int(time.time())}",
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "task": user_prompt,
+            "task": user_prompt or f"Find buyers in {location}",
             "durationMs": duration_ms,
-            "toolsUsed": ["WebSearchTool", "SiteScraperTool", "SignalDetectorTool", "ProductMatcherTool", "ScoreCalculatorTool"],
-            "sourcesCount": len(companies) + 3,
+            "toolsUsed": ["QueryBuilder", "WebSearchTool", "MapsSearch", "ScoreCalculatorTool"],
+            "sourcesCount": len(leads),
             "status": "Completed",
-            "decisions": decisions_log
+            "decisions": decisions_log + [{
+                "step": 3,
+                "observation": f"Qualified {len(prospects)} leads to contact.",
+                "decision": "Persist all leads (not just the first) and sync to Google Sheets.",
+                "toolCalled": "LeadPipeline",
+                "toolResultSnippet": f"{len(prospects)} To contact",
+            }],
         }
-
-        return {
-            "prospect": prospect_result,
-            "agent_log": agent_log
-        }
+        return {"prospects": prospects, "agent_log": agent_log}

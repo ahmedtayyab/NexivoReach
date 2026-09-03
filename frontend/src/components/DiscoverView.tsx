@@ -9,7 +9,7 @@ interface Props {
   businessInfo: BusinessInfo;
   icp: IdealCustomerProfile;
   products?: Product[];
-  onAddProspect: (prospect: Prospect) => void;
+  onAddProspects: (prospects: Prospect[]) => void;
   onAddLog: (log: AgentRunLog) => void;
 }
 
@@ -17,7 +17,7 @@ export default function DiscoverView({
   businessInfo,
   icp,
   products = [],
-  onAddProspect,
+  onAddProspects,
   onAddLog,
 }: Props) {
   const [query, setQuery] = useState('');
@@ -45,16 +45,20 @@ export default function DiscoverView({
     [context, catalogCats],
   );
 
+  const canRun =
+    Boolean(query.trim()) ||
+    products.length > 0 ||
+    (businessInfo.primaryCategories || []).length > 0;
+
   const handleRun = async () => {
-    if (!query.trim() || isRunning) return;
+    if (!canRun || isRunning) return;
     setIsRunning(true);
-    setStatusText('Starting discovery...');
+    setStatusText('Hunting buyers from catalog + Maps/web search…');
 
     const runId = `run-${Date.now()}`;
     const startedAt = new Date();
 
     try {
-      setStatusText('Sending query to discovery agent...');
       const resp = await apiFetch('/api/discovery/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -63,6 +67,7 @@ export default function DiscoverView({
           products,
           icp,
           business: businessInfo,
+          keep_scanning: true,
         }),
       });
 
@@ -71,28 +76,30 @@ export default function DiscoverView({
         throw new Error(`Discovery API error: ${resp.status} ${text}`);
       }
 
-      setStatusText('Processing agent results...');
       const data = await resp.json();
-
-      if (data.prospect) {
-        onAddProspect(data.prospect as Prospect);
-      }
-      if (data.agent_log) {
-        onAddLog(data.agent_log as AgentRunLog);
-      }
+      const found: Prospect[] = Array.isArray(data.prospects)
+        ? data.prospects
+        : data.prospect
+          ? [data.prospect]
+          : [];
+      if (found.length) onAddProspects(found);
+      if (data.agent_log) onAddLog(data.agent_log as AgentRunLog);
 
       const durationSec = Math.max(1, Math.round((Date.now() - startedAt.getTime()) / 1000));
       setRunHistory(prev => [
-        { id: runId, startedAt, foundCount: data.prospect ? 1 : 0, durationSec },
+        { id: runId, startedAt, foundCount: found.length, durationSec },
         ...prev,
       ]);
-      setStatusText('Completed');
+      setStatusText(
+        found.length
+          ? `Added ${found.length} new lead${found.length === 1 ? '' : 's'} (already-known companies skipped).`
+          : 'No new companies this round — try another city or buyer type, then scan again.',
+      );
     } catch (err: unknown) {
       console.error('Discovery failed', err);
       setStatusText(err instanceof Error ? err.message : 'Discovery failed');
     } finally {
       setIsRunning(false);
-      setTimeout(() => setStatusText(''), 2000);
     }
   };
 
@@ -103,7 +110,7 @@ export default function DiscoverView({
       <div className="mb-6">
         <h1 className="text-lg font-semibold text-ink">Discover</h1>
         <p className="text-sm text-ink-secondary mt-0.5">
-          Describe the buyers you want. Suggestions adapt to your catalog and ICP — click one or type your own.
+          The agent searches the web and Google Maps using your catalog, buyers, and countries — then saves every new company as a lead. Run again to keep hunting (already-found companies are skipped).
         </p>
       </div>
 
@@ -131,18 +138,16 @@ export default function DiscoverView({
               <span>{statusText}</span>
             </span>
           ) : (
-            <span className="text-xs text-ink-muted">
-              {lastRun
-                ? `Last run ${formatRelative(lastRun.startedAt)}`
-                : 'No runs yet'}
+            <span className="text-xs text-ink-muted max-w-[70%]">
+              {statusText || (lastRun ? `Last run ${formatRelative(lastRun.startedAt)}` : 'Uses catalog + ICP if you leave the box empty')}
             </span>
           )}
           <button
             onClick={handleRun}
-            disabled={isRunning || !query.trim()}
+            disabled={isRunning || !canRun}
             className="px-4 py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-sm font-medium rounded-md transition-colors"
           >
-            {isRunning ? 'Running...' : 'Run Scan'}
+            {isRunning ? 'Searching…' : 'Find leads'}
           </button>
         </div>
       </div>
@@ -154,7 +159,7 @@ export default function DiscoverView({
             {runHistory.map(run => (
               <div key={run.id} className="py-2.5 flex items-center justify-between text-sm">
                 <div>
-                  <p className="text-ink-secondary">{run.foundCount} prospect{run.foundCount === 1 ? '' : 's'} found</p>
+                  <p className="text-ink-secondary">{run.foundCount} new lead{run.foundCount === 1 ? '' : 's'}</p>
                   <p className="text-xs text-ink-muted">{formatRelative(run.startedAt)}</p>
                 </div>
                 <span className="text-xs text-ink-muted font-mono">{run.durationSec}s</span>

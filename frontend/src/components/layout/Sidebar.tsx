@@ -43,7 +43,7 @@ export default function Sidebar({
   }, []);
 
   const primary = [
-    { id: 'queue', label: 'Queue', icon: LayoutList },
+    { id: 'queue', label: 'Leads', icon: LayoutList },
     { id: 'discover', label: 'Discover', icon: Search },
     { id: 'catalog', label: 'Catalog', icon: Database },
   ];

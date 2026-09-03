@@ -1,6 +1,6 @@
 import asyncio
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -178,12 +178,99 @@ class WebSearchTool:
         q = (query or "").strip()
         if target_location and target_location.lower() not in q.lower():
             q = f"{q} {target_location}".strip()
-        if q and "official" not in q.lower():
-            q = f"{q} company official website"
         if not q:
             return []
         raw = await asyncio.to_thread(self._search_sync, q)
         return results_to_companies(raw, target_location)
+
+    async def search_maps(self, query: str, target_location: str = "") -> List[Dict[str, Any]]:
+        """Google Maps / Places via Serper when SERPER_API_KEY is set."""
+        q = (query or "").strip()
+        if target_location and target_location.lower() not in q.lower():
+            q = f"{q} {target_location}".strip()
+        if not q or not settings.SERPER_API_KEY:
+            return []
+        try:
+            places = await asyncio.to_thread(self._serper_maps, q)
+        except Exception:
+            return []
+        leads: List[Dict[str, Any]] = []
+        seen = set()
+        for p in places:
+            name = (p.get("title") or "").strip()
+            website = (p.get("website") or p.get("link") or "").strip()
+            address = (p.get("address") or "").strip()
+            phone = (p.get("phoneNumber") or p.get("phone") or "").strip()
+            key = _registrable_domain(website) if website else name.lower()
+            if not name or key in seen:
+                continue
+            if website and _should_skip(website):
+                continue
+            seen.add(key)
+            leads.append({
+                "company_name": name[:120],
+                "website": website,
+                "location": address or target_location or "",
+                "industry": "",
+                "snippet": (p.get("type") or p.get("category") or "")[:500],
+                "phone": phone,
+                "source": "maps",
+            })
+        return leads
+
+    def _serper_maps(self, query: str) -> List[Dict[str, Any]]:
+        with httpx.Client(timeout=20.0) as client:
+            res = client.post(
+                "https://google.serper.dev/maps",
+                headers={"X-API-KEY": settings.SERPER_API_KEY, "Content-Type": "application/json"},
+                json={"q": query},
+            )
+            res.raise_for_status()
+            data = res.json()
+            return list(data.get("places") or data.get("organic") or [])
+
+    async def hunt_leads(
+        self,
+        queries: List[str],
+        target_location: str = "",
+        exclude_domains: Optional[set] = None,
+        limit: int = 40,
+    ) -> List[Dict[str, Any]]:
+        """Run several web + maps searches and merge unique companies."""
+        exclude_domains = exclude_domains or set()
+        merged: List[Dict[str, Any]] = []
+        seen: set = set(exclude_domains)
+
+        async def run_one(q: str) -> List[Dict[str, Any]]:
+            web, maps = await asyncio.gather(
+                self.search_companies(q, target_location),
+                self.search_maps(q, target_location),
+                return_exceptions=True,
+            )
+            out: List[Dict[str, Any]] = []
+            if isinstance(maps, list):
+                out.extend(maps)
+            if isinstance(web, list):
+                for row in web:
+                    row.setdefault("source", "web")
+                    out.append(row)
+            return out
+
+        chunks = queries[:8]
+        results = await asyncio.gather(*[run_one(q) for q in chunks], return_exceptions=True)
+        for batch in results:
+            if not isinstance(batch, list):
+                continue
+            for row in batch:
+                website = (row.get("website") or "").strip()
+                domain = _registrable_domain(website) if website else (row.get("company_name") or "").lower()
+                if not domain or domain in seen:
+                    continue
+                seen.add(domain)
+                merged.append(row)
+                if len(merged) >= limit:
+                    return merged
+        return merged
 
     def _search_sync(self, query: str) -> List[Dict[str, str]]:
         for fn in (self._serper, self._brave, self._tavily, self._duckduckgo):
@@ -202,7 +289,7 @@ class WebSearchTool:
             res = client.post(
                 "https://google.serper.dev/search",
                 headers={"X-API-KEY": settings.SERPER_API_KEY, "Content-Type": "application/json"},
-                json={"q": query, "num": 10},
+                json={"q": query, "num": 15},
             )
             res.raise_for_status()
             organic = res.json().get("organic") or []

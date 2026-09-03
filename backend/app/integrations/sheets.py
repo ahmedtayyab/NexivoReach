@@ -31,10 +31,10 @@ PRODUCT_HEADERS = [
     "Price", "MOQ", "Product URL", "Image", "Source Page", "In Stock", "Last Updated",
 ]
 
-PROSPECT_HEADERS = [
-    "ID", "Company Name", "Website", "Location", "Industry",
-    "Company Size", "Fit Score", "Why This Prospect",
-    "Recommended Approach", "Stage", "Discovered At", "Last Updated",
+LEAD_HEADERS = [
+    "Seller Company", "Lead Name", "Website", "Phone", "Location",
+    "Industry", "Source", "Status", "Next action", "Fit Score",
+    "Why", "Discovered", "Last Updated",
 ]
 
 TIMELINE_HEADERS = [
@@ -252,52 +252,92 @@ def sync_products(company_name: str, products: list[dict]) -> dict:
     return {"written": written, "url": url, "tab": tab_name}
 
 
-def sync_prospect(prospect: dict) -> dict:
+def sync_leads(seller_name: str, prospects: list[dict]) -> dict:
     """
-    Write/update a prospect row and append a timeline event.
-    Returns {"written": True/False, "url": "..."}
+    Upsert leads onto a per-seller tab: '<Seller> - Leads'.
+    Separate from the product catalog tab. Includes seller company name on every row.
+    Dedupes on Website, then Lead Name.
     """
     client = _get_client()
     if client is None:
-        return {"written": False, "error": "Sheets not configured"}
+        return {"written": 0, "error": "Sheets not configured"}
 
     sheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip()
     sh = client.open_by_key(sheet_id)
+    seller = _sanitize_tab_label(seller_name or "Company")
+    tab_name = f"{seller} - Leads"
+    ws = _get_or_create_sheet(sh, tab_name, LEAD_HEADERS)
+    now = _now()
 
-    # Prospects sheet
-    ws = _get_or_create_sheet(sh, "Prospects", PROSPECT_HEADERS)
-    row_data = [
-        prospect.get("id", ""),
-        prospect.get("company_name") or prospect.get("companyName", ""),
-        prospect.get("website", ""),
-        prospect.get("location", ""),
-        prospect.get("industry", ""),
-        prospect.get("company_size") or prospect.get("companySize", ""),
-        str(prospect.get("fit_score") or prospect.get("fitScore", "")),
-        prospect.get("why_this_prospect") or prospect.get("whyThisProspect", ""),
-        prospect.get("recommended_approach") or prospect.get("recommendedApproach", ""),
-        prospect.get("stage", "Qualified"),
-        prospect.get("discovered_at") or prospect.get("discoveredAt", ""),
-        _now(),
-    ]
-    website_key = prospect.get("website", "")
-    row_idx = _find_row_by_key(ws, 3, website_key)  # col 3 = Website
-    if row_idx:
-        ws.update(f"A{row_idx}:L{row_idx}", [row_data], value_input_option="USER_ENTERED")
-    else:
-        ws.append_row(row_data, value_input_option="USER_ENTERED")
+    existing = ws.get_all_values()
+    index_by_web: dict[str, int] = {}
+    index_by_name: dict[str, int] = {}
+    for idx, row in enumerate(existing[1:], start=2):
+        web = (row[2] if len(row) > 2 else "").strip().lower()
+        name = (row[1] if len(row) > 1 else "").strip().lower()
+        if web:
+            index_by_web[web] = idx
+        if name:
+            index_by_name[name] = idx
 
-    # Timeline sheet
-    tl = _get_or_create_sheet(sh, "Timeline", TIMELINE_HEADERS)
-    company = prospect.get("company_name") or prospect.get("companyName", "")
-    stage = prospect.get("stage", "Qualified")
-    tl.append_row([
-        prospect.get("id", ""),
-        company,
-        f"Stage → {stage}",
-        prospect.get("recommended_approach") or prospect.get("recommendedApproach", ""),
-        _now(),
-    ], value_input_option="USER_ENTERED")
+    updates: list[tuple[str, list]] = []
+    appends: list[list] = []
+    for p in prospects:
+        name = (p.get("company_name") or p.get("companyName") or "").strip()
+        website = (p.get("website") or "").strip()
+        if not name:
+            continue
+        stage = p.get("stage") or "To contact"
+        next_action = {
+            "To contact": "First outreach",
+            "Contacted": "Wait for reply / follow up",
+            "Replied": "Human reply needed",
+            "Re-contact": "Follow up this week",
+            "Denied": "Do not pitch again",
+            "Avoid": "Do not contact",
+            "Meeting": "Prepare meeting",
+            "Won": "Onboard",
+        }.get(stage, "Review")
+        row_data = [
+            seller_name or seller,
+            name,
+            website,
+            p.get("phone") or "",
+            p.get("location") or "",
+            p.get("industry") or "",
+            p.get("source") or "web",
+            stage,
+            next_action,
+            str(p.get("fit_score") or p.get("fitScore") or ""),
+            (p.get("why_this_prospect") or p.get("whyThisProspect") or "")[:300],
+            p.get("discovered_at") or p.get("discoveredAt") or "",
+            now,
+        ]
+        match = index_by_web.get(website.lower()) if website else None
+        if not match:
+            match = index_by_name.get(name.lower())
+        if match:
+            updates.append((f"A{match}:M{match}", row_data))
+        else:
+            appends.append(row_data)
+
+    for cell_range, row_data in updates:
+        ws.update(cell_range, [row_data], value_input_option="USER_ENTERED")
+    if appends:
+        needed = ws.row_count + len(appends)
+        if ws.row_count < needed + 10:
+            ws.resize(rows=needed + 50, cols=len(LEAD_HEADERS))
+        for start in range(0, len(appends), 75):
+            chunk = appends[start : start + 75]
+            ws.append_rows(chunk, value_input_option="USER_ENTERED")
 
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-    return {"written": True, "url": url}
+    written = len(updates) + len(appends)
+    log.info("Synced %s leads to %s", written, tab_name)
+    return {"written": written, "url": url, "tab": tab_name}
+
+
+def sync_prospect(prospect: dict) -> dict:
+    """Single-lead wrapper — writes to that seller's Leads tab."""
+    seller = prospect.get("seller_name") or prospect.get("sellerName") or "Company"
+    return sync_leads(seller, [prospect])
