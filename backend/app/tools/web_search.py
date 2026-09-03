@@ -86,6 +86,40 @@ def _brand_from_url(url: str) -> str:
     return slug.replace("-", " ").title()
 
 
+def display_name_from_url(url: str) -> str:
+    """Human label from domain slug, e.g. alwasi-ent.com → Alwasi Ent."""
+    return _brand_from_url(url)
+
+
+def site_display_name_from_url(url: str) -> str:
+    """
+    Best-effort company name from a website: og:site_name / <title>, then domain slug.
+    """
+    if not (url or "").strip():
+        return ""
+    try:
+        with httpx.Client(timeout=8.0, follow_redirects=True, headers=HEADERS) as client:
+            root = urljoin(url.strip(), "/")
+            res = client.get(root)
+            if res.status_code == 200 and res.text:
+                soup = BeautifulSoup(res.text, "html.parser")
+                og = soup.find("meta", property="og:site_name")
+                if og and og.get("content"):
+                    label = og.get("content", "").strip()
+                    if label:
+                        return re.sub(r"[®™]", "", label).strip()[:80]
+                title = soup.find("title")
+                if title and title.get_text(strip=True):
+                    t = title.get_text(strip=True)
+                    t = re.split(r"\s[|\-–:]\s", t, maxsplit=1)[0].strip()
+                    t = re.sub(r"[®™]", "", t).strip()
+                    if t and not _looks_like_article(t, root):
+                        return t[:80]
+    except Exception:
+        pass
+    return display_name_from_url(url)
+
+
 def results_to_companies(results: List[Dict[str, str]], target_location: str = "") -> List[Dict[str, Any]]:
     companies: List[Dict[str, Any]] = []
     seen = set()

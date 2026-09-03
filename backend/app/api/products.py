@@ -17,10 +17,13 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/products", tags=["products"])
 
 
-def _sync_products_to_sheets(company_name: str, products: list[dict]) -> None:
+def _sync_products_to_sheets(user_id: str, products: list[dict]) -> None:
     try:
+        with Session(engine) as session:
+            biz = session.get(Business, user_id)
+            company_name = sheets_mod.resolve_company_tab_name(biz, products)
         result = sheets_mod.sync_products(company_name, products)
-        log.info("Sheets product sync: %s", result)
+        log.info("Sheets product sync (%s): %s", company_name, result)
     except Exception as exc:
         log.warning("Sheets product sync failed: %s", exc)
 
@@ -127,8 +130,6 @@ def save_products(
         result = [product_to_frontend(item) for item in saved]
 
         if sheets_mod.is_configured():
-            biz = session.get(Business, user.id)
-            company_name = (biz.name if biz and biz.name else None) or "My Company"
-            background_tasks.add_task(_sync_products_to_sheets, company_name, result)
+            background_tasks.add_task(_sync_products_to_sheets, user.id, result)
 
         return result

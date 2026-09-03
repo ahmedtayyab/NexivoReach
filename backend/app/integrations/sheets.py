@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from app.config import settings
+from app.tools.web_search import display_name_from_url, site_display_name_from_url, _registrable_domain
 
 log = logging.getLogger(__name__)
 
@@ -123,6 +125,61 @@ def _find_row_by_key(ws, col_index: int, key: str) -> int | None:
     return None
 
 
+def _sanitize_tab_label(name: str) -> str:
+    for char in (":", "\\", "/", "?", "*", "[", "]"):
+        name = name.replace(char, " ")
+    return re.sub(r"\s+", " ", name).strip()[:30] or "Catalog"
+
+
+def _collect_catalog_urls(business: Any | None, products: list[dict]) -> list[str]:
+    urls: list[str] = []
+    seen_domains: set[str] = set()
+    if business is not None:
+        website = (getattr(business, "website", None) or "").strip()
+        if website:
+            dom = _registrable_domain(website)
+            if dom:
+                seen_domains.add(dom)
+                urls.append(website)
+    for p in products:
+        for key in ("sourceUrl", "source_url", "productUrl", "product_url"):
+            raw = (p.get(key) or "").strip()
+            if not raw:
+                continue
+            dom = _registrable_domain(raw)
+            if dom and dom in seen_domains:
+                break
+            if dom:
+                seen_domains.add(dom)
+                urls.append(raw)
+            break
+    return urls
+
+
+def resolve_company_tab_name(business: Any | None, products: list[dict]) -> str:
+    """
+    Tab label for the products sheet: company profile name, else website title/domain.
+    """
+    profile_name = ""
+    if business is not None:
+        profile_name = (getattr(business, "name", None) or "").strip()
+    generic = {"", "my company", "company", "untitled", "business"}
+    if profile_name and profile_name.lower() not in generic:
+        return _sanitize_tab_label(profile_name)
+
+    for url in _collect_catalog_urls(business, products):
+        label = site_display_name_from_url(url)
+        if label:
+            return _sanitize_tab_label(label)
+
+    for url in _collect_catalog_urls(business, products):
+        label = display_name_from_url(url)
+        if label:
+            return _sanitize_tab_label(label)
+
+    return "Catalog"
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def sync_products(company_name: str, products: list[dict]) -> dict:
@@ -138,7 +195,7 @@ def sync_products(company_name: str, products: list[dict]) -> dict:
 
     sheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip()
     sh = client.open_by_key(sheet_id)
-    tab_name = f"{company_name[:30]} - Products"
+    tab_name = f"{_sanitize_tab_label(company_name)} - Products"
     ws = _get_or_create_sheet(sh, tab_name, PRODUCT_HEADERS)
 
     now = _now()
