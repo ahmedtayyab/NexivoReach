@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, UploadFile, File
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, UploadFile, File
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from sqlmodel import Session, select
@@ -11,7 +13,16 @@ from app.api.deps import AuthUser, get_current_user
 from app.models.schemas import Business
 from app.integrations import sheets as sheets_mod
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/products", tags=["products"])
+
+
+def _sync_products_to_sheets(company_name: str, products: list[dict]) -> None:
+    try:
+        result = sheets_mod.sync_products(company_name, products)
+        log.info("Sheets product sync: %s", result)
+    except Exception as exc:
+        log.warning("Sheets product sync failed: %s", exc)
 
 
 class UrlParseRequest(BaseModel):
@@ -86,7 +97,11 @@ def list_products(user: AuthUser = Depends(get_current_user)):
 
 
 @router.post("/save")
-def save_products(req: ProductSaveRequest, user: AuthUser = Depends(get_current_user)):
+def save_products(
+    req: ProductSaveRequest,
+    background_tasks: BackgroundTasks,
+    user: AuthUser = Depends(get_current_user),
+):
     with Session(engine) as session:
         for row in session.exec(select(ProductItem).where(ProductItem.user_id == user.id)).all():
             session.delete(row)
@@ -111,14 +126,9 @@ def save_products(req: ProductSaveRequest, user: AuthUser = Depends(get_current_
         session.commit()
         result = [product_to_frontend(item) for item in saved]
 
-        # Auto-sync to Google Sheets if configured
         if sheets_mod.is_configured():
-            try:
-                biz = session.get(Business, user.id)
-                company_name = biz.name if biz else "My Company"
-                sheets_mod.sync_products(company_name, result)
-            except Exception as exc:
-                import logging
-                logging.getLogger(__name__).warning("Sheets sync failed: %s", exc)
+            biz = session.get(Business, user.id)
+            company_name = (biz.name if biz and biz.name else None) or "My Company"
+            background_tasks.add_task(_sync_products_to_sheets, company_name, result)
 
         return result

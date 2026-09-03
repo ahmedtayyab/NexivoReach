@@ -152,7 +152,8 @@ def sync_products(company_name: str, products: list[dict]) -> dict:
             continue
         key = f"{name}|{category}"
         image_url = p.get("imageUrl") or p.get("image_url") or ""
-        image_cell = f'=IMAGE("{image_url}")' if image_url else ""
+        # Plain URL is more reliable than =IMAGE() for large catalogs (284+ rows).
+        image_cell = image_url
         in_stock = p.get("inStock") if p.get("inStock") is not None else p.get("in_stock")
         in_stock_str = ("Yes" if in_stock else "No") if in_stock is not None else ""
         seen[key] = [
@@ -169,19 +170,29 @@ def sync_products(company_name: str, products: list[dict]) -> dict:
             now,
         ]
 
-    # Fully replace the sheet content (clear + write header + all rows in one batch)
-    # This is the fastest approach and avoids row-by-row API limits entirely.
-    all_rows = [PRODUCT_HEADERS] + list(seen.values())
+    data_rows = list(seen.values())
+    total_rows = len(data_rows) + 1  # + header
 
-    # Resize sheet if needed
-    if ws.row_count < len(all_rows) + 10:
-        ws.resize(rows=len(all_rows) + 100)
+    if ws.row_count < total_rows + 10:
+        ws.resize(rows=total_rows + 100, cols=len(PRODUCT_HEADERS))
 
     ws.clear()
-    ws.update("A1", all_rows, value_input_option="USER_ENTERED")
+    ws.update("A1", [PRODUCT_HEADERS], value_input_option="USER_ENTERED")
+
+    # Chunk writes to stay under Google Sheets payload / rate limits on Render.
+    chunk_size = 75
+    written = 0
+    for start in range(0, len(data_rows), chunk_size):
+        chunk = data_rows[start : start + chunk_size]
+        row_start = start + 2  # 1-based, skip header
+        row_end = row_start + len(chunk) - 1
+        cell_range = f"A{row_start}:K{row_end}"
+        ws.update(cell_range, chunk, value_input_option="USER_ENTERED")
+        written += len(chunk)
 
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-    return {"written": len(seen), "url": url, "tab": tab_name}
+    log.info("Synced %s products to sheet tab %s", written, tab_name)
+    return {"written": written, "url": url, "tab": tab_name}
 
 
 def sync_prospect(prospect: dict) -> dict:
