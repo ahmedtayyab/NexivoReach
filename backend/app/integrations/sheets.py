@@ -56,6 +56,91 @@ TIMELINE_HEADERS = [
     "Prospect ID", "Company Name", "Event", "Detail", "Timestamp",
 ]
 
+# Full-row background colors by Status (Google Sheets RGB 0–1).
+_LEAD_STATUS_COLORS: dict[str, dict[str, float]] = {
+    "To contact": {"red": 1.0, "green": 1.0, "blue": 1.0},
+    "Contacted": {"red": 0.82, "green": 0.88, "blue": 0.95},   # outreached — blue
+    "Replied": {"red": 0.82, "green": 0.93, "blue": 0.86},     # they replied — green
+    "Re-contact": {"red": 0.98, "green": 0.93, "blue": 0.78},  # amber
+    "Denied": {"red": 0.94, "green": 0.88, "blue": 0.88},
+    "Avoid": {"red": 0.94, "green": 0.88, "blue": 0.88},
+    "Meeting": {"red": 0.78, "green": 0.86, "blue": 0.95},
+    "Won": {"red": 0.75, "green": 0.90, "blue": 0.80},
+}
+_LEAD_COLOR_DEFAULT = {"red": 1.0, "green": 1.0, "blue": 1.0}
+
+
+def _status_fill_color(stage: str, reply_note: str = "") -> dict[str, float]:
+    stage = (stage or "To contact").strip()
+    if reply_note.strip() and stage in ("To contact", "Contacted"):
+        return _LEAD_STATUS_COLORS["Replied"]
+    return _LEAD_STATUS_COLORS.get(stage, _LEAD_COLOR_DEFAULT)
+
+
+def _apply_lead_status_row_colors(ws) -> int:
+    """Paint each lead data row from the Status (and reply note) columns."""
+    try:
+        values = ws.get_all_values()
+    except Exception as exc:
+        log.warning("Could not read leads for formatting: %s", exc)
+        return 0
+    if len(values) < 2:
+        return 0
+
+    # Status = col I (index 8), Reply note = col P (index 15)
+    requests = []
+    sheet_id = ws.id
+    cols = len(LEAD_HEADERS)
+    for idx, row in enumerate(values[1:], start=2):
+        stage = row[8] if len(row) > 8 else ""
+        reply = row[15] if len(row) > 15 else ""
+        color = _status_fill_color(stage, reply)
+        requests.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": idx - 1,
+                    "endRowIndex": idx,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": cols,
+                },
+                "cell": {"userFormat": {"backgroundColor": color}},
+                "fields": "userFormat.backgroundColor",
+            }
+        })
+
+    # Header stays muted gray once
+    requests.insert(0, {
+        "repeatCell": {
+            "range": {
+                "sheetId": sheet_id,
+                "startRowIndex": 0,
+                "endRowIndex": 1,
+                "startColumnIndex": 0,
+                "endColumnIndex": cols,
+            },
+            "cell": {
+                "userFormat": {
+                    "backgroundColor": {"red": 0.92, "green": 0.91, "blue": 0.89},
+                    "textFormat": {"bold": True},
+                }
+            },
+            "fields": "userFormat.backgroundColor,userFormat.textFormat.bold",
+        }
+    })
+
+    sh = ws.spreadsheet
+    applied = 0
+    for start in range(0, len(requests), 40):
+        chunk = requests[start : start + 40]
+        try:
+            sh.batch_update({"requests": chunk})
+            applied += len(chunk)
+        except Exception as exc:
+            log.warning("Sheets row color batch failed: %s", exc)
+            break
+    return applied
+
 
 # ── Lazy client ─────────────────────────────────────────────────────────────
 
@@ -367,6 +452,12 @@ def sync_leads(seller_name: str, prospects: list[dict]) -> dict:
         for start in range(0, len(appends), 75):
             chunk = appends[start : start + 75]
             ws.append_rows(chunk, value_input_option="USER_ENTERED")
+
+    try:
+        colored = _apply_lead_status_row_colors(ws)
+        log.info("Applied status colors to %s sheet ranges on %s", colored, tab_name)
+    except Exception as exc:
+        log.warning("Lead row coloring skipped: %s", exc)
 
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
     written = len(updates) + len(appends)
