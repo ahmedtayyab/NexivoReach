@@ -149,7 +149,7 @@ export default function DiscoverView({
           <button
             onClick={handleRun}
             disabled={isRunning || !canRun}
-            className="w-full sm:w-auto px-4 py-2 sm:py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-sm font-medium rounded-md transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+            className={`w-full sm:w-auto px-4 py-2 sm:py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-sm font-medium rounded-md nr-btn-press`}
           >
             {isRunning ? 'Searching…' : 'Find leads'}
           </button>

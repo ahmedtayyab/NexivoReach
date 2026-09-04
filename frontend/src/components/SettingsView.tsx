@@ -57,7 +57,7 @@ export default function SettingsView({
 
   return (
     <div className="max-w-3xl">
-      <div className="mb-7">
+      <div className="mb-7 nr-enter">
         <h1 className="text-[15px] font-semibold text-ink tracking-tight">
           {titles[section]}
         </h1>
@@ -66,7 +66,7 @@ export default function SettingsView({
         </p>
       </div>
 
-      <div className="flex gap-4 sm:gap-6 border-b border-border mb-6 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0">
+      <div className="flex gap-4 sm:gap-6 border-b border-border mb-6 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0 nr-enter nr-enter-delay-1">
         {([
           ['company', 'Company Profile'],
           ['catalog', 'Product Catalog'],
@@ -76,7 +76,7 @@ export default function SettingsView({
           <button
             key={id}
             onClick={() => onSectionChange(id)}
-            className={`shrink-0 pb-2.5 text-[13px] border-b-2 -mb-px transition-colors ${
+            className={`shrink-0 pb-2.5 text-[13px] border-b-2 -mb-px transition-all duration-200 ${
               section === id
                 ? 'border-accent text-accent font-medium'
                 : 'border-transparent text-ink-secondary hover:text-ink'
@@ -87,6 +87,7 @@ export default function SettingsView({
         ))}
       </div>
 
+      <div key={section} className="nr-enter nr-enter-delay-2">
       {section === 'company' && (
         <CompanySection
           key={businessInfo.id ?? 'company'}
@@ -108,6 +109,7 @@ export default function SettingsView({
       {section === 'integrations' && (
         <IntegrationsSection onRestoredFromSheets={onRestoredFromSheets} />
       )}
+      </div>
     </div>
   );
 }

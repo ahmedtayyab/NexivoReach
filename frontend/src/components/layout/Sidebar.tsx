@@ -88,7 +88,7 @@ export default function Sidebar({
       <aside
         className={[
           'w-52 max-w-[85vw] bg-surface border-r border-border flex flex-col h-dvh select-none shrink-0',
-          'fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-out',
+          'fixed inset-y-0 left-0 z-50 transition-transform duration-250 ease-out',
           'md:sticky md:top-0 md:z-auto md:translate-x-0 md:h-screen',
           mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
         ].join(' ')}

@@ -91,12 +91,14 @@ export default function OutreachInboxView({
   if (!withDrafts.length) {
     return (
       <div className="max-w-2xl w-full">
-        <h1 className="text-[15px] font-semibold text-ink tracking-tight">Outreach</h1>
-        <p className="text-[13px] text-ink-secondary mt-1 mb-6">
-          Review personalized drafts, then open your mail client to send. No auto-send.
-        </p>
-        <div className="bg-panel border border-border rounded-lg px-5 py-10 text-center">
-          <Mail className="w-8 h-8 text-ink-muted mx-auto mb-3" strokeWidth={1.5} />
+        <div className="nr-enter">
+          <h1 className="text-[15px] font-semibold text-ink tracking-tight">Outreach</h1>
+          <p className="text-[13px] text-ink-secondary mt-1 mb-6">
+            Review personalized drafts, then open your mail client to send. No auto-send.
+          </p>
+        </div>
+        <div className="bg-panel border border-border rounded-lg px-5 py-10 text-center nr-panel nr-enter nr-enter-delay-1">
+          <Mail className="w-8 h-8 text-ink-muted mx-auto mb-3 nr-pop" strokeWidth={1.5} />
           <p className="text-[13.5px] font-medium text-ink-secondary">No drafts yet</p>
           <p className="text-[13px] text-ink-muted mt-1">
             Run Discover — high-fit leads get contacts and a draft automatically.
@@ -108,7 +110,7 @@ export default function OutreachInboxView({
 
   return (
     <div className="max-w-5xl w-full">
-      <div className="mb-5 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+      <div className="mb-5 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 nr-enter">
         <div>
           <h1 className="text-[15px] font-semibold text-ink tracking-tight">Outreach</h1>
           <p className="text-[13px] text-ink-secondary mt-1">
@@ -127,7 +129,7 @@ export default function OutreachInboxView({
               key={id}
               type="button"
               onClick={() => setFilter(id)}
-              className={`px-2.5 py-1 rounded-full text-[12px] border ${
+              className={`nr-chip px-2.5 py-1 rounded-full text-[12px] border ${
                 filter === id
                   ? 'bg-ink text-panel-elevated border-ink'
                   : 'bg-panel border-border text-ink-secondary'
@@ -139,12 +141,13 @@ export default function OutreachInboxView({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-4">
-        <div className="bg-panel border border-border rounded-lg overflow-hidden max-h-[70vh] overflow-y-auto">
+      <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-4 nr-enter nr-enter-delay-1">
+        <div className="bg-panel border border-border rounded-lg overflow-hidden max-h-[70vh] overflow-y-auto nr-panel">
           {filtered.length === 0 ? (
             <p className="p-4 text-[13px] text-ink-muted">Nothing in this filter.</p>
           ) : (
-            filtered.map((p, i) => {
+            <div className="nr-stagger">
+            {filtered.map((p, i) => {
               const active = i === index;
               const st = p.outreachDraft?.status || 'Draft';
               return (
@@ -152,7 +155,7 @@ export default function OutreachInboxView({
                   key={p.id}
                   type="button"
                   onClick={() => setIndex(i)}
-                  className={`w-full text-left px-3 py-2.5 border-b border-border-subtle ${
+                  className={`w-full text-left px-3 py-2.5 border-b border-border-subtle transition-colors ${
                     active ? 'bg-muted' : 'hover:bg-canvas/60'
                   }`}
                 >
@@ -165,12 +168,13 @@ export default function OutreachInboxView({
                   </p>
                 </button>
               );
-            })
+            })}
+            </div>
           )}
         </div>
 
         {current && draft ? (
-          <div className="bg-panel border border-border rounded-lg p-4 sm:p-5 flex flex-col min-h-[420px]">
+          <div key={current.id} className="bg-panel border border-border rounded-lg p-4 sm:p-5 flex flex-col min-h-[420px] nr-panel nr-pop">
             <div className="flex items-start justify-between gap-3 mb-4">
               <div className="min-w-0">
                 <h2 className="text-[15px] font-semibold text-ink truncate">{current.companyName}</h2>
@@ -238,7 +242,7 @@ export default function OutreachInboxView({
                     onSendViaEmail(current.id);
                     setIndex(i => Math.min(i + 1, Math.max(filtered.length - 1, 0)));
                   }}
-                  className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-[13px] font-medium rounded-md"
+                  className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-[13px] font-medium rounded-md nr-btn-press"
                 >
                   Approve &amp; open email
                 </button>
@@ -250,7 +254,7 @@ export default function OutreachInboxView({
                     onSkip(current.id);
                     setIndex(i => Math.min(i + 1, Math.max(filtered.length - 1, 0)));
                   }}
-                  className="px-3 py-2 text-[13px] border border-border rounded-md text-ink-secondary hover:border-ink-muted"
+                  className="px-3 py-2 text-[13px] border border-border rounded-md text-ink-secondary hover:border-ink-muted nr-btn-press"
                 >
                   Skip for now
                 </button>

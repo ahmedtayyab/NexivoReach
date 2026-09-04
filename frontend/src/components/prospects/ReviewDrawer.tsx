@@ -50,9 +50,9 @@ export default function ReviewDrawer({
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
-      <div className="absolute inset-0 drawer-overlay" onClick={onClose} />
+      <div className="absolute inset-0 drawer-overlay nr-fade" onClick={onClose} />
 
-      <div className="relative w-full max-w-xl bg-panel-elevated border-l border-border h-full overflow-y-auto flex flex-col z-10 sm:max-w-xl">
+      <div className="relative w-full max-w-xl bg-panel-elevated border-l border-border h-full overflow-y-auto flex flex-col z-10 sm:max-w-xl nr-drawer-in">
         <div className="sticky top-0 bg-panel-elevated border-b border-border px-3 sm:px-5 py-3 flex items-center justify-between gap-2 z-20">
           <button
             onClick={onClose}
@@ -69,7 +69,7 @@ export default function ReviewDrawer({
                   openMailto();
                   onUpdateStatus(prospect.id, 'Sent');
                 }}
-                className="px-2.5 sm:px-3.5 py-1.5 bg-accent hover:bg-accent-hover text-white text-[12px] sm:text-[13px] font-medium rounded-md transition-colors"
+                className="px-2.5 sm:px-3.5 py-1.5 bg-accent hover:bg-accent-hover text-white text-[12px] sm:text-[13px] font-medium rounded-md nr-btn-press"
               >
                 Approve &amp; open email
               </button>

@@ -97,22 +97,107 @@ input:focus, textarea:focus, select:focus {
 
 /* Page / panel entrance */
 @keyframes nr-fade-up {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
+@keyframes nr-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes nr-slide-right {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes nr-pop {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 .nr-enter {
   animation: nr-fade-up 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .nr-enter-delay-1 { animation-delay: 60ms; }
 .nr-enter-delay-2 { animation-delay: 120ms; }
 .nr-enter-delay-3 { animation-delay: 180ms; }
+.nr-enter-delay-4 { animation-delay: 240ms; }
+
+.nr-fade { animation: nr-fade-in 380ms ease both; }
+.nr-pop { animation: nr-pop 400ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.nr-drawer-in { animation: nr-slide-right 320ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+.nr-stagger > * {
+  animation: nr-fade-up 400ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.nr-stagger > *:nth-child(1) { animation-delay: 40ms; }
+.nr-stagger > *:nth-child(2) { animation-delay: 70ms; }
+.nr-stagger > *:nth-child(3) { animation-delay: 100ms; }
+.nr-stagger > *:nth-child(4) { animation-delay: 130ms; }
+.nr-stagger > *:nth-child(5) { animation-delay: 160ms; }
+.nr-stagger > *:nth-child(6) { animation-delay: 190ms; }
+.nr-stagger > *:nth-child(7) { animation-delay: 220ms; }
+.nr-stagger > *:nth-child(8) { animation-delay: 250ms; }
+.nr-stagger > *:nth-child(n+9) { animation-delay: 280ms; }
+
+.nr-panel {
+  transition: border-color 160ms ease, box-shadow 200ms ease, transform 200ms ease;
+}
+.nr-panel:hover {
+  border-color: #b8b4ac;
+  box-shadow: 0 6px 20px rgba(28, 27, 25, 0.05);
+}
+
+.nr-row {
+  transition: background-color 140ms ease, transform 160ms ease;
+}
+.nr-row:hover {
+  transform: translateX(2px);
+}
+
+.nr-chip {
+  transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+.nr-chip:hover {
+  transform: translateY(-1px);
+}
+.nr-chip:active {
+  transform: translateY(0);
+}
+
+.nr-btn-press {
+  transition: transform 160ms ease, background-color 160ms ease, opacity 160ms ease;
+}
+.nr-btn-press:hover:not(:disabled) {
+  transform: scale(1.02);
+}
+.nr-btn-press:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.nr-empty-art {
+  animation: nr-pop 500ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: transform 280ms ease;
+}
+.nr-empty-art:hover {
+  transform: scale(1.015);
+}
 
 @media (prefers-reduced-motion: reduce) {
   .nr-enter,
+  .nr-fade,
+  .nr-pop,
+  .nr-drawer-in,
+  .nr-stagger > *,
   .radar-sweep,
   .radar-blip,
   .radar-dish-active .radar-sweep {
     animation: none !important;
+  }
+  .nr-panel:hover,
+  .nr-row:hover,
+  .nr-chip:hover,
+  .nr-btn-press:hover:not(:disabled),
+  .nr-empty-art:hover {
+    transform: none !important;
   }
 }
 
