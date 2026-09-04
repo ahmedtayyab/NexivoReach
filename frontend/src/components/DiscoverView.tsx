@@ -4,8 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
 import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
-
-const EMPTY_DISCOVER_IMG = '/brand/empty-discover.jpg';
+import RadarSweep from './brand/RadarSweep';
 
 interface Props {
   businessInfo: BusinessInfo;
@@ -108,22 +107,18 @@ export default function DiscoverView({
 
   return (
     <div className="max-w-2xl w-full">
-      <div className="mb-6">
+      <div className="mb-6 nr-enter">
         <h1 className="text-lg font-semibold text-ink">Discover</h1>
         <p className="text-sm text-ink-secondary mt-0.5">
           The agent plans searches from your sales motion, filters junk, inspects promising sites, then saves accounts with Fit and Intent scored separately. Keyword overlap is not treated as buying intent.
         </p>
       </div>
 
-      <div className="mb-5 rounded-lg border border-border bg-panel overflow-hidden">
-        <img
-          src={EMPTY_DISCOVER_IMG}
-          alt="Discover buyers"
-          className="w-full max-h-44 sm:max-h-52 object-cover object-center"
-        />
+      <div className="mb-5 nr-enter nr-enter-delay-1">
+        <RadarSweep active={isRunning} />
       </div>
 
-      <div className="bg-panel border border-border rounded-md p-3.5 sm:p-4 space-y-3">
+      <div className="bg-panel border border-border rounded-md p-3.5 sm:p-4 space-y-3 nr-enter nr-enter-delay-2">
         <PredictiveField
           label="Who should we find?"
           hint="Example: type “distributor” or “hospital” — related scan ideas appear."
@@ -154,7 +149,7 @@ export default function DiscoverView({
           <button
             onClick={handleRun}
             disabled={isRunning || !canRun}
-            className="w-full sm:w-auto px-4 py-2 sm:py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-sm font-medium rounded-md transition-colors"
+            className="w-full sm:w-auto px-4 py-2 sm:py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-sm font-medium rounded-md transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
           >
             {isRunning ? 'Searching…' : 'Find leads'}
           </button>
@@ -162,7 +157,7 @@ export default function DiscoverView({
       </div>
 
       {runHistory.length > 0 && (
-        <div className="mt-8">
+        <div className="mt-8 nr-enter nr-enter-delay-3">
           <p className="text-xs font-medium text-ink-muted uppercase tracking-widest mb-3">Recent Runs</p>
           <div className="divide-y divide-border-subtle">
             {runHistory.map(run => (

@@ -14,12 +14,12 @@ export default function LoginView({ error }: Props) {
       />
       <div className="absolute inset-0 bg-canvas/40" aria-hidden />
 
-      <div className="relative w-full max-w-sm">
-        <div className="mb-8 flex justify-center">
+      <div className="relative w-full max-w-sm nr-enter">
+        <div className="mb-8 flex justify-center nr-enter nr-enter-delay-1">
           <BrandLockup size="md" />
         </div>
 
-        <div className="bg-panel-elevated border border-border rounded-lg p-5 sm:p-6 shadow-sm">
+        <div className="bg-panel-elevated border border-border rounded-lg p-5 sm:p-6 shadow-sm nr-enter nr-enter-delay-2">
           <h1 className="text-[15px] font-semibold text-ink">Sign in to continue</h1>
           <p className="text-[13px] text-ink-secondary mt-1 mb-6">
             Use your Google account to save your companies, catalogs, and prospect queues — and pick up where you left off.
