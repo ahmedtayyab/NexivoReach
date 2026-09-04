@@ -318,7 +318,7 @@ class ProspectingAgent:
             draft_hit = False
             website = (co.get("website") or "").strip()
 
-            # Prefer homepage mailto seeds immediately
+            # Prefer homepage mailto seeds immediately (may be overridden by /contact)
             if seed_emails:
                 cheap = contacts_from_text(
                     site_text,
@@ -330,9 +330,9 @@ class ProspectingAgent:
                 email = cheap.get("email") or ""
                 phone = cheap.get("phone") or phone
 
-            # Full contact crawl when homepage had no usable email
+            # Always crawl contact pages — homepage footer emails are often wrong
             homepage_html = (page.get("html") or "")[:250000]
-            if item.get("want_contacts") and website and not email:
+            if item.get("want_contacts") and website:
                 async with sem:
                     try:
                         found = await discover_contacts(
@@ -345,7 +345,9 @@ class ProspectingAgent:
                         )
                         contact_hit = True
                         contacts = found.get("contacts") or contacts
-                        email = found.get("email") or email
+                        # Prefer discover result (contact-page ranked) over seed-only
+                        if found.get("email"):
+                            email = found["email"]
                         phone = found.get("phone") or phone
                         if email:
                             timeline.append({"time": time.strftime("%H:%M"), "action": f"Found contact email {email}"})
@@ -355,6 +357,8 @@ class ProspectingAgent:
                             timeline.append({"time": time.strftime("%H:%M"), "action": "No public email found on site yet"})
                     except Exception:
                         timeline.append({"time": time.strftime("%H:%M"), "action": "Contact discovery failed — kept lead without email"})
+                        if email:
+                            contact_hit = True
             elif email:
                 contact_hit = True
                 timeline.append({"time": time.strftime("%H:%M"), "action": f"Found contact email {email}"})
