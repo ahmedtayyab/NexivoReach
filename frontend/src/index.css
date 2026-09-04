@@ -147,11 +147,86 @@ input:focus, textarea:focus, select:focus {
 }
 
 .nr-row {
-  transition: background-color 140ms ease, transform 160ms ease;
+  transition: background-color 140ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
 .nr-row:hover {
   transform: translateX(2px);
 }
+
+/* Lead / outreach row status washes */
+.lead-row-tone {
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  border-left: 3px solid transparent;
+}
+.lead-row-tone-idle {
+  border-left-color: transparent;
+}
+.lead-row-tone-draft {
+  background: rgba(61, 90, 128, 0.06);
+  border-left-color: rgba(61, 90, 128, 0.35);
+}
+.lead-row-tone-sent {
+  background: rgba(61, 90, 128, 0.12);
+  border-left-color: #3D5A80;
+}
+.lead-row-tone-sent:hover,
+.nr-row.lead-row-tone-sent:hover {
+  background: rgba(61, 90, 128, 0.16);
+}
+.lead-row-tone-replied {
+  background: rgba(45, 106, 79, 0.14);
+  border-left-color: #2D6A4F;
+}
+.lead-row-tone-replied:hover,
+.nr-row.lead-row-tone-replied:hover {
+  background: rgba(45, 106, 79, 0.2);
+}
+.lead-row-tone-recontact {
+  background: rgba(154, 103, 0, 0.12);
+  border-left-color: #9A6700;
+}
+.lead-row-tone-recontact:hover,
+.nr-row.lead-row-tone-recontact:hover {
+  background: rgba(154, 103, 0, 0.18);
+}
+.lead-row-tone-denied {
+  background: rgba(120, 80, 80, 0.08);
+  border-left-color: #8A6060;
+  opacity: 0.88;
+}
+.lead-row-tone-won {
+  background: rgba(45, 106, 79, 0.2);
+  border-left-color: #1B4332;
+}
+.lead-row-tone-meeting {
+  background: rgba(61, 90, 128, 0.18);
+  border-left-color: #314A66;
+}
+
+.lead-tone-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-bottom: 12px;
+}
+.lead-tone-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.lead-tone-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.lead-tone-swatch-sent { background: #3D5A80; }
+.lead-tone-swatch-replied { background: #2D6A4F; }
+.lead-tone-swatch-recontact { background: #9A6700; }
+.lead-tone-swatch-draft { background: rgba(61, 90, 128, 0.45); }
+.lead-tone-swatch-denied { background: #8A6060; }
 
 .nr-chip {
   transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease;

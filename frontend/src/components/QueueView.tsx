@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
 import LeadPipeline from './brand/LeadPipeline';
+import { leadRowToneClass } from '../lib/leadTone';
 
 const EMPTY_QUEUE_IMG = '/brand/empty-queue.jpg';
 
@@ -121,6 +122,16 @@ export default function QueueView({
         ))}
       </div>
 
+      {visible.length > 0 && (
+        <div className="lead-tone-legend nr-enter nr-enter-delay-2" aria-hidden>
+          <span><i className="lead-tone-swatch lead-tone-swatch-draft" /> Draft ready</span>
+          <span><i className="lead-tone-swatch lead-tone-swatch-sent" /> Outreached / contacted</span>
+          <span><i className="lead-tone-swatch lead-tone-swatch-replied" /> They replied</span>
+          <span><i className="lead-tone-swatch lead-tone-swatch-recontact" /> Re-contact</span>
+          <span><i className="lead-tone-swatch lead-tone-swatch-denied" /> Denied / avoid</span>
+        </div>
+      )}
+
       {visible.length === 0 ? (
         <div className="bg-panel border border-border rounded-lg px-5 py-8 sm:py-10 text-center nr-panel nr-enter nr-enter-delay-3">
           <img
@@ -137,7 +148,10 @@ export default function QueueView({
         <>
           <div key={`m-${filter}`} className="md:hidden space-y-2 nr-stagger">
             {visible.map(prospect => (
-              <div key={prospect.id} className="bg-panel border border-border rounded-lg p-3.5 nr-panel">
+              <div
+                key={prospect.id}
+                className={`bg-panel border border-border rounded-lg p-3.5 nr-panel lead-row-tone ${leadRowToneClass(prospect)}`}
+              >
                 <button type="button" className="text-left w-full min-w-0" onClick={() => onReviewProspect(prospect.id)}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -178,7 +192,7 @@ export default function QueueView({
               {visible.map(prospect => (
                 <div
                   key={prospect.id}
-                  className="grid grid-cols-[1fr_90px_72px_56px_140px] items-center px-4 py-3 gap-2 hover:bg-canvas/60 nr-row"
+                  className={`grid grid-cols-[1fr_90px_72px_56px_140px] items-center px-4 py-3 gap-2 nr-row lead-row-tone ${leadRowToneClass(prospect)}`}
                 >
                   <button type="button" className="text-left min-w-0" onClick={() => onReviewProspect(prospect.id)}>
                     <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>

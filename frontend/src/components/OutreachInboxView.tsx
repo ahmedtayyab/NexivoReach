@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Prospect } from '../types';
 import { ChevronDown, ChevronUp, Mail } from 'lucide-react';
 import MailFlow from './brand/MailFlow';
+import { leadRowToneClass } from '../lib/leadTone';
 
 interface Props {
   prospects: Prospect[];
@@ -226,8 +227,8 @@ export default function OutreachInboxView({
                     key={p.id}
                     type="button"
                     onClick={() => setIndex(i)}
-                    className={`w-full text-left px-3 py-2.5 border-b border-border-subtle transition-colors ${
-                      active ? 'bg-muted' : 'hover:bg-canvas/60'
+                    className={`w-full text-left px-3 py-2.5 border-b border-border-subtle transition-colors lead-row-tone ${leadRowToneClass(p)} ${
+                      active ? 'ring-1 ring-inset ring-border' : ''
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2">
