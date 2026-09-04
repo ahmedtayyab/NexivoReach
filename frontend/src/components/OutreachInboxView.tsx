@@ -8,6 +8,9 @@ interface Props {
   onSendViaEmail: (id: string) => void;
   onSaveDraft: (id: string, subject: string, body: string) => void;
   onSkip?: (id: string) => void;
+  onSyncReplies?: () => void;
+  onPrepareFollowUp?: (id: string) => void;
+  gmailConnected?: boolean;
 }
 
 type Filter = 'needs_review' | 'sent' | 'all';
@@ -17,6 +20,9 @@ export default function OutreachInboxView({
   onSendViaEmail,
   onSaveDraft,
   onSkip,
+  onSyncReplies,
+  onPrepareFollowUp,
+  gmailConnected = false,
 }: Props) {
   const withDrafts = useMemo(
     () => prospects.filter(p => p.outreachDraft),
@@ -118,10 +124,20 @@ export default function OutreachInboxView({
         <div>
           <h1 className="text-[15px] font-semibold text-ink tracking-tight">Outreach</h1>
           <p className="text-[13px] text-ink-secondary mt-1">
-            {needsReview} to review · Read the draft, then send. Keys: J/K move · Enter send
+            {needsReview} to review · {gmailConnected ? 'Gmail connected — Approve sends via Gmail' : 'Approve opens mail client (connect Gmail in Settings for in-app send)'}
+            {' · '}Keys: J/K move · Enter send
           </p>
         </div>
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
+          {onSyncReplies && (
+            <button
+              type="button"
+              onClick={() => onSyncReplies()}
+              className="nr-chip px-2.5 py-1 rounded-full text-[12px] border border-border bg-panel text-ink-secondary"
+            >
+              Sync replies
+            </button>
+          )}
           {(
             [
               ['needs_review', 'Needs review'],
@@ -252,7 +268,16 @@ export default function OutreachInboxView({
                   }}
                   className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-[13px] font-medium rounded-md nr-btn-press"
                 >
-                  Approve &amp; open email
+                  {gmailConnected ? 'Approve & send via Gmail' : 'Approve & open email'}
+                </button>
+              )}
+              {onPrepareFollowUp && (draft.status === 'Sent' || draft.status === 'Replied' || current.stage === 'Re-contact') && (
+                <button
+                  type="button"
+                  onClick={() => onPrepareFollowUp(current.id)}
+                  className="px-3 py-2 text-[13px] border border-border rounded-md text-ink-secondary hover:border-ink-muted nr-btn-press"
+                >
+                  Draft follow-up
                 </button>
               )}
               {onSkip && (draft.status === 'Draft' || draft.status === 'Approved') && (
@@ -268,7 +293,7 @@ export default function OutreachInboxView({
                 </button>
               )}
               {(draft.status === 'Sent' || draft.status === 'Replied') && (
-                <span className="text-[13px] text-green-700 font-medium">{draft.status}</span>
+                <span className="text-[13px] text-green-700 font-medium">{draft.status}{draft.sentVia ? ` · ${draft.sentVia}` : ''}</span>
               )}
               <span className="text-[12px] text-ink-muted ml-auto">
                 {index + 1} / {filtered.length}

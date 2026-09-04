@@ -43,3 +43,23 @@ class AIProvider(ABC):
     ) -> Dict[str, str]:
         """Draft personalized B2B outreach email."""
         pass
+
+    async def generate_follow_up_outreach(
+        self,
+        company_name: str,
+        why_prospect: str,
+        prior_subject: str,
+        prior_body: str,
+        reply_summary: str = "",
+        seller_name: str = "Sales Team",
+    ) -> Dict[str, str]:
+        """Draft a follow-up (after reply or silence). Default uses fallback template."""
+        from app.providers.fallback import FallbackProvider
+        return await FallbackProvider().generate_follow_up_outreach(
+            company_name,
+            why_prospect,
+            prior_subject,
+            prior_body,
+            reply_summary,
+            seller_name,
+        )

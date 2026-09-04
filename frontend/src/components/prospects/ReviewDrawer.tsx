@@ -9,6 +9,10 @@ interface Props {
   onSaveDraft: (id: string, subject: string, body: string) => void;
   onUpdateContactAgain?: (id: string, contactAgain: boolean) => void;
   onSaveReply?: (id: string, summary: string, contactAgain: boolean) => void;
+  onSendViaEmail?: (id: string) => void;
+  onPrepareOutreach?: (id: string) => void;
+  onPrepareFollowUp?: (id: string) => void;
+  gmailConnected?: boolean;
 }
 
 export default function ReviewDrawer({
@@ -18,6 +22,10 @@ export default function ReviewDrawer({
   onSaveDraft,
   onUpdateContactAgain,
   onSaveReply,
+  onSendViaEmail,
+  onPrepareOutreach,
+  onPrepareFollowUp,
+  gmailConnected = false,
 }: Props) {
   const [editingDraft, setEditingDraft] = useState(false);
   const [draftBody, setDraftBody] = useState('');
@@ -63,15 +71,37 @@ export default function ReviewDrawer({
           </button>
 
           <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+            {!draft && onPrepareOutreach && (
+              <button
+                type="button"
+                onClick={() => onPrepareOutreach(prospect.id)}
+                className="px-2.5 sm:px-3.5 py-1.5 border border-border text-[12px] sm:text-[13px] rounded-md nr-btn-press"
+              >
+                Prepare outreach
+              </button>
+            )}
             {!alreadySent && draft && (
               <button
+                type="button"
                 onClick={() => {
-                  openMailto();
-                  onUpdateStatus(prospect.id, 'Sent');
+                  if (onSendViaEmail) onSendViaEmail(prospect.id);
+                  else {
+                    openMailto();
+                    onUpdateStatus(prospect.id, 'Sent');
+                  }
                 }}
                 className="px-2.5 sm:px-3.5 py-1.5 bg-accent hover:bg-accent-hover text-white text-[12px] sm:text-[13px] font-medium rounded-md nr-btn-press"
               >
-                Approve &amp; open email
+                {gmailConnected ? 'Approve & send' : 'Approve & open email'}
+              </button>
+            )}
+            {alreadySent && onPrepareFollowUp && (
+              <button
+                type="button"
+                onClick={() => onPrepareFollowUp(prospect.id)}
+                className="px-2.5 sm:px-3.5 py-1.5 border border-border text-[12px] sm:text-[13px] rounded-md nr-btn-press"
+              >
+                Draft follow-up
               </button>
             )}
             {alreadySent && (
@@ -337,6 +367,15 @@ export default function ReviewDrawer({
               >
                 Log reply · do not contact
               </button>
+              {onPrepareFollowUp && (prospect.replySummary || alreadySent) && (
+                <button
+                  type="button"
+                  onClick={() => onPrepareFollowUp(prospect.id)}
+                  className="px-3 py-1.5 text-[12px] bg-accent text-white rounded-md nr-btn-press"
+                >
+                  Draft follow-up email
+                </button>
+              )}
             </div>
           </section>
         </div>

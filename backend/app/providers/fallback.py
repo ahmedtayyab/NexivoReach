@@ -199,6 +199,43 @@ class FallbackProvider(AIProvider):
             "personalizedReason": f"Drafted from {company_name}'s {signal_label.lower()} and catalog match on {product_name}.",
         }
 
+    async def generate_follow_up_outreach(
+        self,
+        company_name: str,
+        why_prospect: str,
+        prior_subject: str,
+        prior_body: str,
+        reply_summary: str = "",
+        seller_name: str = "Sales Team",
+    ) -> Dict[str, str]:
+        sender = seller_name or "Sales Team"
+        subj = prior_subject or f"Following up — {company_name}"
+        if not subj.lower().startswith("re:"):
+            subj = f"Re: {subj}"
+        if reply_summary.strip():
+            body = (
+                f"Hi {company_name} team,\n\n"
+                f"Thanks for your note — I read your reply about: {reply_summary.strip()[:280]}\n\n"
+                f"Happy to answer that and share next steps on how we can help.\n\n"
+                f"Context from our side: {why_prospect[:220]}\n\n"
+                f"Best regards,\n{sender}"
+            )
+            reason = "Follow-up drafted from their reply."
+        else:
+            body = (
+                f"Hi {company_name} team,\n\n"
+                f"Just bumping this in case it got buried. "
+                f"Happy to send a short one-pager if useful.\n\n"
+                f"{why_prospect[:220]}\n\n"
+                f"Best regards,\n{sender}"
+            )
+            reason = "Follow-up after silence (no reply logged yet)."
+        return {
+            "subject": subj[:140],
+            "body": body,
+            "personalizedReason": reason,
+        }
+
 
 def _guess_category(name: str) -> str:
     lowered = (name or "").lower()

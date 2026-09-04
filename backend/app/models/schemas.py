@@ -94,3 +94,9 @@ class User(SQLModel, table=True):
     picture: str = ""
     created_at: str = ""
     active_business_id: Optional[str] = Field(default=None, index=True)
+    # User Gmail OAuth (separate from login session + Sheets service account)
+    gmail_refresh_token: Optional[str] = Field(default=None)
+    gmail_access_token: Optional[str] = Field(default=None)
+    gmail_token_expiry: Optional[str] = Field(default=None)  # ISO UTC
+    gmail_email: Optional[str] = Field(default=None)
+    gmail_connected_at: Optional[str] = Field(default=None)

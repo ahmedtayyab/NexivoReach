@@ -141,3 +141,36 @@ class GeminiProvider(AIProvider):
         return await FallbackProvider().generate_personalized_outreach(
             company_name, why_prospect, signals, matched_products, seller_name
         )
+
+    async def generate_follow_up_outreach(
+        self,
+        company_name: str,
+        why_prospect: str,
+        prior_subject: str,
+        prior_body: str,
+        reply_summary: str = "",
+        seller_name: str = "Sales Team",
+    ) -> Dict[str, str]:
+        if not self.available:
+            from app.providers.fallback import FallbackProvider
+            return await FallbackProvider().generate_follow_up_outreach(
+                company_name, why_prospect, prior_subject, prior_body, reply_summary, seller_name
+            )
+        try:
+            mode = "their reply" if reply_summary.strip() else "no reply yet (polite bump)"
+            prompt = (
+                f"You represent {seller_name}. Draft a short B2B follow-up email as JSON with keys "
+                f"subject, body, personalizedReason for {company_name}. Mode: {mode}. "
+                f"Prior subject: {prior_subject}. Prior body: {prior_body[:600]}. "
+                f"Reply summary: {reply_summary[:500]}. Context: {why_prospect}. "
+                f"Sign as {seller_name}. Keep under 120 words."
+            )
+            parsed = parse_json_payload(self._generate(prompt))
+            if isinstance(parsed, dict) and parsed.get("subject") and parsed.get("body"):
+                return parsed
+        except Exception:
+            pass
+        from app.providers.fallback import FallbackProvider
+        return await FallbackProvider().generate_follow_up_outreach(
+            company_name, why_prospect, prior_subject, prior_body, reply_summary, seller_name
+        )

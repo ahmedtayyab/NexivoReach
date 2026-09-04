@@ -649,6 +649,95 @@ type SheetsStatus =
   | { connected: true; spreadsheet_title: string; url: string }
   | { connected: false; reason: string };
 
+function GmailConnectCard() {
+  const [status, setStatus] = useState<{ connected: boolean; email?: string; connectedAt?: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await apiFetch('/api/auth/gmail/status');
+      if (r.ok) setStatus(await r.json());
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    const params = new URLSearchParams(window.location.search);
+    const gmail = params.get('gmail');
+    if (gmail === 'connected') {
+      setMsg('Gmail connected — you can send and sync replies from Outreach.');
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+      void load();
+    } else if (gmail === 'error') {
+      setMsg('Gmail connect failed. Re-try and grant send + read access (offline consent).');
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+    }
+  }, []);
+
+  const disconnect = async () => {
+    const resp = await apiFetch('/api/auth/gmail/disconnect', { method: 'POST' });
+    if (resp.ok) {
+      setStatus({ connected: false, email: '', connectedAt: '' });
+      setMsg('Gmail disconnected.');
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-surface p-6 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-[14px] font-semibold text-ink">Gmail</h3>
+          <p className="text-[12.5px] text-ink-secondary mt-0.5">
+            Connect your Google mailbox to send approved outreach in-app and pull replies into Re-contact.
+            Sign-in alone is not enough — this is a separate Gmail consent.
+          </p>
+        </div>
+        {loading ? (
+          <Loader2 className="w-4 h-4 animate-spin text-ink-secondary shrink-0" />
+        ) : status?.connected ? (
+          <span className="flex items-center gap-1.5 text-[12px] text-emerald-600 font-medium shrink-0">
+            <CheckCircle2 className="w-4 h-4" /> Connected
+          </span>
+        ) : (
+          <span className="flex items-center gap-1.5 text-[12px] text-amber-600 font-medium shrink-0">
+            <XCircle className="w-4 h-4" /> Not connected
+          </span>
+        )}
+      </div>
+      {status?.connected && status.email && (
+        <p className="text-[13px] text-ink-secondary">
+          Sending as <span className="font-medium text-ink">{status.email}</span>
+        </p>
+      )}
+      {msg && <p className="text-[13px] text-ink-secondary">{msg}</p>}
+      <div className="flex flex-wrap gap-2">
+        {!status?.connected ? (
+          <a
+            href="/api/auth/gmail"
+            className="inline-flex px-3 py-1.5 text-[13px] bg-accent hover:bg-accent-hover text-white rounded-md nr-btn-press"
+          >
+            Connect Gmail
+          </a>
+        ) : (
+          <button
+            type="button"
+            onClick={disconnect}
+            className="px-3 py-1.5 text-[13px] border border-border rounded-md text-ink-secondary hover:border-ink-muted"
+          >
+            Disconnect
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function IntegrationsSection({
   onRestoredFromSheets,
 }: {
@@ -746,6 +835,9 @@ function IntegrationsSection({
 
   return (
     <div className="space-y-8">
+      {/* Gmail card */}
+      <GmailConnectCard />
+
       {/* Google Sheets card */}
       <div className="rounded-xl border border-border bg-surface p-6 space-y-4">
         <div className="flex items-center justify-between">

@@ -21,6 +21,7 @@ interface Props {
   onReviewProspect: (id: string) => void;
   onUpdateStage: (id: string, stage: Prospect['stage']) => void;
   onClearLeads?: () => Promise<void> | void;
+  onPrepareOutreach?: () => void;
 }
 
 export default function QueueView({
@@ -29,6 +30,7 @@ export default function QueueView({
   onReviewProspect,
   onUpdateStage,
   onClearLeads,
+  onPrepareOutreach,
 }: Props) {
   const [filter, setFilter] = useState<string>('To contact');
   const [clearing, setClearing] = useState(false);
@@ -75,16 +77,27 @@ export default function QueueView({
             {lastRunLabel && <span className="text-ink-muted"> · Last scan {lastRunLabel}</span>}
           </p>
         </div>
-        {onClearLeads && prospects.length > 0 && (
-          <button
-            type="button"
-            onClick={handleClear}
-            disabled={clearing}
-            className="shrink-0 px-3 py-1.5 text-[12px] border border-border rounded-md text-ink-secondary hover:text-ink hover:border-ink-muted disabled:opacity-40 nr-btn-press"
-          >
-            {clearing ? 'Clearing…' : 'Clear all'}
-          </button>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {onPrepareOutreach && prospects.some(p => !p.outreachDraft && (p.fitScore >= 70 || (p.fitBreakdown?.fitSummary || '').toLowerCase() === 'high')) && (
+            <button
+              type="button"
+              onClick={() => onPrepareOutreach()}
+              className="px-3 py-1.5 text-[12px] bg-accent hover:bg-accent-hover text-white rounded-md nr-btn-press"
+            >
+              Prepare outreach
+            </button>
+          )}
+          {onClearLeads && prospects.length > 0 && (
+            <button
+              type="button"
+              onClick={handleClear}
+              disabled={clearing}
+              className="px-3 py-1.5 text-[12px] border border-border rounded-md text-ink-secondary hover:text-ink hover:border-ink-muted disabled:opacity-40 nr-btn-press"
+            >
+              {clearing ? 'Clearing…' : 'Clear all'}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="mb-5 nr-enter nr-enter-delay-1">

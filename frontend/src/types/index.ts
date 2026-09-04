@@ -123,6 +123,11 @@ export interface Prospect {
     status: 'Draft' | 'Approved' | 'Sent' | 'Replied';
     createdAt: string;
     toEmail?: string;
+    kind?: string;
+    gmailMessageId?: string;
+    gmailThreadId?: string;
+    sentVia?: string;
+    sentAt?: string;
   };
   stage:
     | 'To contact'
@@ -166,4 +171,9 @@ export interface AuthUser {
   email: string;
   name: string;
   picture?: string;
+  gmail?: {
+    connected: boolean;
+    email?: string;
+    connectedAt?: string;
+  };
 }

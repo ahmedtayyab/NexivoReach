@@ -131,7 +131,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('auth') === 'error') {
       setAuthError('Sign-in failed. Check your Google OAuth settings and try again.');
-      window.history.replaceState({}, '', window.location.pathname);
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
     }
 
     (async () => {
@@ -148,6 +148,14 @@ export default function App() {
           const initialRoute = resolveRouteFromLocation();
           setActiveRoute(initialRoute);
           window.history.replaceState({ route: initialRoute }, '', `#${initialRoute}`);
+        }
+        // Refresh Gmail status after OAuth return
+        if (params.get('gmail') === 'connected') {
+          const st = await apiFetch('/api/auth/gmail/status');
+          if (st.ok) {
+            const gmail = await st.json();
+            setUser(prev => (prev ? { ...prev, gmail } : prev));
+          }
         }
       } catch {
         setAuthConfigured(false);
@@ -287,29 +295,100 @@ export default function App() {
     );
   };
 
-  const handleSendViaEmail = (prospectId: string) => {
-    setProspects(prev => {
-      const next = prev.map(p => {
-        if (p.id !== prospectId || !p.outreachDraft) return p;
-        const draft = p.outreachDraft;
-        const to = draft.toEmail || p.email || '';
+  const handleSendViaEmail = async (prospectId: string) => {
+    const current = prospects.find(p => p.id === prospectId);
+    const draft = current?.outreachDraft;
+    try {
+      const resp = await apiFetch(`/api/prospects/${prospectId}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject: draft?.subject,
+          body: draft?.body,
+          toEmail: draft?.toEmail || current?.email || '',
+        }),
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(text || 'Send failed');
+      }
+      const data = await resp.json();
+      if (data.via === 'mailto' && data.mailto) {
         const params = new URLSearchParams();
-        if (draft.subject) params.set('subject', draft.subject);
-        if (draft.body) params.set('body', draft.body);
+        if (data.mailto.subject) params.set('subject', data.mailto.subject);
+        if (data.mailto.body) params.set('body', data.mailto.body);
+        const to = data.mailto.to || '';
         const href = to
           ? `mailto:${encodeURIComponent(to)}?${params.toString()}`
           : `mailto:?${params.toString()}`;
         window.open(href, '_blank');
-        const updated = {
-          ...p,
-          stage: 'Contacted' as Prospect['stage'],
-          outreachDraft: { ...draft, status: 'Sent' as const },
-        };
-        void persistProspect(updated);
-        return updated;
+      }
+      if (data.prospect) {
+        setProspects(prev => prev.map(p => (p.id === prospectId ? (data.prospect as Prospect) : p)));
+      }
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : 'Send failed');
+    }
+  };
+
+  const handlePrepareOutreach = async (prospectId?: string) => {
+    try {
+      if (prospectId) {
+        const resp = await apiFetch(`/api/prospects/${prospectId}/prepare-outreach?force=true`, {
+          method: 'POST',
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        const row = (await resp.json()) as Prospect;
+        setProspects(prev => prev.map(p => (p.id === row.id ? row : p)));
+        return;
+      }
+      const resp = await apiFetch('/api/prospects/prepare-outreach-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
       });
-      return next;
-    });
+      if (!resp.ok) throw new Error(await resp.text());
+      const data = await resp.json();
+      const updated = (data.prospects || []) as Prospect[];
+      if (updated.length) {
+        const map = new Map(updated.map(p => [p.id, p]));
+        setProspects(prev => prev.map(p => map.get(p.id) || p));
+      }
+      window.alert(`Prepared ${data.prepared || 0} outreach draft(s).`);
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : 'Prepare outreach failed');
+    }
+  };
+
+  const handlePrepareFollowUp = async (prospectId: string) => {
+    try {
+      const resp = await apiFetch(`/api/prospects/${prospectId}/prepare-follow-up`, { method: 'POST' });
+      if (!resp.ok) throw new Error(await resp.text());
+      const row = (await resp.json()) as Prospect;
+      setProspects(prev => prev.map(p => (p.id === row.id ? row : p)));
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : 'Follow-up draft failed');
+    }
+  };
+
+  const handleSyncReplies = async () => {
+    try {
+      const resp = await apiFetch('/api/prospects/sync-replies', { method: 'POST' });
+      if (!resp.ok) throw new Error(await resp.text());
+      const data = await resp.json();
+      const updated = (data.prospects || []) as Prospect[];
+      if (updated.length) {
+        const map = new Map(updated.map(p => [p.id, p]));
+        setProspects(prev => prev.map(p => map.get(p.id) || p));
+      }
+      window.alert(`Synced ${data.synced || 0} reply(ies) from Gmail.`);
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : 'Reply sync failed — connect Gmail in Settings');
+    }
   };
 
   const handleSkipOutreach = (_prospectId: string) => {
@@ -497,6 +576,7 @@ export default function App() {
             onReviewProspect={id => setSelectedProspectId(id)}
             onUpdateStage={handleUpdateStage}
             onClearLeads={handleClearLeads}
+            onPrepareOutreach={() => handlePrepareOutreach()}
           />
         )}
         {activeRoute === 'discover' && (
@@ -514,6 +594,9 @@ export default function App() {
             onSendViaEmail={handleSendViaEmail}
             onSaveDraft={handleSaveDraft}
             onSkip={handleSkipOutreach}
+            onSyncReplies={handleSyncReplies}
+            onPrepareFollowUp={handlePrepareFollowUp}
+            gmailConnected={Boolean(user?.gmail?.connected)}
           />
         )}
         {isSettingsRoute(activeRoute) && (
@@ -547,6 +630,10 @@ export default function App() {
         onSaveDraft={handleSaveDraft}
         onUpdateContactAgain={handleUpdateContactAgain}
         onSaveReply={handleSaveReply}
+        onSendViaEmail={handleSendViaEmail}
+        onPrepareOutreach={id => handlePrepareOutreach(id)}
+        onPrepareFollowUp={handlePrepareFollowUp}
+        gmailConnected={Boolean(user?.gmail?.connected)}
       />
     </div>
   );

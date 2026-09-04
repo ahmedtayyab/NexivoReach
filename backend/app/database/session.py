@@ -21,6 +21,7 @@ def init_db():
         _migrate_sqlite_user_table()
     SQLModel.metadata.create_all(engine)
     _ensure_prospect_contact_columns()
+    _ensure_user_gmail_columns()
     if _backend == "sqlite":
         _ensure_sqlite_columns()
         _migrate_multi_company()
@@ -42,6 +43,26 @@ def _ensure_prospect_contact_columns():
                 conn.commit()
             except Exception:
                 conn.rollback()
+
+
+def _ensure_user_gmail_columns():
+    """Gmail OAuth token columns on nr_user (SQLite + Postgres)."""
+    tables = ("nr_user", "user")
+    additions = [
+        ("gmail_refresh_token", "VARCHAR"),
+        ("gmail_access_token", "VARCHAR"),
+        ("gmail_token_expiry", "VARCHAR"),
+        ("gmail_email", "VARCHAR"),
+        ("gmail_connected_at", "VARCHAR"),
+    ]
+    with engine.connect() as conn:
+        for table in tables:
+            for column, coltype in additions:
+                try:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}"))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
 
 
 def _migrate_sqlite_user_table():
