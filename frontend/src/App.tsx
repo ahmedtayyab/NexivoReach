@@ -265,13 +265,19 @@ export default function App() {
     );
   };
 
-  const handleSaveDraft = (prospectId: string, subject: string, body: string) => {
+  const handleSaveDraft = (prospectId: string, subject: string, body: string, toEmail?: string) => {
     setProspects(prev =>
       prev.map(p => {
         if (p.id !== prospectId || !p.outreachDraft) return p;
         const updated = {
           ...p,
-          outreachDraft: { ...p.outreachDraft, subject, body },
+          email: toEmail !== undefined && toEmail.trim() ? toEmail.trim() : p.email,
+          outreachDraft: {
+            ...p.outreachDraft,
+            subject,
+            body,
+            ...(toEmail !== undefined ? { toEmail: toEmail.trim() } : {}),
+          },
         };
         void persistProspect(updated);
         return updated;
@@ -279,23 +285,7 @@ export default function App() {
     );
   };
 
-  const handleUpdateContactAgain = (prospectId: string, contactAgain: boolean) => {
-    setProspects(prev =>
-      prev.map(p => {
-        if (p.id !== prospectId) return p;
-        const stage = !contactAgain && (p.stage === 'To contact' || p.stage === 'Re-contact')
-          ? 'Avoid'
-          : contactAgain && p.stage === 'Avoid'
-            ? 'Re-contact'
-            : p.stage;
-        const updated = { ...p, contactAgain, stage: stage as Prospect['stage'] };
-        void persistProspect(updated);
-        return updated;
-      })
-    );
-  };
-
-  const handleSendViaEmail = async (prospectId: string) => {
+  const handleSendViaEmail = async (prospectId: string, overrides?: { subject?: string; body?: string; toEmail?: string }) => {
     const current = prospects.find(p => p.id === prospectId);
     const draft = current?.outreachDraft;
     try {
@@ -303,9 +293,9 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subject: draft?.subject,
-          body: draft?.body,
-          toEmail: draft?.toEmail || current?.email || '',
+          subject: overrides?.subject ?? draft?.subject,
+          body: overrides?.body ?? draft?.body,
+          toEmail: overrides?.toEmail ?? draft?.toEmail ?? current?.email ?? '',
         }),
       });
       if (!resp.ok) {
@@ -330,6 +320,22 @@ export default function App() {
       console.error(err);
       window.alert(err instanceof Error ? err.message : 'Send failed');
     }
+  };
+
+  const handleUpdateContactAgain = (prospectId: string, contactAgain: boolean) => {
+    setProspects(prev =>
+      prev.map(p => {
+        if (p.id !== prospectId) return p;
+        const stage = !contactAgain && (p.stage === 'To contact' || p.stage === 'Re-contact')
+          ? 'Avoid'
+          : contactAgain && p.stage === 'Avoid'
+            ? 'Re-contact'
+            : p.stage;
+        const updated = { ...p, contactAgain, stage: stage as Prospect['stage'] };
+        void persistProspect(updated);
+        return updated;
+      })
+    );
   };
 
   const handlePrepareOutreach = async (prospectId?: string) => {

@@ -78,7 +78,11 @@ export default function QueueView({
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {onPrepareOutreach && prospects.some(p => !p.outreachDraft && (p.fitScore >= 70 || (p.fitBreakdown?.fitSummary || '').toLowerCase() === 'high')) && (
+          {onPrepareOutreach && prospects.some(p => !p.outreachDraft && (
+            (p.fitScore || 0) >= 75
+            || (p.fitBreakdown?.fitSummary || '').toLowerCase() === 'high'
+            || ['priority', 'nurture'].includes((p.priority || p.fitBreakdown?.priority || '').toLowerCase())
+          )) && (
             <button
               type="button"
               onClick={() => onPrepareOutreach()}

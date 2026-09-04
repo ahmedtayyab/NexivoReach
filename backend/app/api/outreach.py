@@ -54,7 +54,18 @@ def _priority(row: ProspectRecord) -> str:
 
 
 def _is_outreach_ready(row: ProspectRecord) -> bool:
-    return _fit_summary(row) == "high" or _priority(row) in ("priority", "nurture") or (row.fit_score or 0) >= 70
+    """Best-fit only: high fit, priority/nurture, or strong score (+ intent boost)."""
+    if _fit_summary(row) == "high":
+        return True
+    if _priority(row) in ("priority", "nurture"):
+        return True
+    score = int(row.fit_score or 0)
+    intent = ((row.fit_breakdown or {}).get("intent") or "none").lower()
+    if score >= 75:
+        return True
+    if score >= 65 and intent in ("high", "low"):
+        return True
+    return False
 
 
 async def _prepare_one(

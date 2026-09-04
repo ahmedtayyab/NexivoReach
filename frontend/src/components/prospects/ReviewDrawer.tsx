@@ -6,10 +6,13 @@ interface Props {
   prospect: Prospect | null;
   onClose: () => void;
   onUpdateStatus: (id: string, status: NonNullable<Prospect['outreachDraft']>['status']) => void;
-  onSaveDraft: (id: string, subject: string, body: string) => void;
+  onSaveDraft: (id: string, subject: string, body: string, toEmail?: string) => void;
   onUpdateContactAgain?: (id: string, contactAgain: boolean) => void;
   onSaveReply?: (id: string, summary: string, contactAgain: boolean) => void;
-  onSendViaEmail?: (id: string) => void;
+  onSendViaEmail?: (
+    id: string,
+    overrides?: { subject?: string; body?: string; toEmail?: string },
+  ) => void;
   onPrepareOutreach?: (id: string) => void;
   onPrepareFollowUp?: (id: string) => void;
   gmailConnected?: boolean;

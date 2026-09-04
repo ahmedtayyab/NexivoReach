@@ -671,7 +671,7 @@ function GmailConnectCard() {
     const params = new URLSearchParams(window.location.search);
     const gmail = params.get('gmail');
     if (gmail === 'connected') {
-      setMsg('Gmail connected — you can send and sync replies from Outreach.');
+      setMsg('Gmail connected — you can send to any recipient address. Test users only control who can connect the mailbox.');
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
       void load();
     } else if (gmail === 'error') {
@@ -694,8 +694,8 @@ function GmailConnectCard() {
         <div>
           <h3 className="text-[14px] font-semibold text-ink">Gmail</h3>
           <p className="text-[12.5px] text-ink-secondary mt-0.5">
-            Connect your Google mailbox to send approved outreach in-app and pull replies into Re-contact.
-            Sign-in alone is not enough — this is a separate Gmail consent.
+            Connect your mailbox to send from Outreach/Leads. Once connected, the To: field can be any email —
+            Google “test users” only limit who can authorize this app, not who you can message.
           </p>
         </div>
         {loading ? (
