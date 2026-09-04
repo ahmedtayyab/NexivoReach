@@ -28,7 +28,7 @@ SAVE_CAP = 40
 WAVE1_RESULT_CAP = 70
 WAVE2_RESULT_CAP = 35
 ENRICH_CAP = 12  # AI drafts for top fits
-CONTACT_CAP = 40  # crawl contacts for (almost) every saved lead
+CONTACT_CAP = 40  # emails scraped automatically for (almost) every saved lead
 
 
 def _domain(url: str) -> str:
@@ -291,7 +291,8 @@ class ProspectingAgent:
         qualified.sort(key=_q_rank, reverse=True)
         for i, item in enumerate(qualified):
             item["want_draft"] = item["outreach_ready"] and i < ENRICH_CAP
-            item["want_contacts"] = i < CONTACT_CAP
+            # Emails are automatic for every lead we persist (not a manual step)
+            item["want_contacts"] = True
 
         seller_name = (business.get("name") or "Sales Team").strip() or "Sales Team"
         provider = get_ai_provider()

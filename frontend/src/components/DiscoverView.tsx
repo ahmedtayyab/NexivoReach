@@ -12,6 +12,8 @@ interface Props {
   products?: Product[];
   onAddProspects: (prospects: Prospect[]) => void;
   onAddLog: (log: AgentRunLog) => void;
+  /** Reload leads after background email auto-fill finishes */
+  onRefreshProspects?: () => void | Promise<void>;
 }
 
 export default function DiscoverView({
@@ -20,6 +22,7 @@ export default function DiscoverView({
   products = [],
   onAddProspects,
   onAddLog,
+  onRefreshProspects,
 }: Props) {
   const [query, setQuery] = useState('');
   const [isRunning, setIsRunning] = useState(false);
@@ -92,9 +95,14 @@ export default function DiscoverView({
       ]);
       setStatusText(
         found.length
-          ? `Added ${found.length} qualified lead${found.length === 1 ? '' : 's'} (junk and low-fit accounts skipped).`
+          ? `Added ${found.length} qualified lead${found.length === 1 ? '' : 's'}. Emails are collected automatically — open Leads in a few seconds to see them.`
           : 'No qualified accounts this round — directories, factories, or weak matches were filtered out.',
       );
+      // Background job finishes contact pages after the HTTP response — refresh twice
+      if (found.length && onRefreshProspects) {
+        window.setTimeout(() => { void onRefreshProspects(); }, 4000);
+        window.setTimeout(() => { void onRefreshProspects(); }, 12000);
+      }
     } catch (err: unknown) {
       console.error('Discovery failed', err);
       setStatusText(err instanceof Error ? err.message : 'Discovery failed');

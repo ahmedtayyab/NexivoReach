@@ -610,6 +610,12 @@ export default function App() {
             products={products}
             onAddProspects={handleAddProspects}
             onAddLog={handleAddLog}
+            onRefreshProspects={async () => {
+              const resp = await apiFetch('/api/prospects/');
+              if (!resp.ok) return;
+              const list = await resp.json();
+              if (Array.isArray(list)) setProspects(list as Prospect[]);
+            }}
           />
         )}
         {activeRoute === 'outreach' && (

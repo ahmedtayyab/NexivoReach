@@ -194,7 +194,9 @@ export default function ReviewDrawer({
               if (!emails.length && !phones.length && !pages.length) {
                 return (
                   <div className="space-y-2">
-                    <p className="text-[13px] text-ink-muted">No public email found yet — draft is still available to copy.</p>
+                    <p className="text-[13px] text-ink-muted">
+                      No public email yet — Discover looks this up automatically. Refresh the leads list in a moment, or retry below.
+                    </p>
                     {onRefreshContacts && (
                       <button
                         type="button"
@@ -209,7 +211,7 @@ export default function ReviewDrawer({
                         }}
                         className="text-[12px] text-accent hover:underline disabled:opacity-40"
                       >
-                        {findingEmail ? 'Searching site…' : 'Find email on website'}
+                        {findingEmail ? 'Searching site…' : 'Retry email search'}
                       </button>
                     )}
                   </div>
@@ -241,7 +243,7 @@ export default function ReviewDrawer({
                       <ExternalLink className="w-3 h-3" strokeWidth={1.5} />
                     </a>
                   ))}
-                  {onRefreshContacts && !emails.length && (
+                  {onRefreshContacts && (
                     <button
                       type="button"
                       disabled={findingEmail}
@@ -253,9 +255,9 @@ export default function ReviewDrawer({
                           setFindingEmail(false);
                         }
                       }}
-                      className="text-[12px] text-accent hover:underline disabled:opacity-40"
+                      className="text-[12px] text-ink-muted hover:text-accent hover:underline disabled:opacity-40"
                     >
-                      {findingEmail ? 'Searching site…' : 'Find email on website'}
+                      {findingEmail ? 'Searching site…' : 'Retry email search'}
                     </button>
                   )}
                 </div>

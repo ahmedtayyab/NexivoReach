@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse, unquote
@@ -411,40 +412,45 @@ async def discover_contacts(
     extra = found_urls[:3]
 
     if extra:
-        try:
-            async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, headers=HEADERS) as client:
-                for url in extra:
-                    try:
-                        res = await client.get(url)
-                        if res.status_code != 200 or not res.text:
-                            continue
-                        # Skip soft-404s that bounce to homepage with tiny body change
-                        final = str(res.url)
-                        pages_checked += 1
-                        bonus = PAGE_CONTACT if _path_is_contact(final) or _path_is_contact(url) else PAGE_HOME + 10
-                        extracted = _extract_from_html(
-                            res.text, final, site_domain, page_bonus=bonus,
-                        )
-                        page_emails = extracted.get("emails") or []
-                        all_hits.extend(extracted.get("hits") or [])
-                        for p in extracted["phones"]:
-                            if p not in phones:
-                                phones.append(p)
-                        if page_emails or _path_is_contact(final):
-                            contact_page_urls.append(final)
-                            contacts.append({
-                                "type": "url",
-                                "value": final,
-                                "label": "Contact page",
-                                "source": "site",
-                            })
-                        # Stop early once contact page yielded a same-domain email
-                        if page_emails and bonus >= PAGE_CONTACT:
-                            break
-                    except Exception:
-                        continue
-        except Exception:
-            pass
+        async def _fetch_contact(url: str) -> Optional[Dict[str, Any]]:
+            try:
+                async with httpx.AsyncClient(timeout=7.0, follow_redirects=True, headers=HEADERS) as client:
+                    res = await client.get(url)
+                    if res.status_code != 200 or not res.text:
+                        return None
+                    final = str(res.url)
+                    bonus = PAGE_CONTACT if _path_is_contact(final) or _path_is_contact(url) else PAGE_HOME + 10
+                    extracted = _extract_from_html(
+                        res.text, final, site_domain, page_bonus=bonus,
+                    )
+                    return {
+                        "final": final,
+                        "bonus": bonus,
+                        "extracted": extracted,
+                    }
+            except Exception:
+                return None
+
+        results = await asyncio.gather(*[_fetch_contact(u) for u in extra])
+        for result in results:
+            if not result:
+                continue
+            pages_checked += 1
+            extracted = result["extracted"]
+            all_hits.extend(extracted.get("hits") or [])
+            for p in extracted.get("phones") or []:
+                if p not in phones:
+                    phones.append(p)
+            page_emails = extracted.get("emails") or []
+            if page_emails or result["bonus"] >= PAGE_CONTACT:
+                contact_page_urls.append(result["final"])
+                contacts.append({
+                    "type": "url",
+                    "value": result["final"],
+                    "label": "Contact page",
+                    "source": "site",
+                })
+
 
     emails = _rank_scored(all_hits, site_domain)
     for e in emails[:5]:

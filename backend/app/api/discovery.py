@@ -9,8 +9,12 @@ from app.database.session import engine
 from app.api.deps import AuthUser, get_current_user, resolve_business_id
 from app.api.serializers import prospect_to_frontend, run_to_frontend
 from app.integrations import sheets as sheets_mod
+from app.tools.contact_finder import discover_contacts
+from app.tools.web_search import WebSearchTool
 from urllib.parse import urlparse
+import asyncio
 import logging
+import time
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
@@ -47,6 +51,75 @@ def _sync_leads_job(business_id: str, prospects: list[dict]) -> None:
         sheets_mod.sync_leads(seller, prospects)
     except Exception as exc:
         log.warning("Sheets lead sync failed: %s", exc)
+
+
+async def _auto_fill_contacts_job(prospect_ids: List[str]) -> None:
+    """
+    After Discover returns, keep filling public emails in the background.
+    Covers timeouts / misses so the user does not have to click Find email.
+    """
+    if not prospect_ids:
+        return
+    sem = asyncio.Semaphore(5)
+    tool = WebSearchTool()
+
+    async def one(pid: str) -> None:
+        async with sem:
+            try:
+                with Session(engine) as session:
+                    row = session.get(ProspectRecord, pid)
+                    if not row or not (row.website or "").strip():
+                        return
+                    # Skip only if we already have a same-looking contact email list
+                    phone = (row.phone or "").strip()
+                    page = await tool.scrape_homepage(row.website)
+                    site_text = (page.get("text") or "") if isinstance(page, dict) else ""
+                    found = await discover_contacts(
+                        website=row.website,
+                        homepage_html=(page.get("html") or "")[:250000] if isinstance(page, dict) else "",
+                        homepage_text=site_text,
+                        homepage_url=(page.get("url") if isinstance(page, dict) else None) or row.website,
+                        seed_phone=phone,
+                        seed_emails=list((page.get("emails") or []) if isinstance(page, dict) else []),
+                    )
+                    email = (found.get("email") or "").strip()
+                    if not email and (row.email or "").strip():
+                        return  # keep existing if crawl found nothing new
+                    if email:
+                        contacts = found.get("contacts") or list(row.contacts or [])
+                        if not any(
+                            isinstance(c, dict)
+                            and c.get("type") == "email"
+                            and (c.get("value") or "").lower() == email.lower()
+                            for c in contacts
+                        ):
+                            contacts = [{
+                                "type": "email",
+                                "value": email,
+                                "label": "Email",
+                                "source": "site",
+                                "role": "general",
+                            }, *contacts]
+                        timeline = list(row.agent_timeline or [])
+                        timeline.append({
+                            "time": time.strftime("%H:%M"),
+                            "action": f"Auto-filled contact email {email}",
+                        })
+                        row.email = email
+                        row.phone = found.get("phone") or row.phone
+                        row.contacts = contacts
+                        row.agent_timeline = timeline
+                        if row.outreach_draft and isinstance(row.outreach_draft, dict):
+                            draft = dict(row.outreach_draft)
+                            if not (draft.get("toEmail") or "").strip():
+                                draft["toEmail"] = email
+                                row.outreach_draft = draft
+                        session.add(row)
+                        session.commit()
+            except Exception as exc:
+                log.warning("Auto-fill contacts failed for %s: %s", pid, exc)
+
+    await asyncio.gather(*[one(pid) for pid in prospect_ids])
 
 
 @router.get("/runs")
@@ -179,6 +252,11 @@ async def run_discovery_agent(
 
     if sheets_mod.is_configured() and saved_front:
         background_tasks.add_task(_sync_leads_job, business_id, saved_front)
+
+    # Always auto-fill / correct emails after Discover (no manual click required)
+    fill_ids = [p.get("id") for p in saved_front if p.get("id") and p.get("website")]
+    if fill_ids:
+        background_tasks.add_task(_auto_fill_contacts_job, fill_ids)
 
     return {
         "prospects": saved_front,
