@@ -18,3 +18,19 @@ def test_extract_mailto_and_contact_links():
     found = _extract_from_html(html, "https://acmewear.com/", "acmewear.com")
     assert "hello@acmewear.com" in found["emails"]
     assert any("contact" in u for u in found["contact_urls"])
+
+
+def test_extract_obfuscated_and_cfemail():
+    # Cloudflare: key 0x0a, "info@brand.com"
+    plain = "info@brand.com"
+    key = 0x0A
+    encoded = bytes([key] + [ord(c) ^ key for c in plain]).hex()
+    html = f"""
+    <html><body>
+      <span class="__cf_email__" data-cfemail="{encoded}">[email protected]</span>
+      <p>Reach sales [at] otherbrand [dot] com</p>
+    </body></html>
+    """
+    found = _extract_from_html(html, "https://brand.com/", "brand.com")
+    assert "info@brand.com" in found["emails"]
+    assert "sales@otherbrand.com" in found["emails"]

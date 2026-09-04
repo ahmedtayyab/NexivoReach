@@ -84,17 +84,21 @@ async def _prepare_one(
     site_text = ""
 
     if row.website:
+        page: Dict[str, Any] = {}
         try:
             page = await WebSearchTool().scrape_homepage(row.website)
             site_text = (page.get("text") or "") if isinstance(page, dict) else ""
         except Exception:
             site_text = ""
+            page = {}
         try:
             found = await discover_contacts(
                 website=row.website,
+                homepage_html=(page.get("html") or "")[:250000],
                 homepage_text=site_text,
-                homepage_url=row.website,
+                homepage_url=page.get("url") or row.website,
                 seed_phone=phone,
+                seed_emails=list(page.get("emails") or []),
             )
             contacts = found.get("contacts") or contacts
             email = found.get("email") or email
@@ -174,6 +178,69 @@ async def prepare_outreach_batch(
             "prepared": len(updated),
             "prospects": [prospect_to_frontend(r) for r in updated],
         }
+
+
+@router.post("/{prospect_id}/refresh-contacts")
+async def refresh_contacts(
+    prospect_id: str,
+    request: Request,
+    user: AuthUser = Depends(get_current_user),
+):
+    """Re-scrape the company site for public emails/phones and save onto the lead."""
+    with Session(engine) as session:
+        business_id = resolve_business_id(request, user, session)
+        row = _get_owned(session, prospect_id, business_id)
+        if not (row.website or "").strip():
+            raise HTTPException(status_code=400, detail="Lead has no website to scrape")
+        phone = (row.phone or "").strip()
+        page: Dict[str, Any] = {}
+        try:
+            page = await WebSearchTool().scrape_homepage(row.website)
+        except Exception as exc:
+            log.warning("Homepage scrape failed for %s: %s", prospect_id, exc)
+        site_text = (page.get("text") or "") if isinstance(page, dict) else ""
+        found = await discover_contacts(
+            website=row.website,
+            homepage_html=(page.get("html") or "")[:250000] if isinstance(page, dict) else "",
+            homepage_text=site_text,
+            homepage_url=(page.get("url") if isinstance(page, dict) else None) or row.website,
+            seed_phone=phone,
+            seed_emails=list((page.get("emails") or []) if isinstance(page, dict) else []),
+        )
+        email = (found.get("email") or row.email or "").strip()
+        contacts = found.get("contacts") or list(row.contacts or [])
+        phone = found.get("phone") or phone
+        # Ensure email appears in contacts list
+        if email and not any(
+            (c.get("type") == "email" and (c.get("value") or "").lower() == email.lower())
+            for c in contacts
+            if isinstance(c, dict)
+        ):
+            contacts = [{
+                "type": "email",
+                "value": email,
+                "label": "Email",
+                "source": "site",
+                "role": "general",
+            }, *contacts]
+        timeline = list(row.agent_timeline or [])
+        if email:
+            timeline.append({"time": _clock(), "action": f"Refreshed contacts — email {email}"})
+        else:
+            timeline.append({"time": _clock(), "action": "Refreshed contacts — no public email found"})
+        row.email = email
+        row.phone = phone or row.phone
+        row.contacts = contacts
+        row.agent_timeline = timeline
+        if row.outreach_draft and isinstance(row.outreach_draft, dict) and email:
+            draft = dict(row.outreach_draft)
+            if not (draft.get("toEmail") or "").strip():
+                draft["toEmail"] = email
+                row.outreach_draft = draft
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return {"prospect": prospect_to_frontend(row), "email": email, "found": bool(email)}
 
 
 @router.post("/{prospect_id}/prepare-outreach")

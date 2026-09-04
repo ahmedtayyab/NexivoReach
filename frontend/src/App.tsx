@@ -380,6 +380,24 @@ export default function App() {
     }
   };
 
+  const handleRefreshContacts = async (prospectId: string) => {
+    try {
+      const resp = await apiFetch(`/api/prospects/${prospectId}/refresh-contacts`, { method: 'POST' });
+      if (!resp.ok) throw new Error(await resp.text());
+      const data = await resp.json();
+      const row = data.prospect as Prospect;
+      if (row?.id) {
+        setProspects(prev => prev.map(p => (p.id === row.id ? row : p)));
+      }
+      if (!data.found) {
+        window.alert('No public email found on that website (checked homepage + contact pages).');
+      }
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : 'Could not refresh contacts');
+    }
+  };
+
   const handleSyncReplies = async () => {
     try {
       const resp = await apiFetch('/api/prospects/sync-replies', { method: 'POST' });
@@ -639,6 +657,7 @@ export default function App() {
         onSendViaEmail={handleSendViaEmail}
         onPrepareOutreach={id => handlePrepareOutreach(id)}
         onPrepareFollowUp={handlePrepareFollowUp}
+        onRefreshContacts={handleRefreshContacts}
         gmailConnected={Boolean(user?.gmail?.connected)}
       />
     </div>

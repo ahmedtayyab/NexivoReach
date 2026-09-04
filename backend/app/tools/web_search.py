@@ -121,6 +121,7 @@ def site_display_name_from_url(url: str) -> str:
 
 
 def results_to_companies(results: List[Dict[str, str]], target_location: str = "") -> List[Dict[str, Any]]:
+    prefer = [target_location] if target_location else None
     companies: List[Dict[str, Any]] = []
     seen = set()
     for item in results:
@@ -143,7 +144,7 @@ def results_to_companies(results: List[Dict[str, str]], target_location: str = "
         companies.append({
             "company_name": name[:120],
             "website": url,
-            "location": _location_from_text(f"{title} {snippet}", ""),
+            "location": _location_from_text(f"{title} {snippet}", "", prefer_places=prefer),
             "industry": "",
             "snippet": snippet[:500],
             "title": title,
@@ -155,21 +156,14 @@ def results_to_companies(results: List[Dict[str, str]], target_location: str = "
     return companies
 
 
-def _location_from_text(text: str, fallback: str = "") -> str:
-    blob = text or ""
-    # Keep this list as geography hints, not a product vertical.
-    places = [
-        "United Arab Emirates", "UAE", "Dubai", "Abu Dhabi", "Sharjah",
-        "Saudi Arabia", "Riyadh", "Jeddah", "Qatar", "Doha", "Kuwait", "Oman", "Bahrain",
-        "United States", "USA", "United Kingdom", "UK", "Germany", "France", "Netherlands",
-        "India", "Pakistan", "China", "Singapore", "Malaysia", "Australia", "Canada",
-        "Berlin", "London", "New York", "Chicago", "Toronto", "Sydney",
-    ]
-    found = [p for p in places if re.search(rf"\b{re.escape(p)}\b", blob, re.I)]
+def _location_from_text(text: str, fallback: str = "", prefer_places: Optional[List[str]] = None) -> str:
+    from app.agents.geo import format_location_display
+
+    found = format_location_display(text or "", prefer_places=prefer_places)
     if found:
-        return ", ".join(dict.fromkeys(found))[:80]
+        return found[:80]
     # Never stamp the hunt country onto empty locations.
-    return (fallback or "").strip()
+    return (fallback or "").strip()[:80]
 
 
 class WebSearchTool:
@@ -404,21 +398,36 @@ class WebSearchTool:
     async def scrape_homepage(self, url: str, limit: int = 8000) -> Dict[str, Any]:
         """Cheap single-page fetch for qualification. Does not crawl the shop catalog."""
         if not url or _should_skip(url):
-            return {"text": "", "title": "", "url": url or "", "ok": False}
+            return {"text": "", "title": "", "url": url or "", "ok": False, "location": ""}
         try:
             async with httpx.AsyncClient(timeout=6.0, follow_redirects=True, headers=HEADERS) as client:
                 res = await client.get(url)
                 if res.status_code != 200 or not res.text:
-                    return {"text": "", "title": "", "url": str(res.url), "ok": False}
+                    return {"text": "", "title": "", "url": str(res.url), "ok": False, "location": ""}
                 soup = BeautifulSoup(res.text, "html.parser")
                 title = ""
                 if soup.title and soup.title.get_text(strip=True):
                     title = soup.title.get_text(strip=True)[:160]
                 meta = soup.find("meta", attrs={"name": "description"})
                 desc = (meta.get("content") or "") if meta else ""
+                # Location often lives in the footer — extract before we strip chrome
+                location = _location_from_html(res.text)
+                emails: List[str] = []
+                phones: List[str] = []
+                contact_urls: List[str] = []
+                try:
+                    from app.tools.contact_finder import _extract_from_html, _domain as _cf_domain
+                    contact_bits = _extract_from_html(res.text, str(res.url), _cf_domain(str(res.url)))
+                    emails = list(contact_bits.get("emails") or [])
+                    phones = list(contact_bits.get("phones") or [])
+                    contact_urls = list(contact_bits.get("contact_urls") or [])
+                except Exception:
+                    pass
                 text = _html_to_text(res.text, limit=limit)
                 if desc:
                     text = f"{desc}\n{text}"[:limit]
+                if not location:
+                    location = _location_from_text(f"{title} {desc} {text}")
                 return {
                     "text": text,
                     "title": title,
@@ -426,9 +435,13 @@ class WebSearchTool:
                     "ok": True,
                     "status": res.status_code,
                     "html": res.text,
+                    "location": location,
+                    "emails": emails,
+                    "phones": phones,
+                    "contact_urls": contact_urls,
                 }
         except Exception:
-            return {"text": "", "title": "", "url": url, "ok": False}
+            return {"text": "", "title": "", "url": url, "ok": False, "location": ""}
 
     async def scrape_for_qualify(self, url: str, limit: int = 14000) -> Dict[str, Any]:
         """Homepage plus up to 2 signal pages (about / news / careers) for Intent evidence."""
@@ -501,10 +514,26 @@ class WebSearchTool:
 
 def _html_to_text(html: str, limit: int = 12000) -> str:
     soup = BeautifulSoup(html or "", "html.parser")
-    for tag in soup(["script", "style", "noscript", "svg", "nav", "footer", "form"]):
+    for tag in soup(["script", "style", "noscript", "svg", "nav", "form"]):
         tag.decompose()
     text = soup.get_text(separator="\n")
     return "\n".join(line.strip() for line in text.splitlines() if line.strip())[:limit]
+
+
+def _location_from_html(html: str) -> str:
+    """Prefer address-looking footer / contact blocks for a display location."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    for tag in soup(["script", "style", "noscript", "svg"]):
+        tag.decompose()
+    chunks: List[str] = []
+    for sel in ("footer", "[class*='footer']", "[id*='footer']", "[class*='address']", "[itemprop='address']"):
+        for node in soup.select(sel)[:4]:
+            t = node.get_text(" ", strip=True)
+            if t and len(t) > 8:
+                chunks.append(t[:400])
+    if not chunks:
+        chunks.append(soup.get_text(" ", strip=True)[:2500])
+    return _location_from_text(" ".join(chunks))
 
 
 SIGNAL_LINK_HINTS = (

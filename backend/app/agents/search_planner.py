@@ -105,6 +105,59 @@ def apply_prompt_geo(profile: SellerProfile, user_prompt: str) -> SellerProfile:
     )
 
 
+def apply_prompt_roles(profile: SellerProfile, user_prompt: str) -> SellerProfile:
+    """
+    If Discover names a buyer role (importers, distributors, gyms…), put that role first
+    and bias search pools toward it — so “importers in Nevada” hunts importers, not retailers.
+    """
+    from app.agents.geo import extract_buyers_from_prompt
+
+    prompt_buyers = extract_buyers_from_prompt(user_prompt)
+    if not prompt_buyers:
+        return profile
+
+    buyers = _uniq([*prompt_buyers, *profile.buyers], 6)
+    pools = {**profile.pools}
+    sales_motion = profile.sales_motion
+    use_maps = profile.use_maps
+    intent_examples = list(profile.intent_examples or [])
+    primary = prompt_buyers[0].lower()
+
+    if primary in ("importers", "distributors", "wholesalers"):
+        sales_motion = "wholesale"
+        pools["importer_distributor"] = "primary"
+        pools["direct_icp"] = "primary"
+        pools["retail_brand"] = "sample"
+        if primary == "importers":
+            intent_examples = _uniq(
+                ["importer of", "importing", "new distribution", *intent_examples],
+                4,
+            )
+    elif primary in ("retailers", "brands"):
+        pools["retail_brand"] = "primary"
+        pools["importer_distributor"] = "sample" if profile.offer_class == "goods" else "off"
+    elif primary in ("gyms", "clinics", "hotels", "restaurants", "salons"):
+        sales_motion = "local"
+        use_maps = True
+        pools["maps_local"] = "primary"
+        pools["direct_icp"] = "sample"
+
+    return SellerProfile(
+        offer_class=profile.offer_class,
+        sales_motion=sales_motion,
+        hunting_buyers=profile.hunting_buyers,
+        geo_mode=profile.geo_mode,
+        categories=profile.categories,
+        buyers=buyers[:4],
+        places=profile.places,
+        use_maps=use_maps,
+        pools=pools,
+        exclude_terms=profile.exclude_terms,
+        intent_examples=intent_examples,
+        strict_geo=profile.strict_geo,
+    )
+
+
 def infer_seller_profile(
     products: List[Dict[str, Any]],
     icp: Dict[str, Any],
@@ -271,8 +324,18 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
         add(f"seeking {cat} manufacturer {place} -jobs", "motion_oem", "oem_private_label")
 
     if profile.pools.get("importer_distributor") == "primary":
-        add(f"{cat} importer distributor {place} {neg}", "channel", "importer_distributor")
-        add(f"{cat} wholesale distributor {place} {neg}", "channel", "importer_distributor")
+        # Lead with the exact buyer role from Discover (importers before generic distributors)
+        role = (profile.buyers[0] or "importer").rstrip("s")  # importer / distributor / wholesaler
+        if "import" in role:
+            add(f"{cat} importer {place} {neg}", "channel", "importer_distributor")
+            add(f"{cat} import company {place} {neg}", "channel", "importer_distributor")
+            add(f"{cat} importer distributor {place} {neg}", "channel", "importer_distributor")
+        elif "distribut" in role:
+            add(f"{cat} distributor {place} {neg}", "channel", "importer_distributor")
+            add(f"{cat} wholesale distributor {place} {neg}", "channel", "importer_distributor")
+        else:
+            add(f"{cat} {role} {place} {neg}", "channel", "importer_distributor")
+            add(f"{cat} wholesale distributor {place} {neg}", "channel", "importer_distributor")
 
     if profile.pools.get("retail_brand") in ("primary", "sample"):
         add(f"{cat} brand {place} wholesale {neg}", "retail_brand", "retail_brand")
@@ -310,16 +373,22 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
     out: List[PlannedQuery] = []
     seen_family: Dict[str, int] = {}
     for item in queries:
-        # Allow up to 3 intent overlays; other families stay capped at 2
-        fam_cap = 3 if item.family == "intent_overlay" else 2
+        # Allow more channel queries when hunting a named role (importers…);
+        # intent overlays stay at 3; other families capped at 2
+        if item.family == "intent_overlay":
+            fam_cap = 3
+        elif item.family == "channel":
+            fam_cap = 3
+        else:
+            fam_cap = 2
         n = seen_family.get(item.family, 0)
         if n >= fam_cap and item.family != "user":
             continue
         seen_family[item.family] = n + 1
         out.append(item)
-        if len(out) >= 8:
+        if len(out) >= 9:
             break
-    return out or queries[:8]
+    return out or queries[:9]
 
 
 def plan_wave2(

@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from app.agents.search_planner import (
     apply_prompt_geo,
+    apply_prompt_roles,
     infer_seller_profile,
     plan_wave1,
     plan_wave2,
@@ -18,15 +19,16 @@ from app.agents.search_planner import (
 from app.agents.serp_classifier import classify_serp_row, summarize_classifications
 from app.agents.qualify import qualify_account
 from app.tools.web_search import WebSearchTool
-from app.tools.contact_finder import discover_contacts
+from app.tools.contact_finder import discover_contacts, contacts_from_text
 from app.providers.factory import get_ai_provider
 
 
-FETCH_CAP = 36
-SAVE_CAP = 35
+FETCH_CAP = 40
+SAVE_CAP = 40
 WAVE1_RESULT_CAP = 70
 WAVE2_RESULT_CAP = 35
-ENRICH_CAP = 8  # contact+draft only for top fits (speed)
+ENRICH_CAP = 12  # AI drafts for top fits
+CONTACT_CAP = 40  # crawl contacts for (almost) every saved lead
 
 
 def _domain(url: str) -> str:
@@ -60,7 +62,10 @@ class ProspectingAgent:
         start_time = time.time()
         decisions_log: List[Dict[str, Any]] = []
         business = business or {}
-        profile = apply_prompt_geo(infer_seller_profile(products, icp, business), user_prompt)
+        profile = apply_prompt_roles(
+            apply_prompt_geo(infer_seller_profile(products, icp, business), user_prompt),
+            user_prompt,
+        )
         wave1 = plan_wave1(profile, user_prompt)
         place = profile.places[0] if profile.places else ""
         exclude_domains = {_domain(u) for u in (exclude_websites or []) if _domain(u)}
@@ -69,16 +74,20 @@ class ProspectingAgent:
             "step": 1,
             "observation": (
                 f"Seller motion={profile.sales_motion}, offer={profile.offer_class}, "
-                f"geo={profile.geo_mode}, places={profile.places or ['(none)']}, "
+                f"buyers={profile.buyers}, geo={profile.geo_mode}, places={profile.places or ['(none)']}, "
                 f"strict_geo={profile.strict_geo}, maps={'on' if profile.use_maps else 'off'}."
             ),
             "decision": (
                 f"Wave 1: {len(wave1)} query families "
                 f"({', '.join(sorted({q.family for q in wave1}))}). "
                 + (
-                    f"Strict location filter for {', '.join(profile.places[:2])}."
-                    if profile.strict_geo
-                    else "Not running synonym clones."
+                    f"Prioritizing {profile.buyers[0]} in {', '.join(profile.places[:2])}."
+                    if profile.buyers and profile.places
+                    else (
+                        f"Strict location filter for {', '.join(profile.places[:2])}."
+                        if profile.strict_geo
+                        else "Not running synonym clones."
+                    )
                 )
             ),
             "toolCalled": "SearchPlanner",
@@ -101,15 +110,20 @@ class ProspectingAgent:
             )
             for row in leads
         ]
-        # Prefer rows that explicitly mention the target geo
-        classified.sort(
-            key=lambda r: (
+        # Prefer in-geo rows and ones that name the requested buyer role (importer…)
+        primary_buyer = (profile.buyers[0] or "").lower().rstrip("s") if profile.buyers else ""
+
+        def _serp_rank(r: Dict[str, Any]) -> tuple:
+            blob = f"{r.get('title') or ''} {r.get('snippet') or ''} {r.get('location') or ''}".lower()
+            role_hit = 1 if primary_buyer and primary_buyer in blob else 0
+            return (
                 0 if r.get("reject") else 1,
                 1 if r.get("geo_mentioned") else 0,
+                role_hit,
                 1 if (r.get("source") or "") == "maps" else 0,
-            ),
-            reverse=True,
-        )
+            )
+
+        classified.sort(key=_serp_rank, reverse=True)
         stats = summarize_classifications(classified)
         decisions_log.append({
             "step": 2,
@@ -205,10 +219,17 @@ class ProspectingAgent:
             dom = _domain(cand.get("website") or "")
             if isinstance(page, dict) and page.get("ok"):
                 page = {**page}
-                page.pop("html", None)
+                # Keep raw HTML for contact mailto parsing during enrich
+                # (visible text often says "Email us" without the address)
                 text_by_domain[dom] = page
+                if page.get("location") and not (cand.get("location") or "").strip():
+                    cand["location"] = page["location"]
+                elif page.get("location") and len(str(page["location"])) > len(str(cand.get("location") or "")):
+                    cand["location"] = page["location"]
+                if page.get("emails"):
+                    cand.setdefault("_seed_emails", page["emails"])
             else:
-                text_by_domain[dom] = {"text": "", "url": cand.get("website") or "", "ok": False}
+                text_by_domain[dom] = {"text": "", "url": cand.get("website") or "", "ok": False, "location": "", "emails": []}
 
         decisions_log.append({
             "step": 4,
@@ -261,11 +282,16 @@ class ProspectingAgent:
             q = item["q"]
             intent_rank = {"high": 2, "low": 1, "none": 0}.get(q.get("intent") or "none", 0)
             pri = {"priority": 3, "nurture": 2, "review": 1, "low": 0}.get(q.get("priority") or "", 0)
-            return (pri, intent_rank, int(q.get("fitScore") or 0))
+            loc_bonus = 1 if (q.get("location") or "").strip() else 0
+            role_bonus = 1 if primary_buyer and primary_buyer in (
+                f"{item.get('site_text') or ''} {q.get('whyThisProspect') or ''}"
+            ).lower() else 0
+            return (pri, role_bonus, loc_bonus, intent_rank, int(q.get("fitScore") or 0))
 
         qualified.sort(key=_q_rank, reverse=True)
         for i, item in enumerate(qualified):
-            item["outreach_ready"] = item["outreach_ready"] and i < ENRICH_CAP
+            item["want_draft"] = item["outreach_ready"] and i < ENRICH_CAP
+            item["want_contacts"] = i < CONTACT_CAP
 
         seller_name = (business.get("name") or "Sales Team").strip() or "Sales Team"
         provider = get_ai_provider()
@@ -278,6 +304,9 @@ class ProspectingAgent:
             site_text = item["site_text"]
             source = item["source"]
             phone = co.get("phone") or ""
+            seed_emails = list(page.get("emails") or co.get("_seed_emails") or [])
+            if page.get("phones") and not phone:
+                phone = (page.get("phones") or [""])[0] or phone
             contacts: List[Dict[str, Any]] = []
             email = ""
             outreach_draft = None
@@ -287,19 +316,36 @@ class ProspectingAgent:
             ]
             contact_hit = False
             draft_hit = False
+            website = (co.get("website") or "").strip()
 
-            if item["outreach_ready"] and (co.get("website") or "").strip():
+            # Prefer homepage mailto seeds immediately
+            if seed_emails:
+                cheap = contacts_from_text(
+                    site_text,
+                    website=website,
+                    seed_phone=phone,
+                    seed_emails=seed_emails,
+                )
+                contacts = cheap.get("contacts") or []
+                email = cheap.get("email") or ""
+                phone = cheap.get("phone") or phone
+
+            # Full contact crawl when homepage had no usable email
+            homepage_html = (page.get("html") or "")[:250000]
+            if item.get("want_contacts") and website and not email:
                 async with sem:
                     try:
                         found = await discover_contacts(
-                            website=co.get("website") or "",
+                            website=website,
+                            homepage_html=homepage_html,
                             homepage_text=site_text,
-                            homepage_url=page.get("url") or co.get("website") or "",
+                            homepage_url=page.get("url") or website,
                             seed_phone=phone,
+                            seed_emails=seed_emails,
                         )
                         contact_hit = True
-                        contacts = found.get("contacts") or []
-                        email = found.get("email") or ""
+                        contacts = found.get("contacts") or contacts
+                        email = found.get("email") or email
                         phone = found.get("phone") or phone
                         if email:
                             timeline.append({"time": time.strftime("%H:%M"), "action": f"Found contact email {email}"})
@@ -309,7 +355,15 @@ class ProspectingAgent:
                             timeline.append({"time": time.strftime("%H:%M"), "action": "No public email found on site yet"})
                     except Exception:
                         timeline.append({"time": time.strftime("%H:%M"), "action": "Contact discovery failed — kept lead without email"})
+            elif email:
+                contact_hit = True
+                timeline.append({"time": time.strftime("%H:%M"), "action": f"Found contact email {email}"})
 
+            # Drop heavy HTML before returning the prospect payload
+            page.pop("html", None)
+
+            if item.get("want_draft") and website:
+                async with sem:
                     try:
                         draft = await provider.generate_personalized_outreach(
                             company_name=co.get("company_name") or "there",
@@ -335,11 +389,24 @@ class ProspectingAgent:
                     except Exception:
                         timeline.append({"time": time.strftime("%H:%M"), "action": "Outreach draft skipped"})
 
+            # Ensure primary email always appears in the contacts list
+            if email and not any(
+                (c.get("type") == "email" and (c.get("value") or "").lower() == email.lower())
+                for c in contacts
+            ):
+                contacts = [{
+                    "type": "email",
+                    "value": email,
+                    "label": "Email",
+                    "source": "site",
+                    "role": "general",
+                }, *contacts]
+
             return {
                 "id": f"prospect-{uuid4().hex[:10]}",
                 "companyName": co.get("company_name") or "Unknown",
                 "website": co.get("website") or "",
-                "location": (co.get("location") or "").strip(),
+                "location": (q.get("location") or co.get("location") or "").strip(),
                 "industry": (q.get("industry") or "")[:80],
                 "companySize": "",
                 "phone": phone,
@@ -410,12 +477,11 @@ class ProspectingAgent:
                 "step": 5,
                 "observation": (
                     f"Persisting {len(prospects)} qualified accounts. "
-                    f"Parallel contact/draft on {contact_runs} high-fit leads; "
-                    f"{draft_runs} outreach drafts."
+                    f"Contact crawl on {contact_runs} leads; {draft_runs} outreach drafts."
                 ),
                 "decision": (
-                    "High-fit enrichment runs concurrently (cap 5). "
-                    "Human still reviews each draft before send."
+                    f"Emails scraped from mailto/HTML + /contact pages (cap {CONTACT_CAP}). "
+                    f"AI drafts for top {ENRICH_CAP}. Human reviews before send."
                 ),
                 "toolCalled": "LeadPipeline",
                 "toolResultSnippet": f"{len(prospects)} To contact · {draft_runs} drafts",

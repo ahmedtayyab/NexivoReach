@@ -125,7 +125,7 @@ export default function DiscoverView({
           value={query}
           onChange={setQuery}
           suggestions={discoverSuggestions}
-          placeholder="Find distributors expanding in my target markets…"
+          placeholder="Find martial arts belt importers in Nevada…"
           single
           aiContext={{
             field: 'discover',

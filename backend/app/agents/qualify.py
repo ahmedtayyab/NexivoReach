@@ -94,7 +94,7 @@ def qualify_account(
     url = page_url or (row.get("website") or "")
     name = row.get("company_name") or "This company"
     snippet = row.get("snippet") or ""
-    location = (row.get("location") or "").strip()
+    location = _resolve_location(row, site_text, profile)
     text = f"{name}\n{snippet}\n{site_text or ''}"
     evidence: List[Dict[str, Any]] = []
     source_type = "homepage" if site_text else "serp"
@@ -132,7 +132,7 @@ def qualify_account(
         # honest: no timing
         pass
 
-    why_this = _why_this(name, icp, offer, motion, evidence, profile)
+    why_this = _why_this(name, icp, offer, motion, evidence, profile, location=location)
     if intent == "none":
         why_now = why_now or "No timing evidence; treat as a fit-based account, not a hot inbound."
 
@@ -143,7 +143,11 @@ def qualify_account(
     elif fit_summary == "medium" and intent == "high":
         priority = "review"
     elif fit_summary == "medium" and source_type == "homepage":
-        priority = "low"
+        # Confirmed geo + named buyer role → keep as review (more usable clients)
+        if location and _primary_buyer_hit(text, profile):
+            priority = "review"
+        else:
+            priority = "low"
     else:
         priority = "reject"
 
@@ -155,6 +159,7 @@ def qualify_account(
         profile=profile,
         source_type=source_type,
         evidence_count=len([e for e in evidence if e.get("claim") in ("icp", "offer", "motion")]),
+        site_text=site_text or "",
     )
     persist = (
         priority != "reject"
@@ -389,6 +394,33 @@ def _geo_ok(blob: str, places: List[str]) -> Optional[bool]:
     return False
 
 
+def _resolve_location(row: Dict[str, Any], site_text: str, profile: SellerProfile) -> str:
+    """Prefer Maps/SERP location; else pull city/state from homepage copy."""
+    from app.agents.geo import format_location_display
+
+    existing = (row.get("location") or "").strip()
+    if existing and len(existing) >= 3:
+        # Enrich bare "Nevada" with city from site when possible
+        site_loc = format_location_display(
+            f"{existing}\n{site_text or ''}",
+            prefer_places=profile.places,
+        )
+        if site_loc and len(site_loc) > len(existing):
+            return site_loc[:80]
+        return existing[:80]
+    blob = f"{row.get('title') or ''}\n{row.get('snippet') or ''}\n{site_text or ''}"
+    return format_location_display(blob, prefer_places=profile.places)[:80]
+
+
+def _primary_buyer_hit(text: str, profile: SellerProfile) -> bool:
+    if not profile.buyers:
+        return False
+    primary = (profile.buyers[0] or "").lower().rstrip("s")
+    if len(primary) < 4:
+        return False
+    return bool(re.search(rf"\b{re.escape(primary)}s?\b", text or "", re.I))
+
+
 def _why_this(
     name: str,
     icp: str,
@@ -396,12 +428,15 @@ def _why_this(
     motion: str,
     evidence: List[Dict[str, Any]],
     profile: SellerProfile,
+    location: str = "",
 ) -> str:
+    loc_prefix = f"Location: {location}. " if location else ""
     bits = [e["statement"] for e in evidence if e.get("claim") in ("icp", "offer", "motion")]
     if bits:
-        return f"{name}: " + " ".join(bits[:3])
+        return f"{name}: {loc_prefix}" + " ".join(bits[:3])
     return (
-        f"{name} was retrieved as a possible {profile.buyers[0] if profile.buyers else 'buyer'} "
+        f"{name}: {loc_prefix}"
+        f"Retrieved as a possible {profile.buyers[0] if profile.buyers else 'buyer'} "
         f"for {profile.categories[0]}. Fit is {icp}/{offer}/{motion} (ICP/offer/motion) and still needs evidence."
     )
 
@@ -430,6 +465,7 @@ def _fit_score_only(
     profile: SellerProfile,
     source_type: str = "serp",
     evidence_count: int = 0,
+    site_text: str = "",
 ) -> Dict[str, Any]:
     """
     Composite Fit score only (Intent excluded).
@@ -455,22 +491,23 @@ def _fit_score_only(
     geo_pts = 0
     if profile.places:
         from app.agents.geo import places_mentioned
-        blob = f"{location or ''} ".lower()
-        # also allow state aliases against location string via places_mentioned
+        blob = f"{location or ''} {site_text or ''}".lower()
         if places_mentioned(location or "", profile.places) or places_mentioned(blob, profile.places):
             geo_pts = 12
         elif location and len(location.strip()) >= 8:
             geo_pts = 0
-    # legacy path kept for empty places
-    if location and profile.places and geo_pts == 0:
-        pass
+
+    # Boost when primary Discover role (e.g. importer) is explicit on the site
+    role_pts = 0
+    if _primary_buyer_hit(f"{location}\n{site_text}", profile):
+        role_pts = 6
 
     evidence_bonus = 0
     if source_type == "homepage":
         evidence_bonus += 6
     evidence_bonus += min(6, evidence_count * 2)
 
-    total = icp_pts + offer_pts + motion_pts + geo_pts + evidence_bonus
+    total = icp_pts + offer_pts + motion_pts + geo_pts + role_pts + evidence_bonus
 
     # Hard caps so thin evidence cannot look like a strong lead.
     if source_type != "homepage":

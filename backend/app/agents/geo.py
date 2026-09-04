@@ -171,3 +171,94 @@ def extract_places_from_prompt(prompt: str) -> Tuple[List[str], bool]:
         seen.add(k)
         out.append(p)
     return out[:4], strict
+
+
+# Canonical buyer role → surface forms in Discover prompts / site copy
+BUYER_ROLE_FORMS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("importers", ("importers", "importer", "importing", "import company")),
+    ("distributors", ("distributors", "distributor", "distribution")),
+    ("wholesalers", ("wholesalers", "wholesaler", "wholesale")),
+    ("retailers", ("retailers", "retailer", "retail chain", "retail store")),
+    ("brands", ("brands", "brand", "private label brand", "clothing brand")),
+    ("gyms", ("gyms", "gym", "fitness club", "fitness center")),
+    ("clinics", ("clinics", "clinic", "hospitals", "hospital")),
+    ("hotels", ("hotels", "hotel", "hospitality")),
+    ("restaurants", ("restaurants", "restaurant", "cafes", "cafe")),
+    ("salons", ("salons", "salon", "spas", "spa")),
+)
+
+
+def extract_buyers_from_prompt(prompt: str) -> List[str]:
+    """Pull buyer roles the user named (e.g. importers) so search prioritizes them."""
+    low = (prompt or "").lower()
+    if not low:
+        return []
+    found: List[str] = []
+    for label, forms in BUYER_ROLE_FORMS:
+        if any(_word_hit(low, f) or f in low for f in forms):
+            # Prefer exact word hits over substring for short forms like "brand"
+            if any(re.search(rf"\b{re.escape(f)}\b", low) for f in forms):
+                found.append(label)
+    return found[:4]
+
+
+def format_location_display(text: str, prefer_places: Optional[List[str]] = None) -> str:
+    """
+    Build a short human location string from SERP/site text.
+    Prefers city + state when possible; never invents a place not present in text.
+    """
+    blob = text or ""
+    if not blob.strip():
+        return ""
+    low = blob.lower()
+    prefer = [p.lower() for p in (prefer_places or []) if p]
+
+    # City + state pairs first (Las Vegas, Nevada)
+    city_hits: List[Tuple[str, str]] = []
+    for state, aliases in US_STATE_ALIASES.items():
+        state_label = " ".join(w.capitalize() for w in state.split())
+        for city in aliases[1:]:
+            if _word_hit(low, city):
+                city_label = " ".join(w.capitalize() for w in city.split())
+                city_hits.append((city_label, state_label))
+
+    if city_hits:
+        # Prefer cities in requested states
+        if prefer:
+            for city, state in city_hits:
+                if any(p in state.lower() or state.lower() in p for p in prefer):
+                    return f"{city}, {state}"[:80]
+        city, state = city_hits[0]
+        return f"{city}, {state}"[:80]
+
+    # Named US state
+    for state in sorted(US_STATE_ALIASES.keys(), key=len, reverse=True):
+        state_label = " ".join(w.capitalize() for w in state.split())
+        if _word_hit(low, state):
+            if prefer and not any(p in state or state in p for p in prefer):
+                # Still return if it's the only geo we found
+                pass
+            return state_label[:80]
+        abbrev = US_STATE_ALIASES[state][0]
+        if abbrev and re.search(rf"(?:in|near|,|\s){re.escape(abbrev)}\b", low):
+            return state_label[:80]
+
+    # Countries / major hubs from COUNTRY_ALIASES
+    for country, aliases in COUNTRY_ALIASES.items():
+        label = " ".join(w.capitalize() for w in country.split())
+        for a in (country, *aliases):
+            if _word_hit(low, a):
+                # Prefer city alias when that's what matched (Dubai not UAE)
+                if a != country and " " not in a and len(a) > 3:
+                    return a.title()[:80]
+                return label[:80]
+
+    # Common non-US hubs still useful in B2B
+    for hub in (
+        "Dubai", "Abu Dhabi", "Riyadh", "Jeddah", "Doha", "Singapore",
+        "London", "Berlin", "Toronto", "Sydney", "Karachi", "Lahore",
+    ):
+        if _word_hit(low, hub.lower()):
+            return hub[:80]
+
+    return ""

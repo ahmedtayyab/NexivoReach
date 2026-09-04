@@ -33,7 +33,7 @@ def test_planner_uses_oem_pools_not_retailer_clones():
     assert "private label" in blobs
     assert "intent_overlay" in families
     assert "seeking" in blobs or "sourcing" in blobs or "private label program" in blobs
-    assert len(queries) <= 8
+    assert len(queries) <= 9
 
 
 def test_planner_saas_skips_maps_and_importers():

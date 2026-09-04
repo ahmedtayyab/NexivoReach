@@ -15,6 +15,7 @@ interface Props {
   ) => void;
   onPrepareOutreach?: (id: string) => void;
   onPrepareFollowUp?: (id: string) => void;
+  onRefreshContacts?: (id: string) => void;
   gmailConnected?: boolean;
 }
 
@@ -28,12 +29,14 @@ export default function ReviewDrawer({
   onSendViaEmail,
   onPrepareOutreach,
   onPrepareFollowUp,
+  onRefreshContacts,
   gmailConnected = false,
 }: Props) {
   const [editingDraft, setEditingDraft] = useState(false);
   const [draftBody, setDraftBody] = useState('');
   const [draftSubject, setDraftSubject] = useState('');
   const [replyNote, setReplyNote] = useState('');
+  const [findingEmail, setFindingEmail] = useState(false);
 
   if (!prospect) return null;
 
@@ -128,7 +131,7 @@ export default function ReviewDrawer({
             <div>
               <h1 className="text-[15px] font-semibold text-ink">{prospect.companyName}</h1>
               <p className="text-[13px] text-slate-500 mt-0.5">
-                {prospect.location} · {prospect.industry}
+                {[prospect.location?.trim() || 'Location not confirmed', prospect.industry].filter(Boolean).join(' · ')}
               </p>
             </div>
             <div className="text-right shrink-0">
@@ -151,38 +154,113 @@ export default function ReviewDrawer({
 
         <div className="px-5 py-5 space-y-6 flex-1">
           <section>
+            <h2 className="section-label mb-2">Location</h2>
+            <div className="h-px bg-slate-100 mb-3" />
+            <p className="text-[13.5px] text-slate-700 leading-relaxed">
+              {prospect.location?.trim() || 'Not confirmed from public pages yet — verify before outreach.'}
+            </p>
+          </section>
+
+          <section>
             <h2 className="section-label mb-2">Contacts</h2>
             <div className="h-px bg-slate-100 mb-3" />
-            {(prospect.email || prospect.phone || contacts.length > 0) ? (
-              <div className="space-y-2 text-[13px]">
-                {prospect.email && (
-                  <a href={`mailto:${prospect.email}`} className="flex items-center gap-2 text-accent hover:underline">
-                    <Mail className="w-3.5 h-3.5" strokeWidth={1.75} />
-                    {prospect.email}
-                  </a>
-                )}
-                {prospect.phone && (
-                  <a href={`tel:${prospect.phone}`} className="flex items-center gap-2 text-ink-secondary">
-                    <Phone className="w-3.5 h-3.5" strokeWidth={1.75} />
-                    {prospect.phone}
-                  </a>
-                )}
-                {contacts.filter(c => c.type === 'url').slice(0, 3).map((c, i) => (
-                  <a
-                    key={`${c.value}-${i}`}
-                    href={c.value}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-1 text-[12px] text-blue-600 hover:underline"
-                  >
-                    {c.label || 'Contact page'}
-                    <ExternalLink className="w-3 h-3" strokeWidth={1.5} />
-                  </a>
-                ))}
-              </div>
-            ) : (
-              <p className="text-[13px] text-ink-muted">No public email found yet — draft is still available to copy.</p>
-            )}
+            {(() => {
+              const seen = new Set<string>();
+              const emails: string[] = [];
+              const phones: string[] = [];
+              const pages: { value: string; label?: string }[] = [];
+              const pushEmail = (v?: string) => {
+                const e = (v || '').trim().toLowerCase();
+                if (!e || seen.has(`e:${e}`)) return;
+                seen.add(`e:${e}`);
+                emails.push(e);
+              };
+              const pushPhone = (v?: string) => {
+                const p = (v || '').trim();
+                if (!p || seen.has(`p:${p}`)) return;
+                seen.add(`p:${p}`);
+                phones.push(p);
+              };
+              pushEmail(prospect.email);
+              pushPhone(prospect.phone);
+              for (const c of contacts) {
+                if (c.type === 'email') pushEmail(c.value);
+                else if (c.type === 'phone') pushPhone(c.value);
+                else if (c.type === 'url' && c.value && !seen.has(`u:${c.value}`)) {
+                  seen.add(`u:${c.value}`);
+                  pages.push({ value: c.value, label: c.label });
+                }
+              }
+              if (!emails.length && !phones.length && !pages.length) {
+                return (
+                  <div className="space-y-2">
+                    <p className="text-[13px] text-ink-muted">No public email found yet — draft is still available to copy.</p>
+                    {onRefreshContacts && (
+                      <button
+                        type="button"
+                        disabled={findingEmail}
+                        onClick={async () => {
+                          setFindingEmail(true);
+                          try {
+                            await onRefreshContacts(prospect.id);
+                          } finally {
+                            setFindingEmail(false);
+                          }
+                        }}
+                        className="text-[12px] text-accent hover:underline disabled:opacity-40"
+                      >
+                        {findingEmail ? 'Searching site…' : 'Find email on website'}
+                      </button>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <div className="space-y-2 text-[13px]">
+                  {emails.map(e => (
+                    <a key={e} href={`mailto:${e}`} className="flex items-center gap-2 text-accent hover:underline">
+                      <Mail className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} />
+                      <span className="break-all">{e}</span>
+                    </a>
+                  ))}
+                  {phones.map(p => (
+                    <a key={p} href={`tel:${p}`} className="flex items-center gap-2 text-ink-secondary">
+                      <Phone className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} />
+                      {p}
+                    </a>
+                  ))}
+                  {pages.slice(0, 3).map((c, i) => (
+                    <a
+                      key={`${c.value}-${i}`}
+                      href={c.value}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-1 text-[12px] text-blue-600 hover:underline"
+                    >
+                      {c.label || 'Contact page'}
+                      <ExternalLink className="w-3 h-3" strokeWidth={1.5} />
+                    </a>
+                  ))}
+                  {onRefreshContacts && !emails.length && (
+                    <button
+                      type="button"
+                      disabled={findingEmail}
+                      onClick={async () => {
+                        setFindingEmail(true);
+                        try {
+                          await onRefreshContacts(prospect.id);
+                        } finally {
+                          setFindingEmail(false);
+                        }
+                      }}
+                      className="text-[12px] text-accent hover:underline disabled:opacity-40"
+                    >
+                      {findingEmail ? 'Searching site…' : 'Find email on website'}
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
             <label className="mt-3 flex items-center gap-2 text-[13px] text-ink-secondary">
               <input
                 type="checkbox"
