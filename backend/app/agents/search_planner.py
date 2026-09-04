@@ -75,6 +75,34 @@ class SellerProfile:
     pools: Dict[str, str]
     exclude_terms: List[str] = field(default_factory=list)
     intent_examples: List[str] = field(default_factory=list)
+    strict_geo: bool = False
+
+
+def apply_prompt_geo(profile: SellerProfile, user_prompt: str) -> SellerProfile:
+    """Merge Discover prompt places (e.g. Nevada) and tighten geo when a state/city is named."""
+    from app.agents.geo import extract_places_from_prompt
+
+    prompt_places, strict = extract_places_from_prompt(user_prompt)
+    if not prompt_places:
+        return profile
+    # Prompt geo leads; keep ICP countries as secondary
+    merged = _uniq([*prompt_places, *profile.places], 5)
+    use_maps = profile.use_maps or strict
+    geo_mode = "local" if strict else profile.geo_mode
+    return SellerProfile(
+        offer_class=profile.offer_class,
+        sales_motion=profile.sales_motion,
+        hunting_buyers=profile.hunting_buyers,
+        geo_mode=geo_mode,
+        categories=profile.categories,
+        buyers=profile.buyers,
+        places=merged,
+        use_maps=use_maps,
+        pools={**profile.pools, "maps_local": "primary" if use_maps else profile.pools.get("maps_local", "off")},
+        exclude_terms=profile.exclude_terms,
+        intent_examples=profile.intent_examples,
+        strict_geo=strict or profile.strict_geo,
+    )
 
 
 def infer_seller_profile(
@@ -258,9 +286,11 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
     if profile.pools.get("competitor_customer") == "sample":
         add(f"{cat} stockists {place} -directory", "competitor_customer", "competitor_customer")
 
-    if profile.use_maps:
+    if profile.use_maps or profile.pools.get("maps_local") == "primary":
         maps_q = f"{buyer} {cat}" if buyer else cat
         add(f"{maps_q} {place}".strip(), "maps_local", "maps_local", maps=True)
+        if place and profile.strict_geo:
+            add(f"{cat} importer {place}", "maps_local", "maps_local", maps=True)
 
     if profile.sales_motion == "saas":
         add(f"{buyer} {cat} software {place} {neg}", "icp_retrieval", "direct_icp")
@@ -383,4 +413,5 @@ def profile_to_dict(profile: SellerProfile) -> Dict[str, Any]:
         "places": profile.places,
         "useMaps": profile.use_maps,
         "pools": profile.pools,
+        "strictGeo": profile.strict_geo,
     }

@@ -175,6 +175,19 @@ def qualify_account(
             priority = "low"
         if not why_this:
             why_this = f"{name} is a local Maps listing matching the ICP buyer type; website evidence is still thin."
+
+    # Strict geo from Discover prompt (e.g. "in Nevada") — must verify location
+    if getattr(profile, "strict_geo", False) and profile.places:
+        geo_blob = f"{location}\n{snippet}\n{site_text or ''}"
+        geo_hit = _geo_ok(geo_blob, profile.places)
+        if geo_hit is not True:
+            persist = False
+            priority = "reject"
+            why_this = (
+                f"{name}: skipped — no clear evidence they operate in "
+                f"{', '.join(profile.places[:2])}."
+            )
+
     return {
         "icpFit": icp,
         "offerFit": offer,
@@ -366,23 +379,14 @@ def _intent(text: str, url: str, source_type: str, site_text: str) -> Tuple[str,
 def _geo_ok(blob: str, places: List[str]) -> Optional[bool]:
     if not places:
         return None
-    low = blob.lower()
-    aliases = {
-        "united states": ["usa", "u.s.", "united states", "america"],
-        "united kingdom": ["uk", "britain", "england"],
-        "united arab emirates": ["uae", "dubai"],
-    }
-    for place in places:
-        p = place.lower().strip()
-        if p and p in low:
-            return True
-        for a in aliases.get(p, []):
-            if a in low:
-                return True
+    from app.agents.geo import places_mentioned
+    hit = places_mentioned(blob, places)
+    if hit is True:
+        return True
     # location empty → unknown, not a fail
-    if len(low.strip()) < 8:
+    if len((blob or "").strip()) < 8:
         return None
-    return None
+    return False
 
 
 def _why_this(
@@ -449,24 +453,17 @@ def _fit_score_only(
     )
 
     geo_pts = 0
-    if location and profile.places:
-        blob = location.lower()
-        aliases = {
-            "united states": ["usa", "u.s.", "united states", "america"],
-            "united kingdom": ["uk", "britain", "england"],
-            "united arab emirates": ["uae", "dubai", "abu dhabi"],
-        }
-        for place in profile.places:
-            p = place.lower().strip()
-            if p and p in blob:
-                geo_pts = 12
-                break
-            for a in aliases.get(p, []):
-                if a in blob:
-                    geo_pts = 12
-                    break
-            if geo_pts:
-                break
+    if profile.places:
+        from app.agents.geo import places_mentioned
+        blob = f"{location or ''} ".lower()
+        # also allow state aliases against location string via places_mentioned
+        if places_mentioned(location or "", profile.places) or places_mentioned(blob, profile.places):
+            geo_pts = 12
+        elif location and len(location.strip()) >= 8:
+            geo_pts = 0
+    # legacy path kept for empty places
+    if location and profile.places and geo_pts == 0:
+        pass
 
     evidence_bonus = 0
     if source_type == "homepage":

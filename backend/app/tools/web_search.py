@@ -406,7 +406,7 @@ class WebSearchTool:
         if not url or _should_skip(url):
             return {"text": "", "title": "", "url": url or "", "ok": False}
         try:
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=HEADERS) as client:
+            async with httpx.AsyncClient(timeout=6.0, follow_redirects=True, headers=HEADERS) as client:
                 res = await client.get(url)
                 if res.status_code != 200 or not res.text:
                     return {"text": "", "title": "", "url": str(res.url), "ok": False}

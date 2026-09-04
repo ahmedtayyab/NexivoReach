@@ -9,6 +9,7 @@ from uuid import uuid4
 from urllib.parse import urlparse
 
 from app.agents.search_planner import (
+    apply_prompt_geo,
     infer_seller_profile,
     plan_wave1,
     plan_wave2,
@@ -21,10 +22,11 @@ from app.tools.contact_finder import discover_contacts
 from app.providers.factory import get_ai_provider
 
 
-FETCH_CAP = 28
-SAVE_CAP = 30
-WAVE1_RESULT_CAP = 60
-WAVE2_RESULT_CAP = 40
+FETCH_CAP = 36
+SAVE_CAP = 35
+WAVE1_RESULT_CAP = 70
+WAVE2_RESULT_CAP = 35
+ENRICH_CAP = 8  # contact+draft only for top fits (speed)
 
 
 def _domain(url: str) -> str:
@@ -53,12 +55,12 @@ class ProspectingAgent:
         icp: Dict[str, Any],
         business: Optional[Dict[str, Any]] = None,
         exclude_websites: Optional[List[str]] = None,
-        limit: int = 30,
+        limit: int = 40,
     ) -> Dict[str, Any]:
         start_time = time.time()
         decisions_log: List[Dict[str, Any]] = []
         business = business or {}
-        profile = infer_seller_profile(products, icp, business)
+        profile = apply_prompt_geo(infer_seller_profile(products, icp, business), user_prompt)
         wave1 = plan_wave1(profile, user_prompt)
         place = profile.places[0] if profile.places else ""
         exclude_domains = {_domain(u) for u in (exclude_websites or []) if _domain(u)}
@@ -67,12 +69,17 @@ class ProspectingAgent:
             "step": 1,
             "observation": (
                 f"Seller motion={profile.sales_motion}, offer={profile.offer_class}, "
-                f"geo={profile.geo_mode}, maps={'on' if profile.use_maps else 'off'}."
+                f"geo={profile.geo_mode}, places={profile.places or ['(none)']}, "
+                f"strict_geo={profile.strict_geo}, maps={'on' if profile.use_maps else 'off'}."
             ),
             "decision": (
                 f"Wave 1: {len(wave1)} query families "
                 f"({', '.join(sorted({q.family for q in wave1}))}). "
-                "Not running synonym clones."
+                + (
+                    f"Strict location filter for {', '.join(profile.places[:2])}."
+                    if profile.strict_geo
+                    else "Not running synonym clones."
+                )
             ),
             "toolCalled": "SearchPlanner",
             "toolResultSnippet": "; ".join(q.query for q in wave1[:4]),
@@ -86,16 +93,30 @@ class ProspectingAgent:
             use_maps=profile.use_maps,
         )
         classified = [
-            classify_serp_row(row, hunting_buyers=profile.hunting_buyers, target_places=profile.places)
+            classify_serp_row(
+                row,
+                hunting_buyers=profile.hunting_buyers,
+                target_places=profile.places,
+                strict_geo=profile.strict_geo,
+            )
             for row in leads
         ]
+        # Prefer rows that explicitly mention the target geo
+        classified.sort(
+            key=lambda r: (
+                0 if r.get("reject") else 1,
+                1 if r.get("geo_mentioned") else 0,
+                1 if (r.get("source") or "") == "maps" else 0,
+            ),
+            reverse=True,
+        )
         stats = summarize_classifications(classified)
         decisions_log.append({
             "step": 2,
             "observation": (
                 f"Wave 1 returned {len(leads)} unique URLs. "
                 f"Junk {stats['junk_ratio']:.0%}, manufacturers {stats['manufacturer_ratio']:.0%}, "
-                f"relevant {stats['relevant_count']}."
+                f"wrong geo {stats['wrong_geo_ratio']:.0%}, relevant {stats['relevant_count']}."
             ),
             "decision": "Inspect SERP patterns before more searches.",
             "toolCalled": "SerpClassifier",
@@ -103,16 +124,23 @@ class ProspectingAgent:
         })
 
         wave2 = plan_wave2(profile, stats, stats.get("learned_terms"))
-        if wave2 and stats["relevant_count"] < 18:
+        # Skip wave 2 when we already have enough in-geo hits (speed)
+        need_wave2 = bool(wave2) and stats["relevant_count"] < (12 if profile.strict_geo else 18)
+        if need_wave2:
             more = await self.web_search.hunt_leads(
                 wave2,
                 target_location=place,
                 exclude_domains=exclude_domains | {_domain(r.get("website")) for r in classified if r.get("website")},
                 limit=WAVE2_RESULT_CAP,
-                use_maps=False,
+                use_maps=profile.use_maps and profile.strict_geo,
             )
             extra = [
-                classify_serp_row(row, hunting_buyers=profile.hunting_buyers, target_places=profile.places)
+                classify_serp_row(
+                    row,
+                    hunting_buyers=profile.hunting_buyers,
+                    target_places=profile.places,
+                    strict_geo=profile.strict_geo,
+                )
                 for row in more
             ]
             classified.extend(extra)
@@ -127,7 +155,7 @@ class ProspectingAgent:
             decisions_log.append({
                 "step": 3,
                 "observation": "No second wave (enough relevant hits, or nothing useful to refine).",
-                "decision": "Proceed to homepage + signal-page inspection on survivors.",
+                "decision": "Proceed to homepage inspection on survivors.",
                 "toolCalled": "AdaptiveSearch",
             })
 
@@ -167,26 +195,31 @@ class ProspectingAgent:
             }
 
         to_fetch = [c for c in candidates if (c.get("website") or "").strip()][:FETCH_CAP]
+        # Homepage-only for speed; deep about/news pages skipped during hunt
         pages = await asyncio.gather(
-            *[self.web_search.scrape_for_qualify(c["website"]) for c in to_fetch],
+            *[self.web_search.scrape_homepage(c["website"], limit=6000) for c in to_fetch],
             return_exceptions=True,
         )
         text_by_domain: Dict[str, Dict[str, Any]] = {}
         for cand, page in zip(to_fetch, pages):
             dom = _domain(cand.get("website") or "")
             if isinstance(page, dict) and page.get("ok"):
+                page = {**page}
+                page.pop("html", None)
                 text_by_domain[dom] = page
             else:
                 text_by_domain[dom] = {"text": "", "url": cand.get("website") or "", "ok": False}
 
-        deep_pages = sum(len(v.get("pages") or []) for v in text_by_domain.values() if v.get("ok"))
         decisions_log.append({
             "step": 4,
             "observation": (
                 f"{len(candidates)} candidates after exclusions; "
-                f"fetched {len(to_fetch)} sites (cap {FETCH_CAP}), {deep_pages} pages incl. signal URLs."
+                f"fetched {len(to_fetch)} homepages (cap {FETCH_CAP}, fast mode)."
             ),
-            "decision": "Qualify Fit vs Intent from homepage + about/news/careers when available. Do not invent buying signals.",
+            "decision": (
+                "Qualify Fit vs Intent from homepage text. "
+                + (f"Strict geo: must evidence {', '.join(profile.places[:2])}." if profile.strict_geo else "Do not invent buying signals.")
+            ),
             "toolCalled": "SiteFetch",
             "toolResultSnippet": f"{sum(1 for v in text_by_domain.values() if v.get('ok'))} live sites",
         })
@@ -195,7 +228,7 @@ class ProspectingAgent:
         qualified: List[Dict[str, Any]] = []
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
         save_limit = min(limit, SAVE_CAP)
-        for co in candidates[:SAVE_CAP + 12]:
+        for co in candidates[:SAVE_CAP + 16]:
             if len(qualified) >= save_limit:
                 break
             dom = _domain(co.get("website") or "")
@@ -223,9 +256,20 @@ class ProspectingAgent:
                 "source": source,
             })
 
+        # Rank before enrich so we spend contact/AI budget on best fits
+        def _q_rank(item: Dict[str, Any]) -> tuple:
+            q = item["q"]
+            intent_rank = {"high": 2, "low": 1, "none": 0}.get(q.get("intent") or "none", 0)
+            pri = {"priority": 3, "nurture": 2, "review": 1, "low": 0}.get(q.get("priority") or "", 0)
+            return (pri, intent_rank, int(q.get("fitScore") or 0))
+
+        qualified.sort(key=_q_rank, reverse=True)
+        for i, item in enumerate(qualified):
+            item["outreach_ready"] = item["outreach_ready"] and i < ENRICH_CAP
+
         seller_name = (business.get("name") or "Sales Team").strip() or "Sales Team"
         provider = get_ai_provider()
-        sem = asyncio.Semaphore(5)
+        sem = asyncio.Semaphore(8)
 
         async def _enrich(item: Dict[str, Any]) -> Dict[str, Any]:
             co = item["co"]

@@ -56,16 +56,21 @@ def _endswith_any(host: str, suffixes: tuple[str, ...]) -> bool:
     return any(host == s or host.endswith("." + s) for s in suffixes)
 
 
+from app.agents.geo import places_mentioned
+
+
 def classify_serp_row(
     row: Dict[str, Any],
     *,
     hunting_buyers: bool,
     target_places: List[str],
+    strict_geo: bool = False,
 ) -> Dict[str, Any]:
     url = (row.get("website") or "").strip()
     title = (row.get("title") or row.get("company_name") or "")
     snippet = (row.get("snippet") or "")
-    blob = f"{title} {snippet} {url}"
+    location = (row.get("location") or "")
+    blob = f"{title} {snippet} {url} {location}"
     host = _host(url)
     entity = "company"
     reject = False
@@ -99,14 +104,15 @@ def classify_serp_row(
     if any(h in path for h in ("/blog", "/wiki", "/guide")) and not reject:
         reject, entity, reason = True, "article", "Article URL"
 
-    geo_ok = _geo_mentioned(blob, target_places) if target_places else None
-    if geo_ok is False and target_places and _foreign_geo_conflict(blob, target_places):
-        reject, entity, reason = True, "wrong_geo", "Geography conflicts with ICP markets"
+    geo_ok = places_mentioned(blob, target_places) if target_places else None
+    if target_places and not reject:
+        if geo_ok is False and _foreign_geo_conflict(blob, target_places):
+            reject, entity, reason = True, "wrong_geo", "Geography conflicts with target markets"
+        elif strict_geo and geo_ok is not True and (row.get("source") or "") != "maps":
+            # Require explicit state/city evidence on SERP (Maps rows already geo-biased)
+            reject, entity, reason = True, "wrong_geo", "No evidence this company is in the requested location"
 
     competitor_seed = entity == "manufacturer" and hunting_buyers
-    keep_candidate = (not reject) or (competitor_seed and not reject)
-    if entity == "manufacturer" and hunting_buyers:
-        keep_candidate = False  # do not save manufacturers as prospects
 
     return {
         **row,
@@ -119,28 +125,9 @@ def classify_serp_row(
     }
 
 
-def _geo_mentioned(blob: str, places: List[str]) -> bool | None:
-    if not places:
-        return None
-    low = blob.lower()
-    aliases = {
-        "united states": ["usa", "u.s.", "united states", "america"],
-        "united kingdom": ["uk", "britain", "england", "united kingdom"],
-        "united arab emirates": ["uae", "dubai", "abu dhabi"],
-    }
-    for place in places:
-        p = place.lower().strip()
-        if p and p in low:
-            return True
-        for alias in aliases.get(p, []):
-            if alias in low:
-                return True
-    return False
-
-
 def _foreign_geo_conflict(blob: str, places: List[str]) -> bool:
-    """True when another country is named and none of the target markets are."""
-    if _geo_mentioned(blob, places):
+    """True when another country/state is named and none of the target markets are."""
+    if places_mentioned(blob, places):
         return False
     countries = (
         "china", "india", "pakistan", "bangladesh", "vietnam", "turkey",
@@ -152,7 +139,25 @@ def _foreign_geo_conflict(blob: str, places: List[str]) -> bool:
     for c in countries:
         if c in low and c not in targets:
             return True
+    # Other US states when hunting a specific state
+    from app.agents.geo import US_STATE_ALIASES, place_aliases
+    target_aliases = set()
+    for p in places:
+        target_aliases.update(place_aliases(p))
+    if any(a in US_STATE_ALIASES for a in target_aliases) or any(
+        p.lower() in US_STATE_ALIASES for p in places
+    ):
+        for state in US_STATE_ALIASES:
+            if state in target_aliases or state in {p.lower() for p in places}:
+                continue
+            if re.search(rf"\b{re.escape(state)}\b", low):
+                return True
     return False
+
+
+# Remove old _geo_mentioned — replaced by places_mentioned
+def _geo_mentioned(blob: str, places: List[str]) -> bool | None:
+    return places_mentioned(blob, places)
 
 
 def summarize_classifications(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
