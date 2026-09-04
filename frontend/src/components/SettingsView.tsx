@@ -9,6 +9,7 @@ import {
 } from '../data/taxonomy';
 
 import type { SettingsSection } from '../lib/navigation';
+import ConfigLattice from './brand/ConfigLattice';
 
 interface Props {
   businessInfo: BusinessInfo;
@@ -57,7 +58,7 @@ export default function SettingsView({
 
   return (
     <div className="max-w-3xl">
-      <div className="mb-7 nr-enter">
+      <div className="mb-6 nr-enter">
         <h1 className="text-[15px] font-semibold text-ink tracking-tight">
           {titles[section]}
         </h1>
@@ -66,7 +67,11 @@ export default function SettingsView({
         </p>
       </div>
 
-      <div className="flex gap-4 sm:gap-6 border-b border-border mb-6 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0 nr-enter nr-enter-delay-1">
+      <div className="mb-5 nr-enter nr-enter-delay-1">
+        <ConfigLattice active={section === 'integrations'} />
+      </div>
+
+      <div className="flex gap-4 sm:gap-6 border-b border-border mb-6 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0 nr-enter nr-enter-delay-2">
         {([
           ['company', 'Company Profile'],
           ['catalog', 'Product Catalog'],
@@ -87,7 +92,7 @@ export default function SettingsView({
         ))}
       </div>
 
-      <div key={section} className="nr-enter nr-enter-delay-2">
+      <div key={section} className="nr-enter nr-enter-delay-3">
       {section === 'company' && (
         <CompanySection
           key={businessInfo.id ?? 'company'}

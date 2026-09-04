@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { AgentRunLog } from '../types';
+import TracePulse from './brand/TracePulse';
 
 interface Props {
   agentLogs: AgentRunLog[];
@@ -11,20 +12,24 @@ export default function ActivityView({ agentLogs }: Props) {
 
   return (
     <div className="max-w-5xl">
-      <div className="mb-7 nr-enter">
+      <div className="mb-6 nr-enter">
         <h1 className="text-[15px] font-semibold text-ink tracking-tight">Activity</h1>
         <p className="text-[13px] text-ink-secondary mt-0.5">
           Tool traces, source inspections, and scoring decisions for each discovery run.
         </p>
       </div>
 
+      <div className="mb-5 max-w-2xl nr-enter nr-enter-delay-1">
+        <TracePulse active={agentLogs.length > 0} />
+      </div>
+
       {agentLogs.length === 0 ? (
-        <div className="bg-panel border border-border rounded-lg px-5 py-10 text-center nr-panel nr-enter nr-enter-delay-1">
+        <div className="bg-panel border border-border rounded-lg px-5 py-10 text-center nr-panel nr-enter nr-enter-delay-2">
           <p className="text-[13.5px] font-medium text-ink-secondary">No runs yet</p>
           <p className="text-[13px] text-ink-muted mt-1">Run a discovery scan to populate the operational log.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 nr-enter nr-enter-delay-1">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 nr-enter nr-enter-delay-2">
           <div className="lg:col-span-4 bg-panel border border-border rounded-lg p-3 space-y-1 nr-panel">
             <p className="section-label px-2 py-2">Runs ({agentLogs.length})</p>
             <div className="nr-stagger">

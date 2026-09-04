@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Prospect } from '../types';
 import { ChevronDown, ChevronUp, Mail } from 'lucide-react';
+import MailFlow from './brand/MailFlow';
 
 interface Props {
   prospects: Prospect[];
@@ -93,11 +94,14 @@ export default function OutreachInboxView({
       <div className="max-w-2xl w-full">
         <div className="nr-enter">
           <h1 className="text-[15px] font-semibold text-ink tracking-tight">Outreach</h1>
-          <p className="text-[13px] text-ink-secondary mt-1 mb-6">
+          <p className="text-[13px] text-ink-secondary mt-1 mb-5">
             Review personalized drafts, then open your mail client to send. No auto-send.
           </p>
         </div>
-        <div className="bg-panel border border-border rounded-lg px-5 py-10 text-center nr-panel nr-enter nr-enter-delay-1">
+        <div className="mb-5 nr-enter nr-enter-delay-1">
+          <MailFlow active={false} />
+        </div>
+        <div className="bg-panel border border-border rounded-lg px-5 py-10 text-center nr-panel nr-enter nr-enter-delay-2">
           <Mail className="w-8 h-8 text-ink-muted mx-auto mb-3 nr-pop" strokeWidth={1.5} />
           <p className="text-[13.5px] font-medium text-ink-secondary">No drafts yet</p>
           <p className="text-[13px] text-ink-muted mt-1">
@@ -141,12 +145,16 @@ export default function OutreachInboxView({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-4 nr-enter nr-enter-delay-1">
+      <div className="mb-5 nr-enter nr-enter-delay-1">
+        <MailFlow active={needsReview > 0} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-4 nr-enter nr-enter-delay-2">
         <div className="bg-panel border border-border rounded-lg overflow-hidden max-h-[70vh] overflow-y-auto nr-panel">
           {filtered.length === 0 ? (
             <p className="p-4 text-[13px] text-ink-muted">Nothing in this filter.</p>
           ) : (
-            <div className="nr-stagger">
+            <div key={filter} className="nr-stagger">
             {filtered.map((p, i) => {
               const active = i === index;
               const st = p.outreachDraft?.status || 'Draft';

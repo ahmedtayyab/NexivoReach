@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
+import LeadPipeline from './brand/LeadPipeline';
 
 const EMPTY_QUEUE_IMG = '/brand/empty-queue.jpg';
 
@@ -62,6 +63,7 @@ export default function QueueView({
     if (filter === 'All') return true;
     return normalizeStage(p.stage) === filter;
   });
+  const pipelineLive = (counts['To contact'] || 0) + (counts['Re-contact'] || 0) > 0;
 
   return (
     <div className="max-w-3xl w-full">
@@ -85,7 +87,11 @@ export default function QueueView({
         )}
       </div>
 
-      <div className="flex flex-nowrap sm:flex-wrap gap-1.5 mb-4 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-none nr-enter nr-enter-delay-1">
+      <div className="mb-5 nr-enter nr-enter-delay-1">
+        <LeadPipeline active={pipelineLive} />
+      </div>
+
+      <div className="flex flex-nowrap sm:flex-wrap gap-1.5 mb-4 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-none nr-enter nr-enter-delay-2">
         <FilterChip label="All" count={prospects.length} active={filter === 'All'} onClick={() => setFilter('All')} />
         {LEAD_STAGES.map(s => (
           <FilterChip
@@ -99,7 +105,7 @@ export default function QueueView({
       </div>
 
       {visible.length === 0 ? (
-        <div className="bg-panel border border-border rounded-lg px-5 py-8 sm:py-10 text-center nr-panel nr-enter nr-enter-delay-2">
+        <div className="bg-panel border border-border rounded-lg px-5 py-8 sm:py-10 text-center nr-panel nr-enter nr-enter-delay-3">
           <img
             src={EMPTY_QUEUE_IMG}
             alt="Empty leads queue"
@@ -112,7 +118,7 @@ export default function QueueView({
         </div>
       ) : (
         <>
-          <div className="md:hidden space-y-2 nr-stagger">
+          <div key={`m-${filter}`} className="md:hidden space-y-2 nr-stagger">
             {visible.map(prospect => (
               <div key={prospect.id} className="bg-panel border border-border rounded-lg p-3.5 nr-panel">
                 <button type="button" className="text-left w-full min-w-0" onClick={() => onReviewProspect(prospect.id)}>
@@ -143,7 +149,7 @@ export default function QueueView({
             ))}
           </div>
 
-          <div className="hidden md:block bg-panel border border-border rounded-lg overflow-hidden nr-panel nr-enter nr-enter-delay-2">
+          <div className="hidden md:block bg-panel border border-border rounded-lg overflow-hidden nr-panel nr-enter nr-enter-delay-3">
             <div className="grid grid-cols-[1fr_90px_72px_56px_140px] items-center px-4 py-2 border-b border-border-subtle bg-muted">
               <span className="section-label">Lead</span>
               <span className="section-label">Source</span>
@@ -151,7 +157,7 @@ export default function QueueView({
               <span className="section-label text-right">Fit</span>
               <span className="section-label text-right">Status</span>
             </div>
-            <div className="divide-y divide-border-subtle nr-stagger">
+            <div key={`d-${filter}`} className="divide-y divide-border-subtle nr-stagger">
               {visible.map(prospect => (
                 <div
                   key={prospect.id}
