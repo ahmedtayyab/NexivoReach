@@ -291,84 +291,94 @@ class ProspectingAgent:
         qualified.sort(key=_q_rank, reverse=True)
         for i, item in enumerate(qualified):
             item["want_draft"] = item["outreach_ready"] and i < ENRICH_CAP
-            # Emails are automatic for every lead we persist (not a manual step)
-            item["want_contacts"] = True
 
         seller_name = (business.get("name") or "Sales Team").strip() or "Sales Team"
         provider = get_ai_provider()
-        sem = asyncio.Semaphore(8)
+        contact_sem = asyncio.Semaphore(10)
+        draft_sem = asyncio.Semaphore(6)
 
-        async def _enrich(item: Dict[str, Any]) -> Dict[str, Any]:
+        async def _fill_contacts(item: Dict[str, Any]) -> None:
+            """Always run during Discover — user should never need a manual Find email click."""
             co = item["co"]
-            q = item["q"]
             page = item["page"]
-            site_text = item["site_text"]
-            source = item["source"]
+            site_text = item.get("site_text") or ""
+            website = (co.get("website") or "").strip()
             phone = co.get("phone") or ""
             seed_emails = list(page.get("emails") or co.get("_seed_emails") or [])
             if page.get("phones") and not phone:
                 phone = (page.get("phones") or [""])[0] or phone
+
             contacts: List[Dict[str, Any]] = []
             email = ""
-            outreach_draft = None
-            timeline = [
-                {"time": time.strftime("%H:%M"), "action": f"Discovered via {source} ({co.get('discovery_pool') or 'search'})"},
-                {"time": time.strftime("%H:%M"), "action": f"Fit {q['fitSummary']} · Intent {q['intent']} · {q['priority']}"},
-            ]
-            contact_hit = False
-            draft_hit = False
-            website = (co.get("website") or "").strip()
-
-            # Prefer homepage mailto seeds immediately (may be overridden by /contact)
             if seed_emails:
                 cheap = contacts_from_text(
-                    site_text,
-                    website=website,
-                    seed_phone=phone,
-                    seed_emails=seed_emails,
+                    site_text, website=website, seed_phone=phone, seed_emails=seed_emails,
                 )
                 contacts = cheap.get("contacts") or []
                 email = cheap.get("email") or ""
                 phone = cheap.get("phone") or phone
 
-            # Always crawl contact pages — homepage footer emails are often wrong
-            homepage_html = (page.get("html") or "")[:250000]
-            if item.get("want_contacts") and website:
-                async with sem:
+            if website:
+                async with contact_sem:
                     try:
                         found = await discover_contacts(
                             website=website,
-                            homepage_html=homepage_html,
+                            homepage_html=(page.get("html") or "")[:200000],
                             homepage_text=site_text,
                             homepage_url=page.get("url") or website,
                             seed_phone=phone,
                             seed_emails=seed_emails,
                         )
-                        contact_hit = True
                         contacts = found.get("contacts") or contacts
-                        # Prefer discover result (contact-page ranked) over seed-only
                         if found.get("email"):
                             email = found["email"]
                         phone = found.get("phone") or phone
-                        if email:
-                            timeline.append({"time": time.strftime("%H:%M"), "action": f"Found contact email {email}"})
-                        elif contacts:
-                            timeline.append({"time": time.strftime("%H:%M"), "action": f"Found {len(contacts)} public contact channel(s)"})
-                        else:
-                            timeline.append({"time": time.strftime("%H:%M"), "action": "No public email found on site yet"})
                     except Exception:
-                        timeline.append({"time": time.strftime("%H:%M"), "action": "Contact discovery failed — kept lead without email"})
-                        if email:
-                            contact_hit = True
-            elif email:
-                contact_hit = True
-                timeline.append({"time": time.strftime("%H:%M"), "action": f"Found contact email {email}"})
+                        pass
 
-            # Drop heavy HTML before returning the prospect payload
             page.pop("html", None)
+            if email and not any(
+                (c.get("type") == "email" and (c.get("value") or "").lower() == email.lower())
+                for c in contacts
+            ):
+                contacts = [{
+                    "type": "email", "value": email, "label": "Email",
+                    "source": "site", "role": "general",
+                }, *contacts]
+            item["email"] = email
+            item["phone"] = phone
+            item["contacts"] = contacts
+            item["_contact_hit"] = bool(email or contacts)
+
+        # Phase 1 — emails for every lead (before drafts, so nothing is skipped)
+        if qualified:
+            await asyncio.gather(*[_fill_contacts(item) for item in qualified])
+
+        async def _enrich(item: Dict[str, Any]) -> Dict[str, Any]:
+            co = item["co"]
+            q = item["q"]
+            source = item["source"]
+            email = item.get("email") or ""
+            phone = item.get("phone") or co.get("phone") or ""
+            contacts = list(item.get("contacts") or [])
+            outreach_draft = None
+            timeline = [
+                {"time": time.strftime("%H:%M"), "action": f"Discovered via {source} ({co.get('discovery_pool') or 'search'})"},
+                {"time": time.strftime("%H:%M"), "action": f"Fit {q['fitSummary']} · Intent {q['intent']} · {q['priority']}"},
+            ]
+            contact_hit = bool(item.get("_contact_hit"))
+            draft_hit = False
+            website = (co.get("website") or "").strip()
+
+            if email:
+                timeline.append({"time": time.strftime("%H:%M"), "action": f"Found contact email {email}"})
+            elif contact_hit:
+                timeline.append({"time": time.strftime("%H:%M"), "action": f"Found {len(contacts)} public contact channel(s)"})
+            else:
+                timeline.append({"time": time.strftime("%H:%M"), "action": "No public email on site (contact page checked)"})
 
             if item.get("want_draft") and website:
-                async with sem:
+                async with draft_sem:
                     try:
                         draft = await provider.generate_personalized_outreach(
                             company_name=co.get("company_name") or "there",
@@ -393,19 +403,6 @@ class ProspectingAgent:
                         })
                     except Exception:
                         timeline.append({"time": time.strftime("%H:%M"), "action": "Outreach draft skipped"})
-
-            # Ensure primary email always appears in the contacts list
-            if email and not any(
-                (c.get("type") == "email" and (c.get("value") or "").lower() == email.lower())
-                for c in contacts
-            ):
-                contacts = [{
-                    "type": "email",
-                    "value": email,
-                    "label": "Email",
-                    "source": "site",
-                    "role": "general",
-                }, *contacts]
 
             return {
                 "id": f"prospect-{uuid4().hex[:10]}",
@@ -485,7 +482,7 @@ class ProspectingAgent:
                     f"Contact crawl on {contact_runs} leads; {draft_runs} outreach drafts."
                 ),
                 "decision": (
-                    f"Emails scraped from mailto/HTML + /contact pages (cap {CONTACT_CAP}). "
+                    "Emails scraped automatically for every saved lead (homepage + contact pages). "
                     f"AI drafts for top {ENRICH_CAP}. Human reviews before send."
                 ),
                 "toolCalled": "LeadPipeline",

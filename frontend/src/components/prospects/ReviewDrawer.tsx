@@ -15,7 +15,6 @@ interface Props {
   ) => void;
   onPrepareOutreach?: (id: string) => void;
   onPrepareFollowUp?: (id: string) => void;
-  onRefreshContacts?: (id: string) => void;
   gmailConnected?: boolean;
 }
 
@@ -29,14 +28,12 @@ export default function ReviewDrawer({
   onSendViaEmail,
   onPrepareOutreach,
   onPrepareFollowUp,
-  onRefreshContacts,
   gmailConnected = false,
 }: Props) {
   const [editingDraft, setEditingDraft] = useState(false);
   const [draftBody, setDraftBody] = useState('');
   const [draftSubject, setDraftSubject] = useState('');
   const [replyNote, setReplyNote] = useState('');
-  const [findingEmail, setFindingEmail] = useState(false);
 
   if (!prospect) return null;
 
@@ -193,28 +190,9 @@ export default function ReviewDrawer({
               }
               if (!emails.length && !phones.length && !pages.length) {
                 return (
-                  <div className="space-y-2">
-                    <p className="text-[13px] text-ink-muted">
-                      No public email yet — Discover looks this up automatically. Refresh the leads list in a moment, or retry below.
-                    </p>
-                    {onRefreshContacts && (
-                      <button
-                        type="button"
-                        disabled={findingEmail}
-                        onClick={async () => {
-                          setFindingEmail(true);
-                          try {
-                            await onRefreshContacts(prospect.id);
-                          } finally {
-                            setFindingEmail(false);
-                          }
-                        }}
-                        className="text-[12px] text-accent hover:underline disabled:opacity-40"
-                      >
-                        {findingEmail ? 'Searching site…' : 'Retry email search'}
-                      </button>
-                    )}
-                  </div>
+                  <p className="text-[13px] text-ink-muted">
+                    No public email on this company&apos;s site (homepage and contact pages were checked automatically).
+                  </p>
                 );
               }
               return (
@@ -243,23 +221,6 @@ export default function ReviewDrawer({
                       <ExternalLink className="w-3 h-3" strokeWidth={1.5} />
                     </a>
                   ))}
-                  {onRefreshContacts && (
-                    <button
-                      type="button"
-                      disabled={findingEmail}
-                      onClick={async () => {
-                        setFindingEmail(true);
-                        try {
-                          await onRefreshContacts(prospect.id);
-                        } finally {
-                          setFindingEmail(false);
-                        }
-                      }}
-                      className="text-[12px] text-ink-muted hover:text-accent hover:underline disabled:opacity-40"
-                    >
-                      {findingEmail ? 'Searching site…' : 'Retry email search'}
-                    </button>
-                  )}
                 </div>
               );
             })()}
