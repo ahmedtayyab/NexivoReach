@@ -2,7 +2,7 @@ import { Plus, LogOut, ChevronDown, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { AuthUser, BusinessInfo } from '../../types';
 import type { AppRoute } from '../../lib/navigation';
-import { Search, Settings, Database, LayoutList, Activity } from 'lucide-react';
+import { Search, Settings, Database, LayoutList, Activity, Mail } from 'lucide-react';
 import BrandLockup from '../brand/BrandLockup';
 
 interface Props {
@@ -10,6 +10,7 @@ interface Props {
   activeRoute: AppRoute;
   onTabChange: (tab: string) => void;
   pendingCount: number;
+  draftCount?: number;
   companies: BusinessInfo[];
   activeCompanyId?: string | null;
   onSwitchCompany: (id: string) => void;
@@ -25,6 +26,7 @@ export default function Sidebar({
   activeRoute,
   onTabChange,
   pendingCount,
+  draftCount = 0,
   companies,
   activeCompanyId,
   onSwitchCompany,
@@ -59,6 +61,7 @@ export default function Sidebar({
   const primary = [
     { id: 'queue', label: 'Leads', icon: LayoutList },
     { id: 'discover', label: 'Discover', icon: Search },
+    { id: 'outreach', label: 'Outreach', icon: Mail },
     { id: 'catalog', label: 'Catalog', icon: Database },
   ];
 
@@ -173,11 +176,16 @@ export default function Sidebar({
                   />
                   <span>{itemLabel}</span>
                 </div>
-                {id === 'queue' && pendingCount > 0 && (
-                  <span className={`text-[11.5px] tabular-nums font-medium ${isActive ? 'text-ink-secondary' : 'text-ink-muted'}`}>
-                    {pendingCount}
-                  </span>
-                )}
+              {id === 'queue' && pendingCount > 0 && (
+                <span className={`text-[11.5px] tabular-nums font-medium ${isActive ? 'text-ink-secondary' : 'text-ink-muted'}`}>
+                  {pendingCount}
+                </span>
+              )}
+              {id === 'outreach' && draftCount > 0 && (
+                <span className={`text-[11.5px] tabular-nums font-medium ${isActive ? 'text-ink-secondary' : 'text-ink-muted'}`}>
+                  {draftCount}
+                </span>
+              )}
               </button>
             );
           })}

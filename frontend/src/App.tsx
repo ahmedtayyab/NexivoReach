@@ -24,6 +24,7 @@ import MobileNav from './components/layout/MobileNav';
 import QueueView from './components/QueueView';
 import DiscoverView from './components/DiscoverView';
 import SettingsView from './components/SettingsView';
+import OutreachInboxView from './components/OutreachInboxView';
 import ReviewDrawer from './components/prospects/ReviewDrawer';
 import ActivityView from './components/ActivityView';
 import LoginView from './components/LoginView';
@@ -51,6 +52,10 @@ export default function App() {
 
   const pendingCount = prospects.filter(
     p => !p.outreachDraft || p.outreachDraft.status === 'Draft'
+  ).length;
+
+  const draftCount = prospects.filter(
+    p => p.outreachDraft && (p.outreachDraft.status === 'Draft' || p.outreachDraft.status === 'Approved')
   ).length;
 
   const navigate = (route: AppRoute, replace = false) => {
@@ -175,6 +180,7 @@ export default function App() {
     const valid =
       activeRoute === 'queue' ||
       activeRoute === 'discover' ||
+      activeRoute === 'outreach' ||
       activeRoute === 'activity' ||
       isSettingsRoute(activeRoute);
     if (!valid) {
@@ -279,6 +285,35 @@ export default function App() {
         return updated;
       })
     );
+  };
+
+  const handleSendViaEmail = (prospectId: string) => {
+    setProspects(prev => {
+      const next = prev.map(p => {
+        if (p.id !== prospectId || !p.outreachDraft) return p;
+        const draft = p.outreachDraft;
+        const to = draft.toEmail || p.email || '';
+        const params = new URLSearchParams();
+        if (draft.subject) params.set('subject', draft.subject);
+        if (draft.body) params.set('body', draft.body);
+        const href = to
+          ? `mailto:${encodeURIComponent(to)}?${params.toString()}`
+          : `mailto:?${params.toString()}`;
+        window.open(href, '_blank');
+        const updated = {
+          ...p,
+          stage: 'Contacted' as Prospect['stage'],
+          outreachDraft: { ...draft, status: 'Sent' as const },
+        };
+        void persistProspect(updated);
+        return updated;
+      });
+      return next;
+    });
+  };
+
+  const handleSkipOutreach = (_prospectId: string) => {
+    // Inbox advances selection; draft stays for later.
   };
 
   const handleSaveReply = (prospectId: string, summary: string, contactAgain: boolean) => {
@@ -443,6 +478,7 @@ export default function App() {
         activeRoute={activeRoute}
         onTabChange={handleSidebarChange}
         pendingCount={pendingCount}
+        draftCount={draftCount}
         companies={companies.length ? companies : [businessInfo]}
         activeCompanyId={activeCompanyId || businessInfo.id}
         onSwitchCompany={handleSwitchCompany}
@@ -472,6 +508,14 @@ export default function App() {
             onAddLog={handleAddLog}
           />
         )}
+        {activeRoute === 'outreach' && (
+          <OutreachInboxView
+            prospects={prospects}
+            onSendViaEmail={handleSendViaEmail}
+            onSaveDraft={handleSaveDraft}
+            onSkip={handleSkipOutreach}
+          />
+        )}
         {isSettingsRoute(activeRoute) && (
           <SettingsView
             section={activeRoute}
@@ -493,6 +537,7 @@ export default function App() {
         activeRoute={activeRoute}
         onTabChange={handleSidebarChange}
         pendingCount={pendingCount}
+        draftCount={draftCount}
       />
 
       <ReviewDrawer

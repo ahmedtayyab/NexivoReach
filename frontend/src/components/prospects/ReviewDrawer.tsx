@@ -28,7 +28,6 @@ export default function ReviewDrawer({
 
   const draft = prospect.outreachDraft;
   const alreadySent = draft?.status === 'Sent' || draft?.status === 'Replied';
-  const alreadyApproved = draft?.status === 'Approved';
   const breakdown = prospect.fitBreakdown;
   const scoreClass =
     prospect.fitScore >= 90 ? 'score-high'
@@ -64,15 +63,7 @@ export default function ReviewDrawer({
           </button>
 
           <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
-            {!alreadySent && !alreadyApproved && draft && (
-              <button
-                onClick={() => onUpdateStatus(prospect.id, 'Approved')}
-                className="px-2.5 sm:px-3.5 py-1.5 bg-accent hover:bg-accent-hover text-white text-[12px] sm:text-[13px] font-medium rounded-md transition-colors"
-              >
-                Approve
-              </button>
-            )}
-            {alreadyApproved && !alreadySent && (
+            {!alreadySent && draft && (
               <button
                 onClick={() => {
                   openMailto();
@@ -80,7 +71,7 @@ export default function ReviewDrawer({
                 }}
                 className="px-2.5 sm:px-3.5 py-1.5 bg-accent hover:bg-accent-hover text-white text-[12px] sm:text-[13px] font-medium rounded-md transition-colors"
               >
-                Send email
+                Approve &amp; open email
               </button>
             )}
             {alreadySent && (

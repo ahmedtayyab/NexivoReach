@@ -180,8 +180,8 @@ async def discover_contacts(
         for path in ("/contact", "/contact-us", "/about", "/about-us"):
             found_urls.append(urljoin(base.rstrip("/") + "/", path.lstrip("/")))
 
-    # Follow up to 2 contact/about pages
-    extra = found_urls[:2]
+    # Follow contact/about pages only when homepage text lacked an email
+    extra = [] if emails else found_urls[:2]
     if extra:
         try:
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=HEADERS) as client:

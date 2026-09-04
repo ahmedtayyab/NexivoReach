@@ -1,10 +1,11 @@
-export type AppRoute = 'queue' | 'discover' | 'catalog' | 'company' | 'icp' | 'activity' | 'integrations';
+export type AppRoute = 'queue' | 'discover' | 'outreach' | 'catalog' | 'company' | 'icp' | 'activity' | 'integrations';
 
 export type SettingsSection = 'company' | 'catalog' | 'icp' | 'integrations';
 
 export const APP_ROUTES: AppRoute[] = [
   'queue',
   'discover',
+  'outreach',
   'catalog',
   'company',
   'icp',
