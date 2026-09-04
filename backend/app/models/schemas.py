@@ -63,6 +63,11 @@ class ProspectRecord(SQLModel, table=True):
     source: Optional[str] = None
     phone: Optional[str] = None
     why_now: Optional[str] = None
+    email: Optional[str] = None
+    contacts: List[dict] = Field(default=[], sa_type=JSON)
+    contact_again: bool = True
+    last_reply_at: Optional[str] = None
+    reply_summary: Optional[str] = None
 
 
 class AgentRunRecord(SQLModel, table=True):

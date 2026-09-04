@@ -17,6 +17,8 @@ from app.agents.search_planner import (
 from app.agents.serp_classifier import classify_serp_row, summarize_classifications
 from app.agents.qualify import qualify_account
 from app.tools.web_search import WebSearchTool
+from app.tools.contact_finder import discover_contacts
+from app.providers.factory import get_ai_provider
 
 
 FETCH_CAP = 12
@@ -186,6 +188,8 @@ class ProspectingAgent:
 
         prospects: List[Dict[str, Any]] = []
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        contact_runs = 0
+        draft_runs = 0
         for co in candidates[:SAVE_CAP + 8]:
             dom = _domain(co.get("website") or "")
             page = text_by_domain.get(dom) or {}
@@ -201,6 +205,82 @@ class ProspectingAgent:
                 continue
             source = co.get("source") or "web"
             location = (co.get("location") or "").strip()
+            fit_summary = (q.get("fitSummary") or "").lower()
+            priority = (q.get("priority") or "").lower()
+            outreach_ready = fit_summary == "high" or priority in ("priority", "nurture")
+
+            contacts: List[Dict[str, Any]] = []
+            email = ""
+            phone = co.get("phone") or ""
+            outreach_draft = None
+            timeline = [
+                {"time": time.strftime("%H:%M"), "action": f"Discovered via {source} ({co.get('discovery_pool') or 'search'})"},
+                {"time": time.strftime("%H:%M"), "action": f"Fit {q['fitSummary']} · Intent {q['intent']} · {q['priority']}"},
+            ]
+
+            if outreach_ready and (co.get("website") or "").strip():
+                try:
+                    found = await discover_contacts(
+                        website=co.get("website") or "",
+                        homepage_text=site_text,
+                        homepage_url=page.get("url") or co.get("website") or "",
+                        seed_phone=phone,
+                    )
+                    contact_runs += 1
+                    contacts = found.get("contacts") or []
+                    email = found.get("email") or ""
+                    phone = found.get("phone") or phone
+                    if email:
+                        timeline.append({
+                            "time": time.strftime("%H:%M"),
+                            "action": f"Found contact email {email}",
+                        })
+                    elif contacts:
+                        timeline.append({
+                            "time": time.strftime("%H:%M"),
+                            "action": f"Found {len(contacts)} public contact channel(s)",
+                        })
+                    else:
+                        timeline.append({
+                            "time": time.strftime("%H:%M"),
+                            "action": "No public email found on site yet",
+                        })
+                except Exception:
+                    timeline.append({
+                        "time": time.strftime("%H:%M"),
+                        "action": "Contact discovery failed — kept lead without email",
+                    })
+
+                try:
+                    provider = get_ai_provider()
+                    seller_name = (business.get("name") or "Sales Team").strip() or "Sales Team"
+                    draft = await provider.generate_personalized_outreach(
+                        company_name=co.get("company_name") or "there",
+                        why_prospect=q.get("whyThisProspect") or "",
+                        signals=q.get("buyingSignals") or [],
+                        matched_products=q.get("productFit") or [],
+                        seller_name=seller_name,
+                    )
+                    draft_runs += 1
+                    outreach_draft = {
+                        "id": f"draft-{uuid4().hex[:8]}",
+                        "subject": draft.get("subject") or f"Introduction — {seller_name}",
+                        "body": draft.get("body") or "",
+                        "personalizedReason": draft.get("personalizedReason") or "",
+                        "status": "Draft",
+                        "createdAt": now,
+                        "toEmail": email or "",
+                    }
+                    timeline.append({
+                        "time": time.strftime("%H:%M"),
+                        "action": "Drafted personalized outreach (awaiting human approval)",
+                    })
+                except Exception:
+                    timeline.append({
+                        "time": time.strftime("%H:%M"),
+                        "action": "Outreach draft skipped",
+                    })
+
             prospects.append({
                 "id": f"prospect-{uuid4().hex[:10]}",
                 "companyName": co.get("company_name") or "Unknown",
@@ -208,7 +288,12 @@ class ProspectingAgent:
                 "location": location,
                 "industry": (q.get("industry") or "")[:80],
                 "companySize": "",
-                "phone": co.get("phone") or "",
+                "phone": phone,
+                "email": email,
+                "contacts": contacts,
+                "contactAgain": True,
+                "lastReplyAt": "",
+                "replySummary": "",
                 "source": source,
                 "fitScore": q["fitScore"],
                 "fitBreakdown": q["fitBreakdown"],
@@ -226,13 +311,10 @@ class ProspectingAgent:
                 "buyingSignals": q["buyingSignals"],
                 "productFit": q["productFit"],
                 "recommendedApproach": q["recommendedApproach"],
-                "outreachDraft": None,
+                "outreachDraft": outreach_draft,
                 "stage": "To contact",
                 "discoveredAt": now,
-                "agentTimeline": [
-                    {"time": time.strftime("%H:%M"), "action": f"Discovered via {source} ({co.get('discovery_pool') or 'search'})"},
-                    {"time": time.strftime("%H:%M"), "action": f"Fit {q['fitSummary']} · Intent {q['intent']} · {q['priority']}"},
-                ],
+                "agentTimeline": timeline,
             })
             if len(prospects) >= min(limit, SAVE_CAP):
                 break
@@ -245,21 +327,33 @@ class ProspectingAgent:
         prospects.sort(key=_rank, reverse=True)
 
         duration_ms = int((time.time() - start_time) * 1000)
+        tools = ["SearchPlanner", "WebSearchTool", "SerpClassifier", "HomepageFetch", "QualifyAccount"]
+        if contact_runs:
+            tools.append("ContactFinder")
+        if draft_runs:
+            tools.append("OutreachDraft")
         agent_log = {
             "id": f"run-{int(time.time())}",
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "task": user_prompt or f"Find buyers ({profile.sales_motion})",
             "durationMs": duration_ms,
-            "toolsUsed": ["SearchPlanner", "WebSearchTool", "SerpClassifier", "HomepageFetch", "QualifyAccount"],
+            "toolsUsed": tools,
             "sourcesCount": len(leads),
             "status": "Completed" if prospects else "CompletedWithNoCandidates",
             "sellerProfile": profile_to_dict(profile),
             "decisions": decisions_log + [{
                 "step": 5,
-                "observation": f"Persisting {len(prospects)} qualified accounts (Fit not Low). Intent is scored separately.",
-                "decision": "Skip contact discovery until a lead is outreach-ready. Do not fabricate why-now.",
+                "observation": (
+                    f"Persisting {len(prospects)} qualified accounts. "
+                    f"Contact discovery on {contact_runs} high-fit leads; "
+                    f"{draft_runs} outreach drafts."
+                ),
+                "decision": (
+                    "High-fit leads get public contacts + personalized draft. "
+                    "Sending still requires human approval. Replies update stage / contact-again."
+                ),
                 "toolCalled": "LeadPipeline",
-                "toolResultSnippet": f"{len(prospects)} To contact",
+                "toolResultSnippet": f"{len(prospects)} To contact · {draft_runs} drafts",
             }],
         }
         return {"prospects": prospects, "agent_log": agent_log, "prospect": prospects[0] if prospects else None}

@@ -235,9 +235,14 @@ export default function App() {
     setProspects(prev =>
       prev.map(p => {
         if (p.id !== prospectId || !p.outreachDraft) return p;
+        const stage =
+          status === 'Approved' ? 'To contact'
+          : status === 'Sent' ? 'Contacted'
+          : status === 'Replied' ? 'Replied'
+          : p.stage;
         const updated = {
           ...p,
-          stage: status === 'Approved' ? 'Qualified' : status === 'Sent' ? 'Contacted' : p.stage,
+          stage: stage as Prospect['stage'],
           outreachDraft: { ...p.outreachDraft, status },
         };
         void persistProspect(updated);
@@ -253,6 +258,51 @@ export default function App() {
         const updated = {
           ...p,
           outreachDraft: { ...p.outreachDraft, subject, body },
+        };
+        void persistProspect(updated);
+        return updated;
+      })
+    );
+  };
+
+  const handleUpdateContactAgain = (prospectId: string, contactAgain: boolean) => {
+    setProspects(prev =>
+      prev.map(p => {
+        if (p.id !== prospectId) return p;
+        const stage = !contactAgain && (p.stage === 'To contact' || p.stage === 'Re-contact')
+          ? 'Avoid'
+          : contactAgain && p.stage === 'Avoid'
+            ? 'Re-contact'
+            : p.stage;
+        const updated = { ...p, contactAgain, stage: stage as Prospect['stage'] };
+        void persistProspect(updated);
+        return updated;
+      })
+    );
+  };
+
+  const handleSaveReply = (prospectId: string, summary: string, contactAgain: boolean) => {
+    const now = new Date().toISOString();
+    setProspects(prev =>
+      prev.map(p => {
+        if (p.id !== prospectId) return p;
+        const updated: Prospect = {
+          ...p,
+          replySummary: summary,
+          lastReplyAt: now,
+          contactAgain,
+          stage: contactAgain ? 'Re-contact' : 'Denied',
+          outreachDraft: p.outreachDraft
+            ? { ...p.outreachDraft, status: 'Replied' }
+            : p.outreachDraft,
+          agentTimeline: [
+            ...(p.agentTimeline || []),
+            {
+              time: now.slice(11, 16),
+              action: contactAgain ? 'Reply logged — re-contact' : 'Reply logged — do not contact',
+              details: summary.slice(0, 200),
+            },
+          ],
         };
         void persistProspect(updated);
         return updated;
@@ -450,6 +500,8 @@ export default function App() {
         onClose={() => setSelectedProspectId(null)}
         onUpdateStatus={handleUpdateStatus}
         onSaveDraft={handleSaveDraft}
+        onUpdateContactAgain={handleUpdateContactAgain}
+        onSaveReply={handleSaveReply}
       />
     </div>
   );

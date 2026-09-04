@@ -20,9 +20,28 @@ def init_db():
     if _backend == "sqlite":
         _migrate_sqlite_user_table()
     SQLModel.metadata.create_all(engine)
+    _ensure_prospect_contact_columns()
     if _backend == "sqlite":
         _ensure_sqlite_columns()
         _migrate_multi_company()
+
+
+def _ensure_prospect_contact_columns():
+    """Add outreach/contact columns on existing DBs (SQLite + Postgres)."""
+    additions = [
+        ("prospectrecord", "email", "VARCHAR"),
+        ("prospectrecord", "contacts", "JSON" if _backend == "postgres" else "TEXT"),
+        ("prospectrecord", "contact_again", "BOOLEAN"),
+        ("prospectrecord", "last_reply_at", "VARCHAR"),
+        ("prospectrecord", "reply_summary", "VARCHAR"),
+    ]
+    with engine.connect() as conn:
+        for table, column, coltype in additions:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
 
 
 def _migrate_sqlite_user_table():

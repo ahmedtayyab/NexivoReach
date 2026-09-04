@@ -104,6 +104,17 @@ export interface Prospect {
   recommendedApproach: string;
   source?: string;
   phone?: string;
+  email?: string;
+  contacts?: {
+    type: 'email' | 'phone' | 'url' | string;
+    value: string;
+    label?: string;
+    source?: string;
+    role?: string;
+  }[];
+  contactAgain?: boolean;
+  lastReplyAt?: string;
+  replySummary?: string;
   outreachDraft?: {
     id: string;
     subject: string;
@@ -111,6 +122,7 @@ export interface Prospect {
     personalizedReason: string;
     status: 'Draft' | 'Approved' | 'Sent' | 'Replied';
     createdAt: string;
+    toEmail?: string;
   };
   stage:
     | 'To contact'

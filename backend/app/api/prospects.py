@@ -70,6 +70,12 @@ def save_prospect(payload: Dict[str, Any], request: Request, user: AuthUser = De
             existing.source = data.get("source") or existing.source
             existing.phone = data.get("phone") or existing.phone
             existing.why_now = data.get("why_now") or existing.why_now
+            existing.email = data.get("email") if data.get("email") is not None else existing.email
+            existing.contacts = data.get("contacts") if data.get("contacts") is not None else existing.contacts
+            if "contact_again" in data:
+                existing.contact_again = bool(data.get("contact_again"))
+            existing.last_reply_at = data.get("last_reply_at") or existing.last_reply_at
+            existing.reply_summary = data.get("reply_summary") or existing.reply_summary
             session.add(existing)
             session.commit()
             session.refresh(existing)
@@ -98,6 +104,11 @@ def save_prospect(payload: Dict[str, Any], request: Request, user: AuthUser = De
             source=data.get("source") or "",
             phone=data.get("phone") or "",
             why_now=data.get("why_now") or "",
+            email=data.get("email") or "",
+            contacts=data.get("contacts") or [],
+            contact_again=bool(data.get("contact_again", True)),
+            last_reply_at=data.get("last_reply_at") or "",
+            reply_summary=data.get("reply_summary") or "",
         )
         session.add(record)
         session.commit()
@@ -130,6 +141,9 @@ def _maybe_sync_prospect(record: ProspectRecord):
             "discovered_at": record.discovered_at,
             "source": record.source,
             "phone": record.phone,
+            "email": getattr(record, "email", None) or "",
+            "contact_again": bool(getattr(record, "contact_again", True)),
+            "reply_summary": getattr(record, "reply_summary", None) or "",
             "seller_name": seller,
         }])
     except Exception as exc:

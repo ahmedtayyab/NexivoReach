@@ -47,9 +47,9 @@ PRODUCT_HEADERS = [
 ]
 
 LEAD_HEADERS = [
-    "Seller Company", "Lead Name", "Website", "Phone", "Location",
-    "Industry", "Source", "Status", "Next action", "Fit Score", "Intent",
-    "Why this", "Why now", "Discovered", "Last Updated",
+    "Seller Company", "Lead Name", "Website", "Email", "Phone", "Location",
+    "Industry", "Source", "Status", "Contact again", "Next action", "Fit Score", "Intent",
+    "Why this", "Why now", "Reply note", "Discovered", "Last Updated",
 ]
 
 TIMELINE_HEADERS = [
@@ -327,20 +327,26 @@ def sync_leads(seller_name: str, prospects: list[dict]) -> dict:
             "Meeting": "Prepare meeting",
             "Won": "Onboard",
         }.get(stage, "Review")
+        contact_again = p.get("contact_again")
+        if contact_again is None:
+            contact_again = p.get("contactAgain", True)
         row_data = [
             seller,
             name,
             website,
+            p.get("email") or "",
             p.get("phone") or "",
             p.get("location") or "",
             p.get("industry") or "",
             p.get("source") or "web",
             stage,
+            "Yes" if contact_again else "No",
             next_action,
             str(p.get("fit_score") or p.get("fitScore") or ""),
             str(p.get("intent") or (p.get("fitBreakdown") or p.get("fit_breakdown") or {}).get("intent") or ""),
             (p.get("why_this_prospect") or p.get("whyThisProspect") or "")[:300],
             (p.get("why_now") or p.get("whyNow") or "")[:300],
+            (p.get("reply_summary") or p.get("replySummary") or "")[:300],
             p.get("discovered_at") or p.get("discoveredAt") or "",
             now,
         ]
@@ -348,7 +354,7 @@ def sync_leads(seller_name: str, prospects: list[dict]) -> dict:
         if not match:
             match = index_by_name.get(name.lower())
         if match:
-            updates.append((f"A{match}:O{match}", row_data))
+            updates.append((f"A{match}:R{match}", row_data))
         else:
             appends.append(row_data)
 

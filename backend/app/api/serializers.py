@@ -34,6 +34,11 @@ def prospect_to_frontend(pr: ProspectRecord) -> Dict[str, Any]:
         "agentTimeline": pr.agent_timeline or [],
         "source": getattr(pr, "source", None) or "",
         "phone": getattr(pr, "phone", None) or "",
+        "email": getattr(pr, "email", None) or "",
+        "contacts": getattr(pr, "contacts", None) or [],
+        "contactAgain": bool(getattr(pr, "contact_again", True)),
+        "lastReplyAt": getattr(pr, "last_reply_at", None) or "",
+        "replySummary": getattr(pr, "reply_summary", None) or "",
     }
 
 
@@ -59,6 +64,11 @@ def prospect_from_frontend(payload: Dict[str, Any]) -> Dict[str, Any]:
         "source": payload.get("source") or "",
         "phone": payload.get("phone") or "",
         "why_now": payload.get("whyNow") or payload.get("why_now") or "",
+        "email": payload.get("email") or "",
+        "contacts": payload.get("contacts") or [],
+        "contact_again": payload.get("contactAgain") if payload.get("contactAgain") is not None else payload.get("contact_again", True),
+        "last_reply_at": payload.get("lastReplyAt") or payload.get("last_reply_at") or "",
+        "reply_summary": payload.get("replySummary") or payload.get("reply_summary") or "",
     }
 
 

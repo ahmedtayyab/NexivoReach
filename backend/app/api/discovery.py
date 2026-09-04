@@ -144,6 +144,11 @@ async def run_discovery_agent(
                     source=prospect.get("source") or "web",
                     phone=prospect.get("phone") or "",
                     why_now=prospect.get("whyNow") or "",
+                    email=prospect.get("email") or "",
+                    contacts=prospect.get("contacts") or [],
+                    contact_again=bool(prospect.get("contactAgain", True)),
+                    last_reply_at=prospect.get("lastReplyAt") or "",
+                    reply_summary=prospect.get("replySummary") or "",
                 )
                 session.add(pr)
                 saved_front.append(prospect_to_frontend(pr))
