@@ -419,9 +419,56 @@ class WebSearchTool:
                 text = _html_to_text(res.text, limit=limit)
                 if desc:
                     text = f"{desc}\n{text}"[:limit]
-                return {"text": text, "title": title, "url": str(res.url), "ok": True, "status": res.status_code}
+                return {
+                    "text": text,
+                    "title": title,
+                    "url": str(res.url),
+                    "ok": True,
+                    "status": res.status_code,
+                    "html": res.text,
+                }
         except Exception:
             return {"text": "", "title": "", "url": url, "ok": False}
+
+    async def scrape_for_qualify(self, url: str, limit: int = 14000) -> Dict[str, Any]:
+        """Homepage plus up to 2 signal pages (about / news / careers) for Intent evidence."""
+        home = await self.scrape_homepage(url, limit=min(limit, 9000))
+        if not home.get("ok"):
+            home.pop("html", None)
+            return home
+
+        base = home.get("url") or url
+        html = home.pop("html", "") or ""
+        secondary = _signal_page_urls(html, base)[:2]
+        if not secondary:
+            secondary = _guess_signal_paths(base)[:2]
+
+        chunks = [home.get("text") or ""]
+        pages = [base]
+        if secondary:
+            try:
+                async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, headers=HEADERS) as client:
+                    for extra in secondary:
+                        try:
+                            res = await client.get(extra)
+                            if res.status_code != 200 or not res.text:
+                                continue
+                            chunks.append(_html_to_text(res.text, limit=4500))
+                            pages.append(str(res.url))
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+
+        combined = "\n\n".join(c for c in chunks if c)[:limit]
+        return {
+            "text": combined,
+            "title": home.get("title") or "",
+            "url": base,
+            "ok": True,
+            "pages": pages,
+            "status": home.get("status"),
+        }
 
     async def scrape_shop_catalog(self, url: str) -> tuple[List[tuple[str, str]], List[Dict[str, Any]]]:
         if not url or _should_skip(url):
@@ -458,6 +505,56 @@ def _html_to_text(html: str, limit: int = 12000) -> str:
         tag.decompose()
     text = soup.get_text(separator="\n")
     return "\n".join(line.strip() for line in text.splitlines() if line.strip())[:limit]
+
+
+SIGNAL_LINK_HINTS = (
+    "about", "about-us", "our-story", "our-company", "company", "who-we-are",
+    "news", "press", "media", "blog", "insights", "careers", "jobs", "join",
+    "sourcing", "suppliers", "become-a-supplier", "vendors", "partners",
+    "wholesale", "b2b",
+)
+
+
+def _signal_page_urls(html: str, base_url: str) -> List[str]:
+    """Same-domain links that often carry Intent evidence."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    base_host = _registrable_domain(base_url)
+    scored: List[tuple[int, str]] = []
+    seen = set()
+    for anchor in soup.find_all("a", href=True):
+        href = (anchor.get("href") or "").strip()
+        if href.startswith("#") or href.startswith("mailto:") or href.startswith("tel:"):
+            continue
+        absolute = urljoin(base_url, href).split("#")[0].rstrip("/") or urljoin(base_url, href)
+        if _registrable_domain(absolute) != base_host or absolute in seen:
+            continue
+        path = (urlparse(absolute).path or "").lower().strip("/")
+        label = anchor.get_text(" ", strip=True).lower()
+        blob = f"{path} {label}"
+        score = sum(1 for h in SIGNAL_LINK_HINTS if h in blob)
+        if score <= 0:
+            continue
+        # Prefer shallow signal pages over deep product URLs
+        if path.count("/") > 2 and not any(h in path for h in ("news", "press", "blog", "about")):
+            continue
+        seen.add(absolute)
+        scored.append((score, absolute))
+    scored.sort(key=lambda x: (-x[0], len(x[1])))
+    return [u for _, u in scored]
+
+
+def _guess_signal_paths(base_url: str) -> List[str]:
+    root = (base_url or "").rstrip("/")
+    if not root:
+        return []
+    return [
+        f"{root}/about",
+        f"{root}/about-us",
+        f"{root}/news",
+        f"{root}/press",
+        f"{root}/careers",
+        f"{root}/blog",
+    ]
 
 
 def _catalog_links(html: str, base_url: str) -> List[str]:

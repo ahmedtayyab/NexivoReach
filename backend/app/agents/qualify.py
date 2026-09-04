@@ -37,6 +37,8 @@ INTENT_STRONG = (
 INTENT_WEAK = (
     (r"we('re| are) hiring (a )?(sourc|procur|buyer|merchandis|category)", "Hiring a buying-side role"),
     (r"new collection\b", "Mentions a new collection (undated)"),
+    (r"become a (supplier|vendor)|supplier (registration|portal)|vendor (application|registration)", "Supplier/vendor program"),
+    (r"now accepting (new )?(suppliers|vendors|partners)", "Accepting new suppliers"),
 )
 VANITY_SKIP = re.compile(
     r"\b(cashier|barista|receptionist|we're hiring|we are hiring|award[- ]winning|since \d{4})\b",

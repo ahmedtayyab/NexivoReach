@@ -233,6 +233,11 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
     if profile.pools.get("direct_icp") in ("primary", "sample"):
         add(f"{buyer} {cat} {place} {neg}", "icp_retrieval", "direct_icp")
 
+    # Intent overlays early so they survive the family cap (timing hunts ≠ ICP clones)
+    if profile.pools.get("intent_overlay") in ("primary", "sample") and profile.intent_examples:
+        for ex in profile.intent_examples[:2]:
+            add(f"{ex} {cat} {place} -jobs -salary", "intent_overlay", "intent_overlay")
+
     if profile.pools.get("oem_private_label") == "primary":
         add(f"private label {cat} brand {place} {neg}", "motion_oem", "oem_private_label")
         add(f"seeking {cat} manufacturer {place} -jobs", "motion_oem", "oem_private_label")
@@ -260,18 +265,31 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
     if profile.sales_motion == "saas":
         add(f"{buyer} {cat} software {place} {neg}", "icp_retrieval", "direct_icp")
 
+    if (
+        profile.pools.get("intent_overlay") in ("primary", "sample")
+        and profile.intent_examples
+        and place
+    ):
+        add(
+            f"{cat} {profile.intent_examples[0]} {place} 2024 OR 2025 OR 2026 -jobs",
+            "intent_overlay",
+            "intent_overlay",
+        )
+
     # Cap wave 1: diverse families, not clones
     out: List[PlannedQuery] = []
     seen_family: Dict[str, int] = {}
     for item in queries:
+        # Allow up to 3 intent overlays; other families stay capped at 2
+        fam_cap = 3 if item.family == "intent_overlay" else 2
         n = seen_family.get(item.family, 0)
-        if n >= 2 and item.family != "user":
+        if n >= fam_cap and item.family != "user":
             continue
         seen_family[item.family] = n + 1
         out.append(item)
-        if len(out) >= 6:
+        if len(out) >= 8:
             break
-    return out or queries[:6]
+    return out or queries[:8]
 
 
 def plan_wave2(
@@ -333,6 +351,13 @@ def plan_wave2(
             "expand_relevant", "direct_icp", False, 2,
         ))
 
+    # Always sample intent overlays in wave 2 when we have motion-specific phrases
+    for ex in (profile.intent_examples or [])[:2]:
+        queries.append(PlannedQuery(
+            f"{ex} {cat} {place} -jobs".strip(),
+            "intent_overlay", "intent_overlay", False, 2,
+        ))
+
     # Dedup
     seen = set()
     out = []
@@ -342,7 +367,7 @@ def plan_wave2(
             continue
         seen.add(key)
         out.append(q)
-        if len(out) >= 4:
+        if len(out) >= 6:
             break
     return out
 

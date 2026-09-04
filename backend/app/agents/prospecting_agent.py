@@ -21,9 +21,10 @@ from app.tools.contact_finder import discover_contacts
 from app.providers.factory import get_ai_provider
 
 
-FETCH_CAP = 12
-SAVE_CAP = 15
-WAVE1_RESULT_CAP = 40
+FETCH_CAP = 28
+SAVE_CAP = 30
+WAVE1_RESULT_CAP = 60
+WAVE2_RESULT_CAP = 40
 
 
 def _domain(url: str) -> str:
@@ -52,7 +53,7 @@ class ProspectingAgent:
         icp: Dict[str, Any],
         business: Optional[Dict[str, Any]] = None,
         exclude_websites: Optional[List[str]] = None,
-        limit: int = 15,
+        limit: int = 30,
     ) -> Dict[str, Any]:
         start_time = time.time()
         decisions_log: List[Dict[str, Any]] = []
@@ -102,12 +103,12 @@ class ProspectingAgent:
         })
 
         wave2 = plan_wave2(profile, stats, stats.get("learned_terms"))
-        if wave2 and stats["relevant_count"] < 8:
+        if wave2 and stats["relevant_count"] < 18:
             more = await self.web_search.hunt_leads(
                 wave2,
                 target_location=place,
                 exclude_domains=exclude_domains | {_domain(r.get("website")) for r in classified if r.get("website")},
-                limit=25,
+                limit=WAVE2_RESULT_CAP,
                 use_maps=False,
             )
             extra = [
@@ -118,7 +119,7 @@ class ProspectingAgent:
             decisions_log.append({
                 "step": 3,
                 "observation": f"Wave 2 ran {len(wave2)} follow-up searches → {len(more)} new URLs.",
-                "decision": "Use learned terms / manufacturer exclusions / competitor-customer queries.",
+                "decision": "Refine junk/geo + intent-overlay queries for timing signals.",
                 "toolCalled": "AdaptiveSearch",
                 "toolResultSnippet": "; ".join(q.query for q in wave2[:3]),
             })
@@ -126,7 +127,7 @@ class ProspectingAgent:
             decisions_log.append({
                 "step": 3,
                 "observation": "No second wave (enough relevant hits, or nothing useful to refine).",
-                "decision": "Proceed to cheap homepage inspection on survivors only.",
+                "decision": "Proceed to homepage + signal-page inspection on survivors.",
                 "toolCalled": "AdaptiveSearch",
             })
 
@@ -167,7 +168,7 @@ class ProspectingAgent:
 
         to_fetch = [c for c in candidates if (c.get("website") or "").strip()][:FETCH_CAP]
         pages = await asyncio.gather(
-            *[self.web_search.scrape_homepage(c["website"]) for c in to_fetch],
+            *[self.web_search.scrape_for_qualify(c["website"]) for c in to_fetch],
             return_exceptions=True,
         )
         text_by_domain: Dict[str, Dict[str, Any]] = {}
@@ -178,19 +179,23 @@ class ProspectingAgent:
             else:
                 text_by_domain[dom] = {"text": "", "url": cand.get("website") or "", "ok": False}
 
+        deep_pages = sum(len(v.get("pages") or []) for v in text_by_domain.values() if v.get("ok"))
         decisions_log.append({
             "step": 4,
-            "observation": f"{len(candidates)} candidates after exclusions; fetched {len(to_fetch)} homepages (cap {FETCH_CAP}).",
-            "decision": "Qualify Fit vs Intent from site text. Do not invent buying signals.",
-            "toolCalled": "HomepageFetch",
-            "toolResultSnippet": f"{sum(1 for v in text_by_domain.values() if v.get('ok'))} live pages",
+            "observation": (
+                f"{len(candidates)} candidates after exclusions; "
+                f"fetched {len(to_fetch)} sites (cap {FETCH_CAP}), {deep_pages} pages incl. signal URLs."
+            ),
+            "decision": "Qualify Fit vs Intent from homepage + about/news/careers when available. Do not invent buying signals.",
+            "toolCalled": "SiteFetch",
+            "toolResultSnippet": f"{sum(1 for v in text_by_domain.values() if v.get('ok'))} live sites",
         })
 
         # Qualify cheaply first; enrich high-fit leads in parallel afterward.
         qualified: List[Dict[str, Any]] = []
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
         save_limit = min(limit, SAVE_CAP)
-        for co in candidates[:SAVE_CAP + 8]:
+        for co in candidates[:SAVE_CAP + 12]:
             if len(qualified) >= save_limit:
                 break
             dom = _domain(co.get("website") or "")
@@ -343,7 +348,7 @@ class ProspectingAgent:
         prospects.sort(key=_rank, reverse=True)
 
         duration_ms = int((time.time() - start_time) * 1000)
-        tools = ["SearchPlanner", "WebSearchTool", "SerpClassifier", "HomepageFetch", "QualifyAccount"]
+        tools = ["SearchPlanner", "WebSearchTool", "SerpClassifier", "SiteFetch", "QualifyAccount"]
         if contact_runs:
             tools.append("ContactFinder")
         if draft_runs:
@@ -354,7 +359,7 @@ class ProspectingAgent:
             "task": user_prompt or f"Find buyers ({profile.sales_motion})",
             "durationMs": duration_ms,
             "toolsUsed": tools,
-            "sourcesCount": len(leads),
+            "sourcesCount": len(classified),
             "status": "Completed" if prospects else "CompletedWithNoCandidates",
             "sellerProfile": profile_to_dict(profile),
             "decisions": decisions_log + [{

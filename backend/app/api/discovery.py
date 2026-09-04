@@ -93,7 +93,7 @@ async def run_discovery_agent(
         icp=req.icp,
         business=business_payload,
         exclude_websites=exclude,
-        limit=15,
+        limit=30,
     )
 
     prospects = res.get("prospects") or []

@@ -29,8 +29,11 @@ def test_planner_uses_oem_pools_not_retailer_clones():
     assert profile.pools["oem_private_label"] == "primary"
     queries = plan_wave1(profile)
     blobs = " ".join(q.query.lower() for q in queries)
+    families = {q.family for q in queries}
     assert "private label" in blobs
-    assert len(queries) <= 6
+    assert "intent_overlay" in families
+    assert "seeking" in blobs or "sourcing" in blobs or "private label program" in blobs
+    assert len(queries) <= 8
 
 
 def test_planner_saas_skips_maps_and_importers():
@@ -42,6 +45,8 @@ def test_planner_saas_skips_maps_and_importers():
     assert profile.sales_motion == "saas"
     assert profile.use_maps is False
     assert profile.pools["importer_distributor"] == "off"
+    queries = plan_wave1(profile)
+    assert any(q.family == "intent_overlay" for q in queries)
 
 
 def test_classifier_rejects_listicles_and_factories():
@@ -137,6 +142,27 @@ def test_qualify_detects_real_intent():
     assert q["fitScore"] >= 70
 
 
+def test_qualify_detects_supplier_portal_as_weak_intent():
+    profile = infer_seller_profile(
+        products=[{"name": "Hoodies", "category": "Sportswear"}],
+        icp={"targetBuyerTypes": ["brands"], "targetCountries": ["United States"]},
+        business={"description": "Private label manufacturer", "primaryCategories": ["Sportswear"]},
+    )
+    q = qualify_account(
+        row={
+            "company_name": "Retail Co",
+            "website": "https://retail.example/",
+            "snippet": "brand",
+            "entity_type": "company",
+        },
+        site_text="Retail Co designs sportswear. Become a supplier via our vendor registration portal.",
+        profile=profile,
+        products=[{"name": "Hoodies", "category": "Sportswear"}],
+        page_url="https://retail.example/about",
+    )
+    assert q["intent"] == "low"
+
+
 def test_fit_score_spreads_thin_vs_strong():
     profile = infer_seller_profile(
         products=[{"name": "Hoodies", "category": "Sportswear"}],
@@ -210,8 +236,14 @@ async def test_agent_execution(monkeypatch):
             "text": "Helios Kliniken is a hospital group in Germany. We operate clinics and hospitals. Wholesale medical equipment procurement.",
         }
 
+    async def fake_qualify(self, url, limit=14000):
+        page = await fake_home(self, url)
+        page["pages"] = [url]
+        return page
+
     monkeypatch.setattr(WebSearchTool, "hunt_leads", fake_hunt)
     monkeypatch.setattr(WebSearchTool, "scrape_homepage", fake_home)
+    monkeypatch.setattr(WebSearchTool, "scrape_for_qualify", fake_qualify)
 
     agent = ProspectingAgent()
     res = await agent.execute_discovery_goal(
