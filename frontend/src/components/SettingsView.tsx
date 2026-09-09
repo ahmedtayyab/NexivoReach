@@ -954,7 +954,7 @@ function IntegrationsSection({
           </li>
           <li className="flex gap-2">
             <span className="text-accent font-bold mt-0.5">→</span>
-            <span><strong className="text-ink">Prospects</strong> — written to a shared <em>Prospects</em> tab (keyed on website). Stage changes (Qualified → Contacted → Replied, etc.) are recorded in a <em>Timeline</em> tab.</span>
+            <span><strong className="text-ink">Prospects</strong> — written to your company <em>Leads</em> tab (keyed on website). Status drives row color: white = To contact, blue = Contacted (emailed), green = Replied, amber = Re-contact. Stage changes also land in a <em>Timeline</em> tab when enabled.</span>
           </li>
         </ul>
       </div>

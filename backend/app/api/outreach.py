@@ -13,6 +13,7 @@ from app.api.deps import AuthUser, get_current_user, resolve_business_id
 from app.api.serializers import prospect_to_frontend
 from app.database.session import engine
 from app.integrations import gmail as gmail_mod
+from app.integrations import sheets as sheets_mod
 from app.models.schemas import Business, ProspectRecord, User
 from app.providers.factory import get_ai_provider
 from app.tools.contact_finder import discover_contacts, resolve_lead_email, email_from_contacts
@@ -76,6 +77,39 @@ def _recipient_email(row: ProspectRecord) -> str:
         contacts=row.contacts or [],
         to_email=(draft.get("toEmail") or "") if isinstance(draft, dict) else "",
     )
+
+
+def _sync_leads_to_sheets(session: Session, business_id: str, rows: List[ProspectRecord]) -> None:
+    """Push stage/status to Sheets so emailed rows get Contacted coloring."""
+    if not rows or not sheets_mod.is_configured():
+        return
+    try:
+        biz = session.get(Business, business_id) if business_id else None
+        seller = sheets_mod.resolve_company_tab_name(biz, fallback="Company")
+        payload = []
+        for record in rows:
+            payload.append({
+                "id": record.id,
+                "company_name": record.company_name,
+                "website": record.website,
+                "location": record.location,
+                "industry": record.industry,
+                "fit_score": record.fit_score,
+                "why_this_prospect": record.why_this_prospect,
+                "why_now": getattr(record, "why_now", None) or "",
+                "intent": (record.fit_breakdown or {}).get("intent") or "",
+                "stage": record.stage,
+                "discovered_at": record.discovered_at,
+                "source": record.source,
+                "phone": record.phone,
+                "email": getattr(record, "email", None) or "",
+                "contact_again": bool(getattr(record, "contact_again", True)),
+                "reply_summary": getattr(record, "reply_summary", None) or "",
+                "seller_name": seller,
+            })
+        sheets_mod.sync_leads(seller, payload)
+    except Exception as exc:
+        log.warning("Sheets sync after outreach failed: %s", exc)
 
 
 async def _ensure_recipient(session: Session, row: ProspectRecord) -> str:
@@ -435,6 +469,9 @@ async def send_batch(
                     "error": str(exc)[:200],
                 })
 
+        if sent_rows:
+            _sync_leads_to_sheets(session, business_id, sent_rows)
+
         return {
             "ok": True,
             "sent": len(sent_rows),
@@ -524,6 +561,9 @@ async def send_ready(
                     "company": row.company_name or "",
                     "error": str(exc)[:200],
                 })
+
+        if sent_rows:
+            _sync_leads_to_sheets(session, business_id, sent_rows)
 
         return {
             "ok": True,
@@ -784,6 +824,7 @@ async def send_outreach(
                 raise
             except Exception as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            _sync_leads_to_sheets(session, business_id, [row])
             return {
                 "ok": True,
                 "via": "gmail",
@@ -812,6 +853,7 @@ async def send_outreach(
         session.add(row)
         session.commit()
         session.refresh(row)
+        _sync_leads_to_sheets(session, business_id, [row])
         return {
             "ok": True,
             "via": "mailto",
@@ -886,6 +928,9 @@ async def sync_replies(
         session.commit()
         for row in updated:
             session.refresh(row)
+
+        if updated:
+            _sync_leads_to_sheets(session, business_id, updated)
 
         return {
             "ok": True,

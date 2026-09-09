@@ -57,15 +57,16 @@ TIMELINE_HEADERS = [
 ]
 
 # Full-row background colors by Status (Google Sheets RGB 0–1).
+# Contacted = already emailed — deliberately stronger so it stands out.
 _LEAD_STATUS_COLORS: dict[str, dict[str, float]] = {
     "To contact": {"red": 1.0, "green": 1.0, "blue": 1.0},
-    "Contacted": {"red": 0.82, "green": 0.88, "blue": 0.95},   # outreached — blue
-    "Replied": {"red": 0.82, "green": 0.93, "blue": 0.86},     # they replied — green
-    "Re-contact": {"red": 0.98, "green": 0.93, "blue": 0.78},  # amber
-    "Denied": {"red": 0.94, "green": 0.88, "blue": 0.88},
-    "Avoid": {"red": 0.94, "green": 0.88, "blue": 0.88},
-    "Meeting": {"red": 0.78, "green": 0.86, "blue": 0.95},
-    "Won": {"red": 0.75, "green": 0.90, "blue": 0.80},
+    "Contacted": {"red": 0.67, "green": 0.80, "blue": 0.94},   # emailed — clear blue
+    "Replied": {"red": 0.72, "green": 0.90, "blue": 0.76},     # they replied — green
+    "Re-contact": {"red": 0.98, "green": 0.90, "blue": 0.70},  # amber follow-up
+    "Denied": {"red": 0.93, "green": 0.84, "blue": 0.84},
+    "Avoid": {"red": 0.93, "green": 0.84, "blue": 0.84},
+    "Meeting": {"red": 0.72, "green": 0.82, "blue": 0.95},
+    "Won": {"red": 0.68, "green": 0.88, "blue": 0.74},
 }
 _LEAD_COLOR_DEFAULT = {"red": 1.0, "green": 1.0, "blue": 1.0}
 
