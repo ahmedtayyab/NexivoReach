@@ -107,21 +107,33 @@ async def extract_products_from_url(req: UrlParseRequest, _user: AuthUser = Depe
         seen.add(key)
         seen.add(name_key)
         merged.append(item)
+    reach_error = getattr(scraper, "last_catalog_error", "")
     log.info(
-        "extract-url %s: pages=%d scraped=%d ai=%d merged=%d",
-        req.url, len(pages), len(shop_products), len(fallback_products), len(merged),
+        "extract-url %s: pages=%d scraped=%d ai=%d merged=%d reach=%s",
+        req.url, len(pages), len(shop_products), len(fallback_products), len(merged), reach_error or "ok",
     )
+    if merged:
+        message = (
+            f"Found {len(merged)} product{'s' if len(merged) != 1 else ''} "
+            f"from {len(pages)} page{'s' if len(pages) != 1 else ''}."
+        )
+    elif reach_error == "unreachable":
+        message = (
+            "Could not reach that website from our servers — the connection timed out. "
+            "The site's host may be blocking our IP. Ask your host to allow it, or upload a catalog file instead."
+        )
+    elif reach_error == "timeout":
+        message = "That website took too long to respond. Try again in a moment, or upload a catalog file instead."
+    else:
+        message = "No products were found on that page. Try a product or catalog URL, or add items manually."
     return {
         "sourceUrl": req.url,
         "pagesScanned": len(pages),
         "shopProducts": len(shop_products),
         "aiProducts": len(fallback_products),
+        "reachError": reach_error,
         "products": merged,
-        "message": (
-            f"Found {len(merged)} product{'s' if len(merged) != 1 else ''} from {len(pages)} page{'s' if len(pages) != 1 else ''}."
-            if merged
-            else "No products were found on that page. Try a product or catalog URL, or add items manually."
-        ),
+        "message": message,
     }
 
 

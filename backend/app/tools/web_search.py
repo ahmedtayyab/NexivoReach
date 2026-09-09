@@ -171,6 +171,10 @@ def _location_from_text(text: str, fallback: str = "", prefer_places: Optional[L
 
 
 class WebSearchTool:
+    def __init__(self) -> None:
+        # Set by scrape_shop_catalog so callers can tell "site unreachable" from "no products".
+        self.last_catalog_error: str = ""
+
     def name(self) -> str:
         return "WebSearchTool"
 
@@ -494,6 +498,7 @@ class WebSearchTool:
         Prefer WP REST `/wp-json/wp/v2/product` (fast, complete, works from Render).
         Fall back to HTML /product-category/ crawl when REST is unavailable.
         """
+        self.last_catalog_error = ""
         if not url or _should_skip(url):
             return [], []
         pages: List[tuple[str, str]] = []
@@ -503,7 +508,11 @@ class WebSearchTool:
             async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=HEADERS) as client:
                 # 1) WordPress product REST API (Alwasi: 338 products in ~4 requests).
                 # Tried before the homepage so a blocked/slow HTML fetch can't sink the catalog.
-                rest_products = await _fetch_wp_rest_products(client, url)
+                rest_products, rest_error = await _fetch_wp_rest_products(client, url)
+                if rest_error:
+                    # Transport-level failure: the HTML crawl would only burn another timeout.
+                    self.last_catalog_error = rest_error
+                    return [], []
                 if rest_products:
                     for item in rest_products:
                         key = (item.get("productUrl") or item.get("name") or "").strip().lower()
@@ -523,6 +532,7 @@ class WebSearchTool:
                     first = await client.get(url)
                 except Exception as exc:
                     log.warning("scrape_shop_catalog(%s): homepage fetch failed: %r", url, exc)
+                    self.last_catalog_error = _connect_error_kind(exc)
                     return [], []
                 if first.status_code != 200 or not first.text:
                     log.warning(
@@ -568,12 +578,31 @@ class WebSearchTool:
                 )
         except Exception as exc:
             log.warning("scrape_shop_catalog(%s): aborted: %r", url, exc)
+            self.last_catalog_error = _connect_error_kind(exc)
             return pages, products
         return pages, products
 
 
-async def _fetch_wp_rest_products(client: httpx.AsyncClient, site_url: str) -> List[Dict[str, Any]]:
-    """Fetch all products via WordPress REST API when exposed (common on Woo shops)."""
+def _connect_error_kind(exc: Exception) -> str:
+    """Classify a transport failure so the UI can say 'unreachable' instead of 'no products'."""
+    if isinstance(exc, (httpx.ConnectTimeout, httpx.ConnectError)):
+        return "unreachable"
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(exc, httpx.TransportError):
+        return "unreachable"
+    return ""
+
+
+async def _fetch_wp_rest_products(
+    client: httpx.AsyncClient, site_url: str
+) -> tuple[List[Dict[str, Any]], str]:
+    """
+    Fetch all products via WordPress REST API when exposed (common on Woo shops).
+
+    Returns (products, transport_error_kind). A non-empty error means the host was
+    never reached, so callers should stop rather than retry over HTML.
+    """
     parsed = urlparse(site_url)
     root = f"{parsed.scheme}://{parsed.netloc}"
     endpoint = f"{root}/wp-json/wp/v2/product"
@@ -582,15 +611,15 @@ async def _fetch_wp_rest_products(client: httpx.AsyncClient, site_url: str) -> L
         first = await client.get(endpoint, params={"per_page": 100, "page": 1})
         if first.status_code != 200:
             log.info("WP REST %s: status=%s", endpoint, first.status_code)
-            return []
+            return [], ""
         try:
             rows = first.json()
         except Exception as exc:
             log.info("WP REST %s: non-JSON body (%r)", endpoint, exc)
-            return []
+            return [], ""
         if not isinstance(rows, list) or not rows:
             log.info("WP REST %s: empty payload", endpoint)
-            return []
+            return [], ""
         products.extend(_wp_rest_rows_to_products(rows, site_url))
         total_pages = int(first.headers.get("X-WP-TotalPages") or 1)
         total_pages = max(1, min(total_pages, 20))  # safety cap
@@ -611,8 +640,8 @@ async def _fetch_wp_rest_products(client: httpx.AsyncClient, site_url: str) -> L
                     products.extend(_wp_rest_rows_to_products(more, site_url))
     except Exception as exc:
         log.info("WP REST %s: request failed: %r", endpoint, exc)
-        return []
-    return products
+        return [], _connect_error_kind(exc)
+    return products, ""
 
 
 def _wp_rest_rows_to_products(rows: list, site_url: str) -> List[Dict[str, Any]]:
