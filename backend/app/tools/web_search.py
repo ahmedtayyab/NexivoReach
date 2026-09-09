@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import time
 from typing import List, Dict, Any, Optional
 from urllib.parse import urljoin, urlparse
 
@@ -491,8 +492,10 @@ class WebSearchTool:
         products: List[Dict[str, Any]] = []
         seen_names: set[str] = set()
         seen_pages: set[str] = set()
+        started = time.monotonic()
+        budget_s = 28.0
         try:
-            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=HEADERS) as client:
+            async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=HEADERS) as client:
                 first = await client.get(url)
                 if first.status_code != 200 or not first.text:
                     return [], []
@@ -502,14 +505,25 @@ class WebSearchTool:
                 seen_pages.add(start_url.rstrip("/").lower())
                 products.extend(_extract_page_products(html, start_url, seen_names))
 
-                # Follow category/collection/shop links (not Woo-only)
-                extra_urls = _catalog_links(html, start_url)
-                # If homepage is thin, also probe common catalog paths
-                if len(products) < 8:
-                    extra_urls = _guess_catalog_paths(start_url) + extra_urls
-                # Prefer listing pages over deep PDPs
+                # Prefer classic Woo category crawl when available (worked reliably before).
+                woo_cats = [
+                    u for u in _catalog_links(html, start_url)
+                    if "/product-category/" in (urlparse(u).path or "").lower()
+                ]
+                if woo_cats:
+                    extra_urls = woo_cats
+                else:
+                    extra_urls = _catalog_links(html, start_url)
+                    if len(products) < 8:
+                        extra_urls = _guess_catalog_paths(start_url) + extra_urls
                 extra_urls = _prioritize_catalog_urls(extra_urls)
-                for extra in extra_urls[:24]:
+                # Keep crawl small so the API returns before platform timeouts
+                max_extra = 12 if woo_cats else 10
+                for extra in extra_urls[:max_extra]:
+                    if time.monotonic() - started > budget_s:
+                        break
+                    if len(products) >= 80:
+                        break
                     key = extra.rstrip("/").lower()
                     if key in seen_pages:
                         continue
@@ -519,8 +533,6 @@ class WebSearchTool:
                         if res.status_code == 200 and res.text:
                             pages.append((str(res.url), _html_to_text(res.text, limit=18000)))
                             products.extend(_extract_page_products(res.text, str(res.url), seen_names))
-                            if len(products) >= 80:
-                                break
                     except Exception:
                         continue
         except Exception:
@@ -686,12 +698,17 @@ def _looks_like_pdp(path: str) -> bool:
 
 
 def _extract_page_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
-    """Combine JSON-LD, embedded JSON, card markup, and product link grids."""
+    """Combine Woo cards, JSON-LD, optional Next.js data, and product link grids."""
     products: List[Dict[str, Any]] = []
-    products.extend(_jsonld_products(html, page_url, seen))
-    products.extend(_embedded_json_products(html, page_url, seen))
+    # Woo / generic cards first (historically reliable)
     products.extend(_shop_products(html, page_url, seen))
-    products.extend(_product_link_grid(html, page_url, seen))
+    products.extend(_jsonld_products(html, page_url, seen))
+    # Only parse embedded app JSON when present — never scan arbitrary JS bundles
+    if "__NEXT_DATA__" in (html or "") or 'id="__NEXT_DATA__"' in (html or ""):
+        products.extend(_embedded_json_products(html, page_url, seen))
+    # Link-grid fill-in when still thin (Nike /t/, Shopify /products/)
+    if len(products) < 12:
+        products.extend(_product_link_grid(html, page_url, seen))
     return products
 
 
@@ -706,6 +723,7 @@ def _add_product(
     product_url: str = "",
     image_url: str = "",
     price: str = "",
+    allow_listing_url: bool = False,
 ) -> None:
     name = re.sub(r"\s+", " ", (name or "")).strip()
     name = re.split(r"\s*Art\s*#", name, maxsplit=1)[0].strip()
@@ -719,11 +737,18 @@ def _add_product(
     }:
         return
     product_path = (urlparse(product_url or page_url).path or "").lower()
-    # Skip category/listing titles that aren't real PDPs
-    if product_url and not _looks_like_pdp(product_path):
-        if (product_url or "").rstrip("/").lower() == (page_url or "").rstrip("/").lower():
-            return
-    key = (product_url or "").lower() or lowered
+    # Skip category/listing titles that aren't real PDPs (unless Woo card fallback)
+    if (
+        not allow_listing_url
+        and product_url
+        and not _looks_like_pdp(product_path)
+        and (product_url or "").rstrip("/").lower() == (page_url or "").rstrip("/").lower()
+    ):
+        return
+    # Deduplicate by name for listing-url fallbacks so one category page doesn't collapse cards
+    key = (product_url or "").lower() if _looks_like_pdp(product_path) else f"name:{(name or '').lower()}"
+    if not key.strip():
+        key = f"name:{lowered}"
     if key in seen:
         return
     seen.add(key)
@@ -845,36 +870,22 @@ def _walk_for_productish(obj: Any, out: List[Dict[str, str]], depth: int = 0) ->
 
 
 def _embedded_json_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
-    """Pull products from __NEXT_DATA__ / inline JSON (common on Nike, Shopify themes)."""
+    """Pull products from __NEXT_DATA__ only (safe). Avoid scanning large JS bundles."""
     soup = BeautifulSoup(html or "", "html.parser")
     products: List[Dict[str, Any]] = []
-    scripts = []
     node = soup.find("script", id="__NEXT_DATA__")
-    if node:
-        scripts.append(node.get_text() or "")
-    for script in soup.find_all("script"):
-        raw = (script.string or script.get_text() or "").strip()
-        if not raw or len(raw) < 80:
-            continue
-        if any(k in raw for k in ("productId", "styleColor", "productName", "\"products\"", "fullTitle")):
-            scripts.append(raw[:500000])
-        if len(scripts) >= 6:
-            break
+    if not node:
+        return products
+    raw = (node.string or node.get_text() or "").strip()
+    if not raw or len(raw) > 2_000_000:
+        return products
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return products
 
     found: List[Dict[str, str]] = []
-    for raw in scripts:
-        try:
-            data = json.loads(raw)
-        except Exception:
-            # Try to find a JSON object substring
-            m = re.search(r"\{.*\}", raw, re.S)
-            if not m:
-                continue
-            try:
-                data = json.loads(m.group(0)[:500000])
-            except Exception:
-                continue
-        _walk_for_productish(data, found)
+    _walk_for_productish(data, found)
 
     for item in found:
         href = item.get("url") or ""
@@ -882,7 +893,6 @@ def _embedded_json_products(html: str, page_url: str, seen: set) -> List[Dict[st
             if href.startswith("/"):
                 href = urljoin(page_url, href)
             else:
-                # Nike slugs sometimes lack /t/
                 href = urljoin(page_url, f"/t/{href}" if "/" not in href else href)
         _add_product(
             products,
@@ -901,12 +911,22 @@ def _shop_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
     soup = BeautifulSoup(html or "", "html.parser")
     category = _category_from_url(page_url)
     products: List[Dict[str, Any]] = []
-    # Prefer real cards — avoid matching a single giant .product wrapper
-    cards = soup.select("li.product, li.product-item, .product-card, .product-item, [data-product-id], [data-productid]")
+    # WooCommerce first (li.product), then other card patterns — avoid one giant .product wrapper
+    cards = soup.select("li.product")
+    if not cards:
+        cards = soup.select(
+            "li.product-item, .product-card, .product-item, "
+            "[data-product-id], [data-productid]"
+        )
     if not cards:
         cards = [
             c for c in soup.select(".product")
             if len(c.get_text(" ", strip=True) or "") < 600
+            and (
+                c.select_one("a[href*='/product/']")
+                or c.select_one("a[href*='/products/']")
+                or c.select_one("h2, h3, .woocommerce-loop-product__title, .product-title")
+            )
         ]
     for card in cards:
         link = (
@@ -940,6 +960,10 @@ def _shop_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
         name = heading
         name = re.split(r"\s*Art\s*#", name, maxsplit=1)[0].strip()
         if not name or name.lower() in {"read more", "view product"}:
+            img_tag = card.select_one("img")
+            if img_tag:
+                name = (img_tag.get("alt") or "").strip()
+        if not name or name.lower() in {"read more", "view product"}:
             continue
         sku = sku_match.group(1).upper().replace(" ", "-") if sku_match else ""
         display = f"{name} ({sku})" if sku else name
@@ -956,14 +980,14 @@ def _shop_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
                 src = img_tag.get("src") or img_tag.get("data-src") or img_tag.get("data-lazy-src") or ""
                 if src and not src.startswith("data:"):
                     image_url = urljoin(page_url, src)
-            if not name or name.lower() in {"read more", "view product"}:
-                alt = (img_tag.get("alt") or "").strip()
-                if alt:
-                    display = alt[:90]
 
         price_node = card.select_one(".price, [data-testid='product-price'], .product-price")
         price = price_node.get_text(" ", strip=True)[:40] if price_node else ""
 
+        # Woo cards always keep product even if href is the category page fallback
+        product_url = href if href and _looks_like_pdp(urlparse(href).path or "") else (href or "")
+        if not product_url and href:
+            product_url = href
         _add_product(
             products,
             seen,
@@ -971,9 +995,10 @@ def _shop_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
             page_url=page_url,
             category=category,
             description=blob[:180],
-            product_url=href or page_url,
+            product_url=product_url or href or f"{page_url}#{len(seen)}",
             image_url=image_url,
             price=price,
+            allow_listing_url=True,
         )
     return products
 
