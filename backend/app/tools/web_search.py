@@ -1,5 +1,6 @@
 import asyncio
 import re
+import time
 from typing import List, Dict, Any, Optional
 from urllib.parse import urljoin, urlparse
 
@@ -484,29 +485,61 @@ class WebSearchTool:
         }
 
     async def scrape_shop_catalog(self, url: str) -> tuple[List[tuple[str, str]], List[Dict[str, Any]]]:
+        """
+        Original WooCommerce crawl: homepage + /product-category/ pages.
+        Category pages are fetched concurrently so large catalogs finish
+        before platform request timeouts (homepage alone has no product cards).
+        """
         if not url or _should_skip(url):
             return [], []
         pages: List[tuple[str, str]] = []
         products: List[Dict[str, Any]] = []
         seen_names: set[str] = set()
+        started = time.monotonic()
+        budget_s = 25.0
         try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=HEADERS) as client:
+            async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=HEADERS) as client:
                 first = await client.get(url)
                 if first.status_code != 200 or not first.text:
                     return [], []
                 html = first.text
-                pages.append((str(first.url), _html_to_text(html)))
-                products.extend(_shop_products(html, str(first.url), seen_names))
-                extra_urls = [item for item in _catalog_links(html, str(first.url)) if "/product-category/" in item]
-                extra_urls.sort()
-                for extra in extra_urls[:30]:
+                start_url = str(first.url)
+                pages.append((start_url, _html_to_text(html)))
+                products.extend(_shop_products(html, start_url, seen_names))
+                extra_urls = [
+                    item for item in _catalog_links(html, start_url)
+                    if "/product-category/" in item
+                ]
+                extra_urls = sorted(dict.fromkeys(extra_urls))[:30]
+
+                async def _one(extra: str) -> tuple[str, str, List[Dict[str, Any]]]:
                     try:
                         res = await client.get(extra)
-                        if res.status_code == 200 and res.text:
-                            pages.append((str(res.url), _html_to_text(res.text, limit=16000)))
-                            products.extend(_shop_products(res.text, str(res.url), seen_names))
+                        if res.status_code != 200 or not res.text:
+                            return "", "", []
+                        found = _shop_products(res.text, str(res.url), set())
+                        return str(res.url), _html_to_text(res.text, limit=16000), found
                     except Exception:
-                        continue
+                        return "", "", []
+
+                # Concurrent batches — same parsers as before, much faster wall-clock
+                for i in range(0, len(extra_urls), 8):
+                    if time.monotonic() - started > budget_s:
+                        break
+                    batch = extra_urls[i : i + 8]
+                    results = await asyncio.gather(*[_one(u) for u in batch])
+                    for page_url, text, found in results:
+                        if page_url and text:
+                            pages.append((page_url, text))
+                        for item in found:
+                            key = (item.get("productUrl") or item.get("name") or "").strip().lower()
+                            if not key or key in seen_names:
+                                continue
+                            seen_names.add(key)
+                            name_key = (item.get("name") or "").strip().lower()
+                            if name_key:
+                                seen_names.add(name_key)
+                            products.append(item)
         except Exception:
             return pages, products
         return pages, products
