@@ -22,10 +22,31 @@ def init_db():
     SQLModel.metadata.create_all(engine)
     _ensure_prospect_contact_columns()
     _ensure_user_gmail_columns()
+    _ensure_user_sheets_oauth_columns()
     _ensure_business_sheets_columns()
     if _backend == "sqlite":
         _ensure_sqlite_columns()
         _migrate_multi_company()
+
+
+def _ensure_user_sheets_oauth_columns():
+    """Per-user Google Sheets OAuth token columns on nr_user."""
+    tables = ("nr_user", "user")
+    additions = [
+        ("sheets_refresh_token", "VARCHAR"),
+        ("sheets_access_token", "VARCHAR"),
+        ("sheets_token_expiry", "VARCHAR"),
+        ("sheets_email", "VARCHAR"),
+        ("sheets_connected_at", "VARCHAR"),
+    ]
+    with engine.connect() as conn:
+        for table in tables:
+            for column, coltype in additions:
+                try:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}"))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
 
 
 def _ensure_business_sheets_columns():

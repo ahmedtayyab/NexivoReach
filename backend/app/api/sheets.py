@@ -1,8 +1,8 @@
 """
 /api/sheets  — Google Sheets integration endpoints.
 
-Each company (Business) links its own spreadsheet. The platform service account
-is shared; spreadsheet IDs are never shared across users/companies.
+Users connect Google Sheets via OAuth (their Drive). Each company links its own
+spreadsheet ID — never shared across users/companies.
 """
 
 from datetime import datetime, timezone
@@ -17,13 +17,18 @@ from app.api.deps import AuthUser, get_current_user, resolve_business_id
 from app.api.serializers import product_to_frontend, prospect_to_frontend
 from app.database.session import engine
 from app.integrations import sheets as sheets_mod
-from app.models.schemas import Business, ICPConfig, ProductItem, ProspectRecord
+from app.integrations import sheets_oauth as sheets_oauth_mod
+from app.models.schemas import Business, ICPConfig, ProductItem, ProspectRecord, User
 from app.tools.web_search import _registrable_domain
 import logging
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sheets", tags=["sheets"])
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _active_business(session: Session, request: Request, user: AuthUser) -> Business:
@@ -36,23 +41,47 @@ def _active_business(session: Session, request: Request, user: AuthUser) -> Busi
     return biz
 
 
+def _db_user(session: Session, user: AuthUser) -> User:
+    row = session.get(User, user.id)
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    return row
+
+
+def _require_sheets_oauth(db_user: User) -> None:
+    if sheets_oauth_mod.is_connected(db_user):
+        return
+    if sheets_mod.oauth_available():
+        raise HTTPException(
+            status_code=400,
+            detail="Connect Google Sheets first (Settings → Integrations).",
+        )
+    if not sheets_mod.is_configured(db_user):
+        raise HTTPException(
+            status_code=400,
+            detail="Google Sheets is not available. Connect Google Sheets in Settings.",
+        )
+
+
 @router.get("/status")
 def get_status(request: Request, user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
     with Session(engine) as session:
+        db_user = session.get(User, user.id)
         try:
             biz = _active_business(session, request, user)
             sid = sheets_mod.business_spreadsheet_id(biz)
             title = (biz.sheets_spreadsheet_title or "").strip()
+            company_name = biz.name or ""
+            company_id = biz.id
         except HTTPException:
-            # No company yet — still report whether the platform SA is ready
-            status = sheets_mod.connection_status("")
+            status = sheets_mod.connection_status("", session=session, user=db_user)
             status["companyName"] = ""
             return status
-        status = sheets_mod.connection_status(sid)
+        status = sheets_mod.connection_status(sid, session=session, user=db_user)
         if status.get("connected") and title and not status.get("spreadsheet_title"):
             status["spreadsheet_title"] = title
-        status["companyName"] = biz.name or ""
-        status["companyId"] = biz.id
+        status["companyName"] = company_name
+        status["companyId"] = company_id
         return status
 
 
@@ -66,13 +95,15 @@ def connect_spreadsheet(
     request: Request,
     user: AuthUser = Depends(get_current_user),
 ):
-    if not sheets_mod.is_configured():
-        raise HTTPException(status_code=400, detail="Google Sheets service account not configured on the server.")
-    verified = sheets_mod.verify_spreadsheet_access(req.spreadsheet)
-    if not verified.get("ok"):
-        raise HTTPException(status_code=400, detail=verified.get("error") or "Cannot access spreadsheet")
-
     with Session(engine) as session:
+        db_user = _db_user(session, user)
+        _require_sheets_oauth(db_user)
+        verified = sheets_mod.verify_spreadsheet_access(
+            req.spreadsheet, session=session, user=db_user
+        )
+        if not verified.get("ok"):
+            raise HTTPException(status_code=400, detail=verified.get("error") or "Cannot access spreadsheet")
+
         biz = _active_business(session, request, user)
         biz.sheets_spreadsheet_id = verified["spreadsheetId"]
         biz.sheets_spreadsheet_title = verified.get("spreadsheet_title") or ""
@@ -92,14 +123,18 @@ def connect_spreadsheet(
 
 @router.post("/create")
 def create_spreadsheet(request: Request, user: AuthUser = Depends(get_current_user)):
-    """Create a new spreadsheet for the active company and share it with the user."""
-    if not sheets_mod.is_configured():
-        raise HTTPException(status_code=400, detail="Google Sheets service account not configured on the server.")
-
+    """Create a spreadsheet in the user's Google Drive for the active company."""
     with Session(engine) as session:
+        db_user = _db_user(session, user)
+        _require_sheets_oauth(db_user)
         biz = _active_business(session, request, user)
         title = sheets_mod.resolve_company_tab_name(biz, fallback=biz.name or "Company")
-        created = sheets_mod.create_business_spreadsheet(title, share_with_email=user.email or "")
+        created = sheets_mod.create_business_spreadsheet(
+            title,
+            session=session,
+            user=db_user,
+            share_with_email=user.email or "",
+        )
         if not created.get("ok"):
             raise HTTPException(status_code=400, detail=created.get("error") or "Could not create spreadsheet")
         biz.sheets_spreadsheet_id = created["spreadsheetId"]
@@ -115,12 +150,12 @@ def create_spreadsheet(request: Request, user: AuthUser = Depends(get_current_us
             "url": created.get("url") or "",
             "companyId": biz.id,
             "companyName": biz.name,
-            "sharedWith": user.email or "",
         }
 
 
 @router.post("/disconnect")
 def disconnect_spreadsheet(request: Request, user: AuthUser = Depends(get_current_user)):
+    """Unlink spreadsheet from this company (does not delete the Google file)."""
     with Session(engine) as session:
         biz = _active_business(session, request, user)
         biz.sheets_spreadsheet_id = None
@@ -133,17 +168,16 @@ def disconnect_spreadsheet(request: Request, user: AuthUser = Depends(get_curren
 
 @router.post("/sync-leads")
 def sync_leads_now(request: Request, user: AuthUser = Depends(get_current_user)):
-    """Push all company leads to Sheets and re-apply status row colors (Contacted = blue)."""
-    if not sheets_mod.is_configured():
-        raise HTTPException(status_code=400, detail="Google Sheets not configured.")
-
+    """Push all company leads to Sheets and re-apply status row colors."""
     with Session(engine) as session:
+        db_user = _db_user(session, user)
+        _require_sheets_oauth(db_user)
         biz = _active_business(session, request, user)
         sheet_id = sheets_mod.business_spreadsheet_id(biz)
         if not sheet_id:
             raise HTTPException(
                 status_code=400,
-                detail="Connect a Google Sheet for this company first (Settings → Integrations).",
+                detail="Create or link a spreadsheet for this company first.",
             )
         seller = sheets_mod.resolve_company_tab_name(biz, fallback="Company")
         rows = session.exec(
@@ -189,7 +223,9 @@ def sync_leads_now(request: Request, user: AuthUser = Depends(get_current_user))
         if not payload:
             return {"ok": True, "written": 0, "message": "No leads to sync"}
         try:
-            result = sheets_mod.sync_leads(seller, payload, spreadsheet_id=sheet_id)
+            result = sheets_mod.sync_leads(
+                seller, payload, spreadsheet_id=sheet_id, session=session, user=db_user
+            )
         except Exception as exc:
             log.warning("Manual Sheets lead sync failed: %s", exc)
             raise HTTPException(status_code=400, detail=f"Sheets sync failed: {exc}") from exc
@@ -205,14 +241,18 @@ def sync_leads_now(request: Request, user: AuthUser = Depends(get_current_user))
 
 @router.get("/restore-options")
 def restore_options(request: Request, user: AuthUser = Depends(get_current_user)):
-    if not sheets_mod.is_configured():
-        raise HTTPException(status_code=400, detail="Google Sheets not configured.")
     with Session(engine) as session:
+        db_user = _db_user(session, user)
+        _require_sheets_oauth(db_user)
         biz = _active_business(session, request, user)
         sheet_id = sheets_mod.business_spreadsheet_id(biz)
         if not sheet_id:
-            raise HTTPException(status_code=400, detail="Connect a spreadsheet for this company first.")
-        return {"companies": sheets_mod.list_restore_tabs(spreadsheet_id=sheet_id)}
+            raise HTTPException(status_code=400, detail="Create or link a spreadsheet for this company first.")
+        return {
+            "companies": sheets_mod.list_restore_tabs(
+                spreadsheet_id=sheet_id, session=session, user=db_user
+            )
+        }
 
 
 class RestoreRequest(BaseModel):
@@ -221,10 +261,6 @@ class RestoreRequest(BaseModel):
     include_leads: bool = False
     replace_products: bool = True
     replace_leads: bool = False
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _guess_website(products: list[dict]) -> str:
@@ -246,50 +282,41 @@ def restore_from_sheets(
     user: AuthUser = Depends(get_current_user),
 ):
     """Recreate catalog/leads from this company's linked Google Sheets tabs."""
-    if not sheets_mod.is_configured():
-        raise HTTPException(status_code=400, detail="Google Sheets not configured.")
-
     company_name = (req.company_name or "").strip()
     if not company_name or sheets_mod.is_placeholder_company_name(company_name):
         raise HTTPException(status_code=400, detail="Pick a real company tab to restore.")
 
     with Session(engine) as session:
+        db_user = _db_user(session, user)
+        _require_sheets_oauth(db_user)
         biz = _active_business(session, request, user)
         sheet_id = sheets_mod.business_spreadsheet_id(biz)
         if not sheet_id:
-            raise HTTPException(status_code=400, detail="Connect a spreadsheet for this company first.")
+            raise HTTPException(status_code=400, detail="Create or link a spreadsheet for this company first.")
 
-        options = {c["companyName"]: c for c in sheets_mod.list_restore_tabs(spreadsheet_id=sheet_id)}
+        options = {
+            c["companyName"]: c
+            for c in sheets_mod.list_restore_tabs(
+                spreadsheet_id=sheet_id, session=session, user=db_user
+            )
+        }
         match = options.get(company_name)
         if not match:
             raise HTTPException(status_code=404, detail=f"No Sheets tabs found for {company_name}")
 
         products: list[dict] = []
         if req.include_products and match.get("productsTab"):
-            products = sheets_mod.fetch_products_from_tab(match["productsTab"], spreadsheet_id=sheet_id)
+            products = sheets_mod.fetch_products_from_tab(
+                match["productsTab"], spreadsheet_id=sheet_id, session=session, user=db_user
+            )
 
         leads: list[dict] = []
         if req.include_leads and match.get("leadsTab"):
-            leads = sheets_mod.fetch_leads_from_tab(match["leadsTab"], spreadsheet_id=sheet_id)
+            leads = sheets_mod.fetch_leads_from_tab(
+                match["leadsTab"], spreadsheet_id=sheet_id, session=session, user=db_user
+            )
 
         website = _guess_website(products)
-
-        from app.models.schemas import User
-
-        db_user = session.get(User, user.id)
-        if not db_user:
-            db_user = User(
-                id=user.id,
-                google_id=user.google_id or user.id,
-                email=user.email,
-                name=user.name,
-                picture=user.picture or "",
-                created_at=_now(),
-            )
-            session.add(db_user)
-            session.flush()
-
-        # Restore into the active company (do not invent another company's sheet data)
         business_id = biz.id or ""
         if company_name and (
             sheets_mod.is_placeholder_company_name(biz.name) or not (biz.name or "").strip()

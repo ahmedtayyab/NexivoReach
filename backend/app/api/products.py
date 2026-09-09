@@ -18,12 +18,13 @@ router = APIRouter(prefix="/api/products", tags=["products"])
 
 def _sync_products_to_sheets(business_id: str, products: list[dict]) -> None:
     try:
-        sheet_id = ""
-        company_name = "Catalog"
         with Session(engine) as session:
             biz = session.get(Business, business_id)
             sheet_id = sheets_mod.business_spreadsheet_id(biz)
             if not sheet_id:
+                return
+            owner = sheets_mod.owner_user(session, biz)
+            if not sheets_mod.is_configured(owner):
                 return
             company_name = sheets_mod.resolve_company_tab_name(biz, products)
             if (
@@ -46,8 +47,10 @@ def _sync_products_to_sheets(business_id: str, products: list[dict]) -> None:
                         biz.website = first_url
                 session.add(biz)
                 session.commit()
-        result = sheets_mod.sync_products(company_name, products, spreadsheet_id=sheet_id)
-        log.info("Sheets product sync (%s): %s", company_name, result)
+            result = sheets_mod.sync_products(
+                company_name, products, spreadsheet_id=sheet_id, session=session, user=owner
+            )
+            log.info("Sheets product sync (%s): %s", company_name, result)
     except Exception as exc:
         log.warning("Sheets product sync failed: %s", exc)
 

@@ -41,6 +41,9 @@ def _sync_leads_job(business_id: str, prospects: list[dict]) -> None:
             sheet_id = sheets_mod.business_spreadsheet_id(biz)
             if not sheet_id:
                 return
+            owner = sheets_mod.owner_user(session, biz)
+            if not sheets_mod.is_configured(owner):
+                return
             from app.models.schemas import ProductItem
             product_rows = session.exec(
                 select(ProductItem).where(ProductItem.business_id == business_id)
@@ -51,7 +54,9 @@ def _sync_leads_job(business_id: str, prospects: list[dict]) -> None:
                 if r.source_url or r.product_url
             ]
             seller = sheets_mod.resolve_company_tab_name(biz, products, fallback="Company")
-        sheets_mod.sync_leads(seller, prospects, spreadsheet_id=sheet_id)
+            sheets_mod.sync_leads(
+                seller, prospects, spreadsheet_id=sheet_id, session=session, user=owner
+            )
     except Exception as exc:
         log.warning("Sheets lead sync failed: %s", exc)
 

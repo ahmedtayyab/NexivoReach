@@ -97,9 +97,15 @@ class User(SQLModel, table=True):
     picture: str = ""
     created_at: str = ""
     active_business_id: Optional[str] = Field(default=None, index=True)
-    # User Gmail OAuth (separate from login session + Sheets service account)
+    # User Gmail OAuth (separate from login session)
     gmail_refresh_token: Optional[str] = Field(default=None)
     gmail_access_token: Optional[str] = Field(default=None)
     gmail_token_expiry: Optional[str] = Field(default=None)  # ISO UTC
     gmail_email: Optional[str] = Field(default=None)
     gmail_connected_at: Optional[str] = Field(default=None)
+    # User Google Sheets / Drive OAuth (writes to their Drive, not a shared SA)
+    sheets_refresh_token: Optional[str] = Field(default=None)
+    sheets_access_token: Optional[str] = Field(default=None)
+    sheets_token_expiry: Optional[str] = Field(default=None)
+    sheets_email: Optional[str] = Field(default=None)
+    sheets_connected_at: Optional[str] = Field(default=None)

@@ -81,12 +81,15 @@ def _recipient_email(row: ProspectRecord) -> str:
 
 def _sync_leads_to_sheets(session: Session, business_id: str, rows: List[ProspectRecord]) -> None:
     """Push stage/status to Sheets so emailed rows get Contacted coloring."""
-    if not rows or not sheets_mod.is_configured():
+    if not rows:
         return
     try:
         biz = session.get(Business, business_id) if business_id else None
         sheet_id = sheets_mod.business_spreadsheet_id(biz)
         if not sheet_id:
+            return
+        owner = sheets_mod.owner_user(session, biz)
+        if not sheets_mod.is_configured(owner):
             return
         seller = sheets_mod.resolve_company_tab_name(biz, fallback="Company")
         payload = []
@@ -127,7 +130,9 @@ def _sync_leads_to_sheets(session: Session, business_id: str, rows: List[Prospec
             })
         if dirty:
             session.commit()
-        sheets_mod.sync_leads(seller, payload, spreadsheet_id=sheet_id)
+        sheets_mod.sync_leads(
+            seller, payload, spreadsheet_id=sheet_id, session=session, user=owner
+        )
     except Exception as exc:
         log.warning("Sheets sync after outreach failed: %s", exc)
 

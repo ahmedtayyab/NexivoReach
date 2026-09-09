@@ -25,6 +25,7 @@ from app.api.tokens import (
     verify_oauth_state,
 )
 from app.integrations import gmail as gmail_mod
+from app.integrations import sheets_oauth as sheets_oauth_mod
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -40,6 +41,7 @@ def _user_payload(user) -> dict:
         "name": user.name,
         "picture": user.picture,
         "gmail": gmail_mod.status_payload(user),
+        "sheets": sheets_oauth_mod.status_payload(user),
     }
 
 
@@ -117,6 +119,37 @@ def gmail_connect(request: Request, user: AuthUser = Depends(get_current_user)):
     return response
 
 
+@router.get("/sheets")
+def sheets_connect(request: Request, user: AuthUser = Depends(get_current_user)):
+    """Consent for Google Sheets + Drive (user's own spreadsheets)."""
+    if not google_configured():
+        raise HTTPException(status_code=503, detail="Google OAuth is not configured")
+    if not auth_required():
+        raise HTTPException(status_code=400, detail="Connect Sheets after signing in with Google")
+    state = create_oauth_state("sheets", user_id=user.id)
+    params = {
+        "client_id": settings.GOOGLE_CLIENT_ID,
+        "redirect_uri": effective_google_redirect_uri(),
+        "response_type": "code",
+        "scope": f"openid email profile {sheets_oauth_mod.SHEETS_SCOPES}",
+        "state": state,
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+    }
+    response = RedirectResponse(f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
+    response.set_cookie(
+        "nr_oauth_state",
+        state,
+        httponly=True,
+        samesite="lax",
+        secure=_secure_cookies(),
+        max_age=600,
+        path="/",
+    )
+    return response
+
+
 @router.get("/gmail/status")
 def gmail_status(request: Request, user: AuthUser = Depends(get_current_user)):
     with Session(engine) as session:
@@ -124,6 +157,15 @@ def gmail_status(request: Request, user: AuthUser = Depends(get_current_user)):
         if not row:
             return {"connected": False, "email": "", "connectedAt": ""}
         return gmail_mod.status_payload(row)
+
+
+@router.get("/sheets/status")
+def sheets_oauth_status(request: Request, user: AuthUser = Depends(get_current_user)):
+    with Session(engine) as session:
+        row = session.get(User, user.id)
+        if not row:
+            return {"connected": False, "email": "", "connectedAt": ""}
+        return sheets_oauth_mod.status_payload(row)
 
 
 @router.post("/gmail/disconnect")
@@ -134,6 +176,16 @@ def gmail_disconnect(request: Request, user: AuthUser = Depends(get_current_user
             raise HTTPException(status_code=404, detail="User not found")
         gmail_mod.clear_tokens(session, row)
         return {"ok": True, **gmail_mod.status_payload(row)}
+
+
+@router.post("/sheets/disconnect")
+def sheets_oauth_disconnect(request: Request, user: AuthUser = Depends(get_current_user)):
+    with Session(engine) as session:
+        row = session.get(User, user.id)
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+        sheets_oauth_mod.clear_tokens(session, row)
+        return {"ok": True, **sheets_oauth_mod.status_payload(row)}
 
 
 @router.get("/google/callback")
@@ -153,6 +205,9 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
 
     if purpose == "gmail":
         return _gmail_callback(code, state_payload, app_url)
+
+    if purpose == "sheets":
+        return _sheets_callback(code, state_payload, app_url)
 
     if not verify_oauth_state(state, "oauth"):
         return RedirectResponse(f"{app_url}/?auth=error")
@@ -275,6 +330,61 @@ def _gmail_callback(code: str, state_payload: dict, app_url: str):
     response = HTMLResponse(
         """<!DOCTYPE html><html><head><meta charset="utf-8"></head>"""
         """<body><script>window.location.replace('/?gmail=connected#settings/integrations');</script></body></html>"""
+    )
+    response.delete_cookie("nr_oauth_state", path="/")
+    return response
+
+
+def _sheets_callback(code: str, state_payload: dict, app_url: str):
+    user_id = state_payload.get("uid") or ""
+    if state_payload.get("typ") != "sheets" or not user_id:
+        return RedirectResponse(f"{app_url}/?sheets=error#settings/integrations")
+
+    with httpx.Client(timeout=20.0) as client:
+        token_res = client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "redirect_uri": effective_google_redirect_uri(),
+                "grant_type": "authorization_code",
+            },
+            headers={"Accept": "application/json"},
+        )
+        if token_res.status_code >= 400:
+            return RedirectResponse(f"{app_url}/?sheets=error#settings/integrations")
+        token_data = token_res.json()
+        access_token = token_data.get("access_token")
+        refresh_token = token_data.get("refresh_token")
+        if not access_token:
+            return RedirectResponse(f"{app_url}/?sheets=error#settings/integrations")
+        info_res = client.get(
+            GOOGLE_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        sheets_email = ""
+        if info_res.status_code < 400:
+            sheets_email = info_res.json().get("email") or ""
+
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if not user:
+            return RedirectResponse(f"{app_url}/?sheets=error#settings/integrations")
+        if not refresh_token and not (user.sheets_refresh_token or "").strip():
+            return RedirectResponse(f"{app_url}/?sheets=error#settings/integrations")
+        sheets_oauth_mod.store_tokens(
+            session,
+            user,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=int(token_data.get("expires_in") or 3600),
+            email=sheets_email or user.email,
+        )
+
+    response = HTMLResponse(
+        """<!DOCTYPE html><html><head><meta charset="utf-8"></head>"""
+        """<body><script>window.location.replace('/?sheets=connected#settings/integrations');</script></body></html>"""
     )
     response.delete_cookie("nr_oauth_state", path="/")
     return response

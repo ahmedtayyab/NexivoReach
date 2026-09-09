@@ -11,6 +11,20 @@ import {
 import type { SettingsSection } from '../lib/navigation';
 import ConfigLattice from './brand/ConfigLattice';
 
+async function apiErrorMessage(resp: Response, fallback: string): Promise<string> {
+  const text = await resp.text();
+  try {
+    const body = JSON.parse(text) as { detail?: unknown };
+    if (typeof body.detail === 'string' && body.detail.trim()) return body.detail.trim();
+    if (Array.isArray(body.detail)) {
+      const first = body.detail[0] as { msg?: string } | undefined;
+      if (first?.msg) return String(first.msg);
+    }
+  } catch {
+    // plain text
+  }
+  return text.trim() || fallback;
+}
 interface Props {
   businessInfo: BusinessInfo;
   products: Product[];
@@ -651,6 +665,7 @@ function ICPSection({
 type SheetsStatus = {
   connected: boolean;
   platformReady?: boolean;
+  userOauthConnected?: boolean;
   reason?: string;
   spreadsheet_title?: string;
   spreadsheetId?: string;
@@ -659,6 +674,7 @@ type SheetsStatus = {
   message?: string;
   companyName?: string;
   companyId?: string;
+  oauth?: { connected: boolean; email?: string; connectedAt?: string };
 };
 
 function GmailConnectCard() {
@@ -808,6 +824,19 @@ function IntegrationsSection({
 
   useEffect(() => { load(); }, [companyId]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sheets = params.get('sheets');
+    if (sheets === 'connected') {
+      setConnectMsg('Google Sheets connected — create or link a spreadsheet for this company.');
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+      void load();
+    } else if (sheets === 'error') {
+      setConnectMsg('Google Sheets connect failed. Grant Sheets & Drive access and try again.');
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+    }
+  }, []);
+
   const handleConnect = async () => {
     if (!sheetInput.trim() || connectBusy) return;
     setConnectBusy(true);
@@ -818,7 +847,7 @@ function IntegrationsSection({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ spreadsheet: sheetInput.trim() }),
       });
-      if (!resp.ok) throw new Error(await resp.text());
+      if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Connect failed'));
       setSheetInput('');
       setConnectMsg('Sheet linked to this company.');
       await load();
@@ -835,7 +864,7 @@ function IntegrationsSection({
     setConnectMsg('');
     try {
       const resp = await apiFetch('/api/sheets/create', { method: 'POST' });
-      if (!resp.ok) throw new Error(await resp.text());
+      if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Create failed'));
       const data = await resp.json();
       setConnectMsg(
         data.sharedWith
@@ -907,7 +936,8 @@ function IntegrationsSection({
   };
 
   const platformReady = Boolean(status?.platformReady);
-  const saEmail = status?.serviceAccountEmail || '';
+  const userOauth = Boolean(status?.userOauthConnected ?? status?.oauth?.connected);
+  const oauthEmail = status?.oauth?.email || '';
 
   return (
     <div className="space-y-8">
@@ -916,25 +946,100 @@ function IntegrationsSection({
 
       {/* Google Sheets card */}
       <div className="rounded-xl border border-border bg-surface p-6 space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-[14px] font-semibold text-ink">Google Sheets</h3>
             <p className="text-[12.5px] text-ink-secondary mt-0.5">
-              Each company has its own spreadsheet. Catalog and leads sync only to the sheet linked here — never a shared sheet across accounts.
+              Connect your Google account once, then each company uses a spreadsheet in your Drive — nobody else can see it.
             </p>
           </div>
           {loading ? (
-            <Loader2 className="w-4 h-4 animate-spin text-ink-secondary" />
+            <Loader2 className="w-4 h-4 animate-spin text-ink-secondary shrink-0" />
           ) : status?.connected ? (
-            <span className="flex items-center gap-1.5 text-[12px] text-emerald-600 font-medium">
-              <CheckCircle2 className="w-4 h-4" /> Connected
+            <span className="flex items-center gap-1.5 text-[12px] text-emerald-600 font-medium shrink-0">
+              <CheckCircle2 className="w-4 h-4" /> Linked
+            </span>
+          ) : userOauth ? (
+            <span className="flex items-center gap-1.5 text-[12px] text-amber-600 font-medium shrink-0">
+              <CheckCircle2 className="w-4 h-4" /> Account ready
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 text-[12px] text-amber-600 font-medium">
-              <XCircle className="w-4 h-4" /> Not linked
+            <span className="flex items-center gap-1.5 text-[12px] text-amber-600 font-medium shrink-0">
+              <XCircle className="w-4 h-4" /> Not connected
             </span>
           )}
         </div>
+
+        {userOauth && oauthEmail && (
+          <p className="text-[13px] text-ink-secondary">
+            Sheets account <span className="font-medium text-ink">{oauthEmail}</span>
+          </p>
+        )}
+
+        {!userOauth && platformReady && !loading && (
+          <div className="flex flex-wrap gap-2 items-center">
+            <a
+              href="/api/auth/sheets"
+              className="inline-flex px-3 py-1.5 text-[13px] bg-accent hover:bg-accent-hover text-white rounded-md nr-btn-press"
+            >
+              Connect Google Sheets
+            </a>
+            <button
+              type="button"
+              onClick={load}
+              className="text-[12.5px] text-ink-secondary hover:text-ink underline-offset-2 hover:underline"
+            >
+              Refresh status
+            </button>
+          </div>
+        )}
+
+        {userOauth && !status?.connected && !loading && (
+          <div className="space-y-3 pt-1">
+            <p className="text-[12.5px] text-ink-secondary leading-relaxed">
+              Create a spreadsheet in your Drive for this company, or paste a sheet you already own.
+            </p>
+            <div className="flex flex-wrap gap-2 items-center">
+              <button
+                type="button"
+                disabled={createBusy}
+                onClick={handleCreate}
+                className="px-3 py-2 text-[13px] bg-accent hover:bg-accent-hover disabled:opacity-50 text-white rounded-md"
+              >
+                {createBusy ? 'Creating…' : 'Create spreadsheet'}
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!window.confirm('Disconnect Google Sheets from NexivoReach? Company sheet links stay until you unlink them.')) return;
+                  await apiFetch('/api/auth/sheets/disconnect', { method: 'POST' });
+                  setConnectMsg('Google Sheets disconnected.');
+                  await load();
+                }}
+                className="px-3 py-1.5 text-[12.5px] border border-border rounded-md text-ink-secondary hover:border-ink-muted"
+              >
+                Disconnect account
+              </button>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2 max-w-xl">
+              <input
+                type="text"
+                value={sheetInput}
+                onChange={e => setSheetInput(e.target.value)}
+                placeholder="Or paste spreadsheet URL / ID you own"
+                className="flex-1 border border-border rounded-md px-3 py-2 text-[13px] text-ink bg-panel"
+              />
+              <button
+                type="button"
+                disabled={connectBusy || !sheetInput.trim()}
+                onClick={handleConnect}
+                className="btn-secondary text-[13px] py-2 px-3 disabled:opacity-40"
+              >
+                {connectBusy ? 'Linking…' : 'Link sheet'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {status?.connected && status.url && (
           <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -955,7 +1060,7 @@ function IntegrationsSection({
                 setSyncLeadsMsg('');
                 try {
                   const resp = await apiFetch('/api/sheets/sync-leads', { method: 'POST' });
-                  if (!resp.ok) throw new Error(await resp.text());
+                  if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Sync failed'));
                   const data = await resp.json();
                   setSyncLeadsMsg(
                     `Synced ${data.written || 0} lead(s)`
@@ -979,78 +1084,33 @@ function IntegrationsSection({
             >
               Unlink sheet
             </button>
+            {userOauth && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!window.confirm('Disconnect Google Sheets from NexivoReach?')) return;
+                  await apiFetch('/api/auth/sheets/disconnect', { method: 'POST' });
+                  setConnectMsg('Google Sheets disconnected.');
+                  await load();
+                }}
+                className="px-3 py-1.5 text-[12.5px] text-ink-secondary hover:underline"
+              >
+                Disconnect account
+              </button>
+            )}
             {syncLeadsMsg && (
               <p className="w-full text-[12px] text-ink-secondary">{syncLeadsMsg}</p>
             )}
           </div>
         )}
 
-        {!status?.connected && !loading && platformReady && (
-          <div className="space-y-3 pt-1">
-            <p className="text-[12.5px] text-ink-secondary leading-relaxed">
-              Link a spreadsheet for <strong className="text-ink">this company only</strong>.
-              Share it with the service account as Editor, or create one automatically.
-            </p>
-            {saEmail && (
-              <p className="text-[12px] text-ink-secondary rounded-lg bg-canvas border border-border px-3 py-2 font-mono break-all select-all">
-                {saEmail}
-              </p>
-            )}
-            <div className="flex flex-col sm:flex-row gap-2 max-w-xl">
-              <input
-                type="text"
-                value={sheetInput}
-                onChange={e => setSheetInput(e.target.value)}
-                placeholder="Paste spreadsheet URL or ID"
-                className="flex-1 border border-border rounded-md px-3 py-2 text-[13px] text-ink bg-panel"
-              />
-              <button
-                type="button"
-                disabled={connectBusy || !sheetInput.trim()}
-                onClick={handleConnect}
-                className="px-3 py-2 text-[13px] bg-accent hover:bg-accent-hover disabled:opacity-40 text-white rounded-md"
-              >
-                {connectBusy ? 'Linking…' : 'Link sheet'}
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-2 items-center">
-              <button
-                type="button"
-                disabled={createBusy}
-                onClick={handleCreate}
-                className="btn-secondary text-[12.5px] py-1.5 px-4 disabled:opacity-50"
-              >
-                {createBusy ? 'Creating…' : 'Create my sheet'}
-              </button>
-              <button
-                type="button"
-                onClick={load}
-                className="text-[12.5px] text-ink-secondary hover:text-ink underline-offset-2 hover:underline"
-              >
-                Refresh status
-              </button>
-            </div>
-            {connectMsg && <p className="text-[12.5px] text-ink-secondary">{connectMsg}</p>}
-          </div>
+        {!platformReady && !loading && (
+          <p className="text-[12.5px] text-ink-secondary leading-relaxed">
+            Google sign-in is not configured on the server, so Sheets connect is unavailable.
+          </p>
         )}
 
-        {!status?.connected && !loading && !platformReady && (
-          <div className="space-y-3 pt-1">
-            <p className="text-[12.5px] text-ink-secondary leading-relaxed">
-              Sheets export is not available yet — the server needs{' '}
-              <code className="bg-canvas px-1 rounded text-[11.5px]">GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON</code>.
-              Once that is set, each company links its own spreadsheet here.
-            </p>
-            <button
-              onClick={load}
-              className="btn-secondary text-[12.5px] py-1.5 px-4"
-            >
-              Refresh status
-            </button>
-          </div>
-        )}
-
-        {connectMsg && status?.connected && (
+        {connectMsg && (
           <p className="text-[12.5px] text-ink-secondary">{connectMsg}</p>
         )}
       </div>
