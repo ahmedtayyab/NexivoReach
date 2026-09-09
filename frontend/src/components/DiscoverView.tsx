@@ -12,8 +12,6 @@ interface Props {
   products?: Product[];
   onAddProspects: (prospects: Prospect[]) => void;
   onAddLog: (log: AgentRunLog) => void;
-  /** Reload leads after background email auto-fill finishes */
-  onRefreshProspects?: () => void | Promise<void>;
 }
 
 export default function DiscoverView({
@@ -22,7 +20,6 @@ export default function DiscoverView({
   products = [],
   onAddProspects,
   onAddLog,
-  onRefreshProspects,
 }: Props) {
   const [query, setQuery] = useState('');
   const [isRunning, setIsRunning] = useState(false);
