@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Prospect } from '../types';
 import { ChevronDown, ChevronUp, Mail } from 'lucide-react';
 import MailFlow from './brand/MailFlow';
-import { leadRowToneClass } from '../lib/leadTone';
+import { leadRowToneClass, recipientEmail } from '../lib/leadTone';
 
 interface Props {
   prospects: Prospect[];
@@ -16,6 +16,7 @@ interface Props {
   onPrepareFollowUp?: (id: string) => void;
   onSendAllReady?: () => void;
   onPrepareAndSend?: () => void;
+  onBackfillRecipients?: () => Promise<void>;
   gmailConnected?: boolean;
 }
 
@@ -47,6 +48,7 @@ export default function OutreachInboxView({
   onPrepareFollowUp,
   onSendAllReady,
   onPrepareAndSend,
+  onBackfillRecipients,
   gmailConnected = false,
 }: Props) {
   const withDrafts = useMemo(
@@ -81,6 +83,19 @@ export default function OutreachInboxView({
     setIndex(0);
   }, [filter, withDrafts.length]);
 
+  const backfillAttempted = useRef(false);
+  useEffect(() => {
+    if (!onBackfillRecipients || backfillAttempted.current) return;
+    const missing = withDrafts.some(p => {
+      const st = p.outreachDraft?.status;
+      if (st === 'Sent' || st === 'Replied') return false;
+      return !recipientEmail(p);
+    });
+    if (!missing) return;
+    backfillAttempted.current = true;
+    void onBackfillRecipients();
+  }, [onBackfillRecipients, withDrafts]);
+
   useEffect(() => {
     if (index >= filtered.length && filtered.length > 0) {
       setIndex(filtered.length - 1);
@@ -100,8 +115,8 @@ export default function OutreachInboxView({
     }
     setSubject(draft.subject);
     setBody(draft.body);
-    setToEmail(draft.toEmail || current?.email || '');
-  }, [current?.id, draft?.subject, draft?.body, draft?.toEmail, current?.email]);
+    setToEmail(recipientEmail(current));
+  }, [current?.id, draft?.subject, draft?.body, draft?.toEmail, current?.email, current?.contacts]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -125,7 +140,7 @@ export default function OutreachInboxView({
 
   const sendableCount = withDrafts.filter(p => {
     const st = p.outreachDraft?.status;
-    const to = (p.outreachDraft?.toEmail || p.email || '').trim();
+    const to = recipientEmail(p);
     return (st === 'Draft' || st === 'Approved') && to.includes('@') && isBestFit(p);
   }).length;
 
@@ -138,7 +153,7 @@ export default function OutreachInboxView({
     if (
       subject !== draft.subject ||
       body !== draft.body ||
-      toEmail !== (draft.toEmail || current.email || '')
+      toEmail !== recipientEmail(current)
     ) {
       onSaveDraft(current.id, subject, body, toEmail);
     }
@@ -276,7 +291,7 @@ export default function OutreachInboxView({
                       Intent {intent} · {st}
                     </p>
                     <p className="text-[11px] text-ink-muted truncate">
-                      {p.outreachDraft?.toEmail || p.email || 'Set recipient below'}
+                      {recipientEmail(p) || 'Will resolve from site contacts'}
                     </p>
                   </button>
                 );
@@ -320,15 +335,26 @@ export default function OutreachInboxView({
               </div>
             </div>
 
-            <label className="text-[11px] font-medium text-ink-muted uppercase tracking-wide">To (any email)</label>
-            <input
-              type="email"
-              value={toEmail}
-              onChange={e => setToEmail(e.target.value)}
-              onBlur={persistDraftFields}
-              placeholder="buyer@company.com"
-              className="mt-1 mb-3 w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel-elevated"
-            />
+            <label className="text-[11px] font-medium text-ink-muted uppercase tracking-wide">Buyer email (To)</label>
+            <div className="mt-1 mb-3 flex gap-2">
+              <input
+                type="email"
+                value={toEmail}
+                onChange={e => setToEmail(e.target.value)}
+                onBlur={persistDraftFields}
+                placeholder="Will fill from contact page…"
+                className="flex-1 border border-border rounded-md px-3 py-2 text-[13px] bg-panel-elevated"
+              />
+              {!toEmail.includes('@') && onBackfillRecipients && (
+                <button
+                  type="button"
+                  onClick={() => void onBackfillRecipients()}
+                  className="shrink-0 px-3 py-2 text-[12px] border border-border rounded-md text-ink-secondary hover:border-ink-muted"
+                >
+                  Find on site
+                </button>
+              )}
+            </div>
             <label className="text-[11px] font-medium text-ink-muted uppercase tracking-wide">Subject</label>
             <input
               value={subject}
@@ -344,7 +370,38 @@ export default function OutreachInboxView({
               rows={12}
               className="mt-1 flex-1 w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel-elevated resize-y min-h-[220px]"
             />
-            {draft.personalizedReason && (
+            {draft.outreachRationale && (
+              <div className="mt-3 rounded-md border border-border-subtle bg-panel-elevated/60 px-3 py-2.5 space-y-1.5">
+                <p className="text-[11px] font-medium text-ink-muted uppercase tracking-wide">Outreach rationale</p>
+                {draft.outreachRationale.primary_signal && (
+                  <p className="text-[12px] text-ink-secondary">
+                    <span className="text-ink-muted">Signal:</span> {draft.outreachRationale.primary_signal}
+                  </p>
+                )}
+                {draft.outreachRationale.pain_hypothesis && (
+                  <p className="text-[12px] text-ink-secondary">
+                    <span className="text-ink-muted">Pain hypothesis:</span> {draft.outreachRationale.pain_hypothesis}
+                  </p>
+                )}
+                {draft.outreachRationale.matched_product && (
+                  <p className="text-[12px] text-ink-secondary">
+                    <span className="text-ink-muted">Matched product:</span> {draft.outreachRationale.matched_product}
+                  </p>
+                )}
+                <p className="text-[12px] text-ink-secondary">
+                  {draft.outreachRationale.angle ? (
+                    <><span className="text-ink-muted">Approach:</span> {draft.outreachRationale.angle}</>
+                  ) : null}
+                  {draft.outreachRationale.signal_confidence ? (
+                    <>
+                      {draft.outreachRationale.angle ? ' · ' : null}
+                      <span className="text-ink-muted">Confidence:</span> {draft.outreachRationale.signal_confidence}
+                    </>
+                  ) : null}
+                </p>
+              </div>
+            )}
+            {!draft.outreachRationale && draft.personalizedReason && (
               <p className="text-[12px] text-ink-muted mt-2">{draft.personalizedReason}</p>
             )}
 

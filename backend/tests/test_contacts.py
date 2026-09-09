@@ -1,4 +1,12 @@
-from app.tools.contact_finder import _clean_email, _extract_from_html, _rank_scored, PAGE_CONTACT, PAGE_HOME, SRC_MAILTO, SRC_TEXT
+from app.tools.contact_finder import (
+    _clean_email,
+    _extract_from_html,
+    _rank_scored,
+    PAGE_CONTACT,
+    PAGE_HOME,
+    SRC_MAILTO,
+    SRC_TEXT,
+)
 
 
 def test_clean_email_filters_junk():
@@ -59,3 +67,52 @@ def test_off_domain_text_email_dropped():
     assert found["emails"][0] == "orders@desertmartial.com"
     assert "help@wix.com" not in found["emails"]
     assert "support@google.com" not in found["emails"]
+
+
+def test_email_split_across_tags():
+    """Contact sections often wrap local/domain in separate spans."""
+    html = """
+    <html><body>
+      <div id="contact" class="contact-section">
+        <p>Email us at <span>sales</span>@<span>acmewear.com</span></p>
+      </div>
+    </body></html>
+    """
+    found = _extract_from_html(html, "https://acmewear.com/", "acmewear.com")
+    assert "sales@acmewear.com" in found["emails"]
+
+
+def test_jsonld_organization_email():
+    html = """
+    <html><body>
+      <script type="application/ld+json">
+        {"@type":"Organization","name":"Acme","email":"hello@acmewear.com",
+         "contactPoint":{"@type":"ContactPoint","email":"sales@acmewear.com"}}
+      </script>
+      <p>Welcome</p>
+    </body></html>
+    """
+    found = _extract_from_html(html, "https://acmewear.com/", "acmewear.com")
+    assert "hello@acmewear.com" in found["emails"] or "sales@acmewear.com" in found["emails"]
+
+
+def test_contact_link_text_discovers_nonobvious_path():
+    html = """
+    <html><body>
+      <a href="/pages/help">Contact Us</a>
+      <span itemprop="email">info@acmewear.com</span>
+    </body></html>
+    """
+    found = _extract_from_html(html, "https://acmewear.com/", "acmewear.com")
+    assert "info@acmewear.com" in found["emails"]
+    assert any("/pages/help" in u for u in found["contact_urls"])
+
+
+def test_html_entity_at_sign():
+    html = """
+    <html><body>
+      <div class="contact">Write to office&#64;brand.com</div>
+    </body></html>
+    """
+    found = _extract_from_html(html, "https://brand.com/", "brand.com")
+    assert "office@brand.com" in found["emails"]

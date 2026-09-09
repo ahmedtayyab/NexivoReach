@@ -15,7 +15,7 @@ from app.database.session import engine
 from app.integrations import gmail as gmail_mod
 from app.models.schemas import Business, ProspectRecord, User
 from app.providers.factory import get_ai_provider
-from app.tools.contact_finder import discover_contacts
+from app.tools.contact_finder import discover_contacts, resolve_lead_email, email_from_contacts
 from app.tools.web_search import WebSearchTool
 import logging
 
@@ -68,6 +68,100 @@ def _is_outreach_ready(row: ProspectRecord) -> bool:
     return False
 
 
+def _recipient_email(row: ProspectRecord) -> str:
+    """Resolve who to email — draft To: → lead.email → contacts[]."""
+    draft = row.outreach_draft or {}
+    return resolve_lead_email(
+        email=row.email or "",
+        contacts=row.contacts or [],
+        to_email=(draft.get("toEmail") or "") if isinstance(draft, dict) else "",
+    )
+
+
+async def _ensure_recipient(session: Session, row: ProspectRecord) -> str:
+    """
+    Make sure the lead has a recipient email before send.
+    Uses stored email/contacts first; if empty, re-scrapes the company site.
+    """
+    existing = _recipient_email(row)
+    if existing:
+        # Keep draft.toEmail + row.email in sync so UI/send stay consistent
+        draft = dict(row.outreach_draft or {})
+        dirty = False
+        if draft and not (draft.get("toEmail") or "").strip():
+            draft["toEmail"] = existing
+            row.outreach_draft = draft
+            dirty = True
+        if not (row.email or "").strip():
+            row.email = existing
+            dirty = True
+        if dirty:
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+        return existing
+
+    website = (row.website or "").strip()
+    if not website:
+        return ""
+
+    phone = (row.phone or "").strip()
+    page: Dict[str, Any] = {}
+    try:
+        page = await WebSearchTool().scrape_homepage(website)
+    except Exception as exc:
+        log.warning("Recipient scrape homepage failed for %s: %s", row.id, exc)
+    site_text = (page.get("text") or "") if isinstance(page, dict) else ""
+    try:
+        found = await discover_contacts(
+            website=website,
+            homepage_html=(page.get("html") or "")[:400000] if isinstance(page, dict) else "",
+            homepage_text=site_text,
+            homepage_url=(page.get("url") if isinstance(page, dict) else None) or website,
+            seed_phone=phone,
+            seed_emails=list((page.get("emails") or []) if isinstance(page, dict) else []),
+        )
+    except Exception as exc:
+        log.warning("Recipient contact discover failed for %s: %s", row.id, exc)
+        return ""
+
+    email = (found.get("email") or "").strip()
+    contacts = found.get("contacts") or list(row.contacts or [])
+    if not email:
+        email = email_from_contacts(contacts)
+    if not email:
+        return ""
+
+    if email and not any(
+        isinstance(c, dict)
+        and (c.get("type") or "").lower() == "email"
+        and (c.get("value") or "").lower() == email.lower()
+        for c in contacts
+    ):
+        contacts = [{
+            "type": "email",
+            "value": email,
+            "label": "Email",
+            "source": "site",
+            "role": "general",
+        }, *contacts]
+
+    row.email = email
+    row.phone = found.get("phone") or row.phone
+    row.contacts = contacts
+    draft = dict(row.outreach_draft or {})
+    if draft:
+        draft["toEmail"] = email
+        row.outreach_draft = draft
+    timeline = list(row.agent_timeline or [])
+    timeline.append({"time": _clock(), "action": f"Resolved recipient email {email}"})
+    row.agent_timeline = timeline
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return email
+
+
 async def _prepare_one(
     session: Session,
     row: ProspectRecord,
@@ -75,61 +169,66 @@ async def _prepare_one(
     *,
     force: bool = False,
 ) -> ProspectRecord:
-    if row.outreach_draft and not force:
-        return row
-
-    email = (row.email or "").strip()
+    # Always try to resolve recipient — even when a draft already exists
+    email = await _ensure_recipient(session, row)
     contacts = list(row.contacts or [])
     phone = (row.phone or "").strip()
-    site_text = ""
 
-    if row.website:
-        page: Dict[str, Any] = {}
-        try:
-            page = await WebSearchTool().scrape_homepage(row.website)
-            site_text = (page.get("text") or "") if isinstance(page, dict) else ""
-        except Exception:
-            site_text = ""
-            page = {}
-        try:
-            found = await discover_contacts(
-                website=row.website,
-                homepage_html=(page.get("html") or "")[:250000],
-                homepage_text=site_text,
-                homepage_url=page.get("url") or row.website,
-                seed_phone=phone,
-                seed_emails=list(page.get("emails") or []),
-            )
-            contacts = found.get("contacts") or contacts
-            email = found.get("email") or email
-            phone = found.get("phone") or phone
-        except Exception as exc:
-            log.warning("Contact discover failed for %s: %s", row.id, exc)
+    if row.outreach_draft and not force:
+        # Patch empty To: on existing drafts so one-click send works
+        draft = dict(row.outreach_draft)
+        if email and not (draft.get("toEmail") or "").strip():
+            draft["toEmail"] = email
+            row.outreach_draft = draft
+            if not (row.email or "").strip():
+                row.email = email
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+        return row
+
+    # If still no email, scrape again as part of prepare (website may have been empty earlier)
+    if not email and (row.website or "").strip():
+        email = await _ensure_recipient(session, row)
+        contacts = list(row.contacts or [])
+        phone = (row.phone or "").strip()
 
     provider = get_ai_provider()
+    fb = row.fit_breakdown or {}
     draft = await provider.generate_personalized_outreach(
         company_name=row.company_name or "there",
         why_prospect=row.why_this_prospect or "",
         signals=row.buying_signals or [],
         matched_products=row.product_fit or [],
         seller_name=seller,
+        why_now=getattr(row, "why_now", None) or fb.get("whyNow") or "",
+        evidence=fb.get("evidence") or [],
+        location=row.location or "",
+        industry=row.industry or "",
+        recommended_approach=row.recommended_approach or "",
+        fit_summary=fb.get("fitSummary") or "",
+        intent=fb.get("intent") or "",
     )
     now = _now()
+    to_addr = email or _recipient_email(row)
     outreach = {
         "id": f"draft-{uuid4().hex[:8]}",
         "subject": draft.get("subject") or f"Introduction — {seller}",
         "body": draft.get("body") or "",
         "personalizedReason": draft.get("personalizedReason") or "",
+        "outreachRationale": draft.get("outreachRationale") or None,
         "status": "Draft",
         "createdAt": now,
-        "toEmail": email or "",
+        "toEmail": to_addr or "",
     }
     timeline = list(row.agent_timeline or [])
     timeline.append({"time": _clock(), "action": "Prepared outreach draft (human review before send)"})
-    if email:
-        timeline.append({"time": _clock(), "action": f"Contact email {email}"})
+    if to_addr:
+        timeline.append({"time": _clock(), "action": f"Contact email {to_addr}"})
+    else:
+        timeline.append({"time": _clock(), "action": "No public email found — draft saved without To:"})
 
-    row.email = email or row.email
+    row.email = to_addr or row.email
     row.phone = phone or row.phone
     row.contacts = contacts
     row.outreach_draft = outreach
@@ -161,7 +260,11 @@ async def prepare_outreach_batch(
             if id_set is not None and row.id not in id_set:
                 continue
             if row.outreach_draft and not force:
-                continue
+                # Still include if draft exists but To: is empty — patch recipient
+                if _recipient_email(row) and (row.outreach_draft or {}).get("toEmail"):
+                    continue
+                if not row.website and not _recipient_email(row):
+                    continue
             if id_set is None and not _is_outreach_ready(row):
                 continue
             targets.append(row)
@@ -187,8 +290,23 @@ def _draft_ready_to_send(row: ProspectRecord) -> bool:
     status = (draft.get("status") or "").strip()
     if status not in ("Draft", "Approved"):
         return False
-    to = (draft.get("toEmail") or row.email or "").strip()
-    if not to or "@" not in to:
+    # Recipient may live on lead.email / contacts even if draft.toEmail is empty
+    to = _recipient_email(row)
+    if not to:
+        return False
+    if not (draft.get("subject") or "").strip():
+        return False
+    if not (draft.get("body") or "").strip():
+        return False
+    return True
+
+
+def _draft_sendable_after_resolve(row: ProspectRecord) -> bool:
+    """Draft has subject/body and status — recipient may still need a scrape."""
+    draft = row.outreach_draft or {}
+    if not draft:
+        return False
+    if (draft.get("status") or "").strip() not in ("Draft", "Approved"):
         return False
     if not (draft.get("subject") or "").strip():
         return False
@@ -209,11 +327,19 @@ async def _send_one_gmail(
     draft = dict(row.outreach_draft or {})
     if not draft:
         raise HTTPException(status_code=400, detail="No outreach draft")
-    to_addr = (to or draft.get("toEmail") or row.email or "").strip()
+
+    to_addr = (to or "").strip() or await _ensure_recipient(session, row)
+    if not to_addr:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No recipient email for {row.company_name or 'lead'} — "
+                "no public address found on their website/contact page"
+            ),
+        )
+
     subj = (subject or draft.get("subject") or "").strip()
     body_text = (body or draft.get("body") or "").strip()
-    if not to_addr or "@" not in to_addr:
-        raise HTTPException(status_code=400, detail=f"Missing recipient email for {row.company_name}")
     if not subj or not body_text:
         raise HTTPException(status_code=400, detail=f"Incomplete draft for {row.company_name}")
 
@@ -232,6 +358,7 @@ async def _send_one_gmail(
     draft["gmailThreadId"] = sent.get("threadId") or ""
     draft["sentAt"] = _now()
     draft["sentVia"] = "gmail"
+    row.email = to_addr or row.email
     row.stage = "Contacted"
     timeline = list(row.agent_timeline or [])
     timeline.append({"time": _clock(), "action": f"Sent via Gmail to {to_addr}"})
@@ -251,7 +378,7 @@ async def send_batch(
 ):
     """
     One-click: send ready outreach drafts via Gmail.
-    Defaults to best-fit Draft/Approved leads that have a recipient email.
+    Resolves recipient from lead email/contacts (and re-scrapes if needed).
     """
     ids = payload.get("ids") or []
     best_fit_only = payload.get("bestFitOnly", True) if not ids else False
@@ -274,24 +401,32 @@ async def send_batch(
         for row in rows:
             if id_set is not None and row.id not in id_set:
                 continue
-            if not _draft_ready_to_send(row):
+            if not _draft_sendable_after_resolve(row):
                 continue
             if best_fit_only and not _is_outreach_ready(row):
                 continue
             targets.append(row)
 
-        # Prefer higher fit first
         targets.sort(key=lambda r: int(r.fit_score or 0), reverse=True)
         targets = targets[:limit]
 
         sent_rows: List[ProspectRecord] = []
         errors: List[Dict[str, str]] = []
+        skipped_no_email = 0
         for row in targets:
             try:
-                # Small pause reduces Gmail rate-limit risk
+                recipient = await _ensure_recipient(session, row)
+                if not recipient:
+                    skipped_no_email += 1
+                    errors.append({
+                        "id": row.id or "",
+                        "company": row.company_name or "",
+                        "error": "No public email on website/contact page",
+                    })
+                    continue
                 if sent_rows:
                     time.sleep(0.35)
-                sent_rows.append(await _send_one_gmail(session, row, db_user))
+                sent_rows.append(await _send_one_gmail(session, row, db_user, to=recipient))
             except Exception as exc:
                 log.warning("Batch send failed for %s: %s", row.id, exc)
                 errors.append({
@@ -304,7 +439,7 @@ async def send_batch(
             "ok": True,
             "sent": len(sent_rows),
             "failed": len(errors),
-            "skipped": 0,
+            "skippedNoEmail": skipped_no_email,
             "errors": errors[:20],
             "prospects": [prospect_to_frontend(r) for r in sent_rows],
         }
@@ -317,8 +452,7 @@ async def send_ready(
     user: AuthUser = Depends(get_current_user),
 ):
     """
-    Full one-click automation: prepare missing drafts for best-fit leads (with email),
-    then send all ready drafts via Gmail.
+    Full one-click: resolve emails → prepare drafts → send via Gmail.
     """
     limit = min(25, max(1, int(payload.get("limit") or 15)))
     with Session(engine) as session:
@@ -335,18 +469,22 @@ async def send_ready(
         ).all()
 
         prepared = 0
-        # Prepare best-fit leads that have an email but no draft yet
+        resolved = 0
         for row in sorted(rows, key=lambda r: int(r.fit_score or 0), reverse=True):
             if prepared >= limit:
                 break
             if not _is_outreach_ready(row):
                 continue
-            has_email = bool((row.email or "").strip() and "@" in (row.email or ""))
-            if not has_email:
-                continue
-            if row.outreach_draft and _draft_ready_to_send(row):
-                continue
             if row.outreach_draft and (row.outreach_draft or {}).get("status") in ("Sent", "Replied"):
+                continue
+            # Resolve / scrape email first — this is the product core
+            try:
+                email = await _ensure_recipient(session, row)
+            except Exception:
+                email = ""
+            if email:
+                resolved += 1
+            if not email and not (row.website or "").strip():
                 continue
             try:
                 await _prepare_one(session, row, seller, force=False)
@@ -354,11 +492,13 @@ async def send_ready(
             except Exception as exc:
                 log.warning("Prepare before send failed for %s: %s", row.id, exc)
 
-        # Re-load and send
         rows = session.exec(
             select(ProspectRecord).where(ProspectRecord.business_id == business_id)
         ).all()
-        targets = [r for r in rows if _draft_ready_to_send(r) and _is_outreach_ready(r)]
+        targets = [
+            r for r in rows
+            if _draft_sendable_after_resolve(r) and _is_outreach_ready(r)
+        ]
         targets.sort(key=lambda r: int(r.fit_score or 0), reverse=True)
         targets = targets[:limit]
 
@@ -366,9 +506,17 @@ async def send_ready(
         errors: List[Dict[str, str]] = []
         for row in targets:
             try:
+                recipient = await _ensure_recipient(session, row)
+                if not recipient:
+                    errors.append({
+                        "id": row.id or "",
+                        "company": row.company_name or "",
+                        "error": "No public email on website/contact page",
+                    })
+                    continue
                 if sent_rows:
                     time.sleep(0.35)
-                sent_rows.append(await _send_one_gmail(session, row, db_user))
+                sent_rows.append(await _send_one_gmail(session, row, db_user, to=recipient))
             except Exception as exc:
                 log.warning("Send-ready failed for %s: %s", row.id, exc)
                 errors.append({
@@ -380,10 +528,82 @@ async def send_ready(
         return {
             "ok": True,
             "prepared": prepared,
+            "resolvedEmails": resolved,
             "sent": len(sent_rows),
             "failed": len(errors),
             "errors": errors[:20],
             "prospects": [prospect_to_frontend(r) for r in sent_rows],
+        }
+
+
+@router.post("/backfill-recipients")
+async def backfill_recipients(
+    payload: Dict[str, Any],
+    request: Request,
+    user: AuthUser = Depends(get_current_user),
+):
+    """
+    Fill empty Outreach To: fields from contacts, then re-scrape sites still missing email.
+    Called when opening Outreach so buyer addresses aren't blank.
+    """
+    limit = min(30, max(1, int(payload.get("limit") or 20)))
+    with Session(engine) as session:
+        business_id = resolve_business_id(request, user, session)
+        rows = session.exec(
+            select(ProspectRecord).where(ProspectRecord.business_id == business_id)
+        ).all()
+        targets: List[ProspectRecord] = []
+        for row in rows:
+            draft = row.outreach_draft or {}
+            if not draft:
+                continue
+            if (draft.get("status") or "").strip() in ("Sent", "Replied"):
+                continue
+            existing = _recipient_email(row)
+            if existing:
+                # Sync empty To: / email from contacts without re-scraping
+                dirty = False
+                draft_dict = dict(draft)
+                if not (draft_dict.get("toEmail") or "").strip():
+                    draft_dict["toEmail"] = existing
+                    row.outreach_draft = draft_dict
+                    dirty = True
+                if not (row.email or "").strip():
+                    row.email = existing
+                    dirty = True
+                if dirty:
+                    session.add(row)
+                continue
+            if not (row.website or "").strip():
+                continue
+            targets.append(row)
+
+        session.commit()
+
+        targets.sort(key=lambda r: int(r.fit_score or 0), reverse=True)
+        filled: List[ProspectRecord] = []
+        for row in targets[:limit]:
+            try:
+                email = await _ensure_recipient(session, row)
+                if email:
+                    filled.append(row)
+            except Exception as exc:
+                log.warning("Backfill recipient failed for %s: %s", row.id, exc)
+
+        # Reload business rows so response includes synced To: fields
+        rows = session.exec(
+            select(ProspectRecord).where(ProspectRecord.business_id == business_id)
+        ).all()
+        updated = [
+            r for r in rows
+            if r.outreach_draft and _recipient_email(r)
+            and (r.outreach_draft or {}).get("status") not in ("Sent", "Replied")
+        ]
+
+        return {
+            "ok": True,
+            "filled": len(filled),
+            "prospects": [prospect_to_frontend(r) for r in updated],
         }
 
 
@@ -408,7 +628,7 @@ async def refresh_contacts(
         site_text = (page.get("text") or "") if isinstance(page, dict) else ""
         found = await discover_contacts(
             website=row.website,
-            homepage_html=(page.get("html") or "")[:250000] if isinstance(page, dict) else "",
+            homepage_html=(page.get("html") or "")[:400000] if isinstance(page, dict) else "",
             homepage_text=site_text,
             homepage_url=(page.get("url") if isinstance(page, dict) else None) or row.website,
             seed_phone=phone,
@@ -493,7 +713,7 @@ async def prepare_follow_up(
             "personalizedReason": draft.get("personalizedReason") or "Follow-up draft",
             "status": "Draft",
             "createdAt": now,
-            "toEmail": prior.get("toEmail") or row.email or "",
+            "toEmail": prior.get("toEmail") or _recipient_email(row) or "",
             "kind": "follow_up",
             "priorMessageId": prior.get("gmailMessageId") or "",
             "priorThreadId": prior.get("gmailThreadId") or "",
@@ -533,13 +753,19 @@ async def send_outreach(
 
         subject = (body_in.get("subject") or draft.get("subject") or "").strip()
         body = (body_in.get("body") or draft.get("body") or "").strip()
-        to = (body_in.get("toEmail") or draft.get("toEmail") or row.email or "").strip()
+        to = (body_in.get("toEmail") or "").strip() or await _ensure_recipient(session, row)
         if subject:
             draft["subject"] = subject
         if body:
             draft["body"] = body
         if to:
             draft["toEmail"] = to
+            row.email = to or row.email
+            row.outreach_draft = draft
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            draft = dict(row.outreach_draft or {})
 
         db_user = session.get(User, user.id)
         use_gmail = bool(db_user and gmail_mod.is_connected(db_user))
@@ -564,10 +790,20 @@ async def send_outreach(
                 "prospect": prospect_to_frontend(row),
             }
 
-        # Mailto fallback — client opens mail app; we still mark Sent like before
+        # Mailto fallback — needs a recipient just like Gmail
+        if not to or "@" not in to:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No recipient email for {row.company_name or 'lead'} — "
+                    "no public address found on their website/contact page"
+                ),
+            )
         draft["status"] = "Sent"
         draft["sentAt"] = _now()
         draft["sentVia"] = "mailto"
+        draft["toEmail"] = to
+        row.email = to or row.email
         row.stage = "Contacted"
         timeline = list(row.agent_timeline or [])
         timeline.append({"time": _clock(), "action": "Opened mailto for human send"})
@@ -608,7 +844,7 @@ async def sync_replies(
             if (draft.get("status") or "") not in ("Sent", "Approved", "Draft"):
                 if row.stage not in ("Contacted", "Replied", "Re-contact"):
                     continue
-            email = (draft.get("toEmail") or row.email or "").strip()
+            email = _recipient_email(row)
             thread_id = (draft.get("gmailThreadId") or "").strip()
             if not email and not thread_id:
                 continue

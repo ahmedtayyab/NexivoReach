@@ -9,6 +9,25 @@ function normalizeStage(stage: string): string {
   return map[stage] || stage || 'To contact';
 }
 
+/** Resolve outreach To: from draft, lead.email, or contacts[]. */
+export function recipientEmail(p: Prospect | null | undefined): string {
+  if (!p) return '';
+  const fromDraft = (p.outreachDraft?.toEmail || '').trim();
+  if (fromDraft.includes('@')) return fromDraft;
+  const fromLead = (p.email || '').trim();
+  if (fromLead.includes('@')) return fromLead;
+  for (const c of p.contacts || []) {
+    const type = (c.type || '').toLowerCase();
+    let val = (c.value || '').trim();
+    if (val.toLowerCase().startsWith('mailto:')) {
+      val = val.split(':')[1]?.split('?')[0]?.trim() || '';
+    }
+    if (type && type !== 'email' && type !== 'mail' && type !== 'e-mail') continue;
+    if (val.includes('@')) return val;
+  }
+  return '';
+}
+
 /** Visual wash for outreached / replied / follow-up rows. */
 export function leadRowToneClass(prospect: Prospect): string {
   const stage = normalizeStage(prospect.stage);

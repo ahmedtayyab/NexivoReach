@@ -1,10 +1,20 @@
 import time
 from typing import Any, Dict, Optional
 from app.models.schemas import ProspectRecord, AgentRunRecord, Business, ProductItem, ICPConfig
+from app.tools.contact_finder import resolve_lead_email
 
 
 def prospect_to_frontend(pr: ProspectRecord) -> Dict[str, Any]:
     breakdown = pr.fit_breakdown or {}
+    draft = pr.outreach_draft
+    draft_out = dict(draft) if isinstance(draft, dict) else draft
+    resolved = resolve_lead_email(
+        email=getattr(pr, "email", None) or "",
+        contacts=getattr(pr, "contacts", None) or [],
+        to_email=(draft_out.get("toEmail") if isinstance(draft_out, dict) else "") or "",
+    )
+    if isinstance(draft_out, dict) and resolved and not (draft_out.get("toEmail") or "").strip():
+        draft_out = {**draft_out, "toEmail": resolved}
     return {
         "id": pr.id,
         "companyName": pr.company_name,
@@ -28,13 +38,13 @@ def prospect_to_frontend(pr: ProspectRecord) -> Dict[str, Any]:
         "buyingSignals": pr.buying_signals or [],
         "productFit": pr.product_fit or [],
         "recommendedApproach": pr.recommended_approach,
-        "outreachDraft": pr.outreach_draft,
+        "outreachDraft": draft_out,
         "stage": pr.stage,
         "discoveredAt": pr.discovered_at,
         "agentTimeline": pr.agent_timeline or [],
         "source": getattr(pr, "source", None) or "",
         "phone": getattr(pr, "phone", None) or "",
-        "email": getattr(pr, "email", None) or "",
+        "email": resolved or (getattr(pr, "email", None) or ""),
         "contacts": getattr(pr, "contacts", None) or [],
         "contactAgain": bool(getattr(pr, "contact_again", True)),
         "lastReplyAt": getattr(pr, "last_reply_at", None) or "",

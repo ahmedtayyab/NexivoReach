@@ -128,6 +128,16 @@ export interface Prospect {
     gmailThreadId?: string;
     sentVia?: string;
     sentAt?: string;
+    outreachRationale?: {
+      primary_signal?: string;
+      signal_source?: string;
+      signal_confidence?: string;
+      pain_hypothesis?: string;
+      matched_product?: string;
+      value_proposition?: string;
+      cta_strategy?: string;
+      angle?: string;
+    };
   };
   stage:
     | 'To contact'

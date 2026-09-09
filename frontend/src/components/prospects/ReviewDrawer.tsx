@@ -1,6 +1,7 @@
 import type { Prospect } from '../../types';
 import { X, ArrowLeft, ExternalLink, CheckCircle, Edit3, Mail, Phone } from 'lucide-react';
 import { useState } from 'react';
+import { recipientEmail } from '../../lib/leadTone';
 
 interface Props {
   prospect: Prospect | null;
@@ -44,7 +45,7 @@ export default function ReviewDrawer({
     prospect.fitScore >= 90 ? 'score-high'
     : prospect.fitScore >= 80 ? 'score-mid'
     : 'score-low';
-  const toEmail = draft?.toEmail || prospect.email || '';
+  const toEmail = recipientEmail(prospect);
   const contacts = prospect.contacts || [];
 
   const openMailto = () => {
@@ -362,11 +363,35 @@ export default function ReviewDrawer({
                   <p className="text-[13.5px] text-slate-700 whitespace-pre-line leading-relaxed border-t border-slate-100 pt-3">
                     {draft.body}
                   </p>
-                  {draft.personalizedReason && (
+                  {draft.outreachRationale ? (
+                    <div className="text-[12px] text-slate-500 border-t border-slate-100 pt-2 space-y-1">
+                      <p className="font-medium text-slate-600">Outreach rationale</p>
+                      {draft.outreachRationale.primary_signal && (
+                        <p><span className="text-slate-400">Signal:</span> {draft.outreachRationale.primary_signal}</p>
+                      )}
+                      {draft.outreachRationale.pain_hypothesis && (
+                        <p><span className="text-slate-400">Pain hypothesis:</span> {draft.outreachRationale.pain_hypothesis}</p>
+                      )}
+                      {draft.outreachRationale.matched_product && (
+                        <p><span className="text-slate-400">Matched product:</span> {draft.outreachRationale.matched_product}</p>
+                      )}
+                      <p>
+                        {draft.outreachRationale.angle && (
+                          <><span className="text-slate-400">Approach:</span> {draft.outreachRationale.angle}</>
+                        )}
+                        {draft.outreachRationale.signal_confidence && (
+                          <>
+                            {draft.outreachRationale.angle ? ' · ' : null}
+                            <span className="text-slate-400">Confidence:</span> {draft.outreachRationale.signal_confidence}
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  ) : draft.personalizedReason ? (
                     <p className="text-[12px] text-slate-400 border-t border-slate-100 pt-2">
                       Personalized using: {draft.personalizedReason}
                     </p>
-                  )}
+                  ) : null}
                 </div>
               )}
             </section>

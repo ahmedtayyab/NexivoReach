@@ -76,7 +76,7 @@ async def _auto_fill_contacts_job(prospect_ids: List[str]) -> None:
                     site_text = (page.get("text") or "") if isinstance(page, dict) else ""
                     found = await discover_contacts(
                         website=row.website,
-                        homepage_html=(page.get("html") or "")[:250000] if isinstance(page, dict) else "",
+                        homepage_html=(page.get("html") or "")[:400000] if isinstance(page, dict) else "",
                         homepage_text=site_text,
                         homepage_url=(page.get("url") if isinstance(page, dict) else None) or row.website,
                         seed_phone=phone,

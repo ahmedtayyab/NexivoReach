@@ -15,6 +15,8 @@ router = APIRouter(prefix="/api/prospects", tags=["prospects"])
 
 @router.get("/")
 def list_prospects(request: Request, user: AuthUser = Depends(get_current_user)):
+    from app.tools.contact_finder import resolve_lead_email
+
     with Session(engine) as session:
         business_id = resolve_business_id(request, user, session)
         rows = session.exec(
@@ -22,6 +24,32 @@ def list_prospects(request: Request, user: AuthUser = Depends(get_current_user))
             .where(ProspectRecord.business_id == business_id)
             .order_by(ProspectRecord.discovered_at.desc())
         ).all()
+        # Persist empty To:/email from contacts so Outreach stops showing blank buyers
+        dirty = False
+        for row in rows:
+            draft = dict(row.outreach_draft or {}) if row.outreach_draft else {}
+            resolved = resolve_lead_email(
+                email=row.email or "",
+                contacts=row.contacts or [],
+                to_email=(draft.get("toEmail") or ""),
+            )
+            if not resolved:
+                continue
+            changed = False
+            if not (row.email or "").strip():
+                row.email = resolved
+                changed = True
+            if draft and not (draft.get("toEmail") or "").strip():
+                draft["toEmail"] = resolved
+                row.outreach_draft = draft
+                changed = True
+            if changed:
+                session.add(row)
+                dirty = True
+        if dirty:
+            session.commit()
+            for row in rows:
+                session.refresh(row)
         return [prospect_to_frontend(r) for r in rows]
 
 

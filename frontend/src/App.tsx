@@ -8,6 +8,7 @@ import {
   emptyAgentLogs,
 } from './data/defaults';
 import { apiFetch, setActiveBusinessId } from './lib/api';
+import { recipientEmail } from './lib/leadTone';
 import { parseIcpResponse, parseProfileResponse } from './lib/workspace';
 import {
   type AppRoute,
@@ -295,7 +296,7 @@ export default function App() {
         body: JSON.stringify({
           subject: overrides?.subject ?? draft?.subject,
           body: overrides?.body ?? draft?.body,
-          toEmail: overrides?.toEmail ?? draft?.toEmail ?? current?.email ?? '',
+          toEmail: overrides?.toEmail ?? recipientEmail(current),
         }),
       });
       if (!resp.ok) {
@@ -385,14 +386,9 @@ export default function App() {
       window.alert('Connect Gmail in Settings → Integrations first, then you can send in one click.');
       return;
     }
-    const readyCount = prospects.filter(p => {
-      const st = p.outreachDraft?.status;
-      const to = (p.outreachDraft?.toEmail || p.email || '').trim();
-      return (st === 'Draft' || st === 'Approved') && to.includes('@');
-    }).length;
     const label = mode === 'ready'
-      ? 'Prepare any missing drafts, then send best-fit emails via Gmail?'
-      : `Send ${readyCount || 'all'} ready outreach email(s) via Gmail now?`;
+      ? 'Resolve contact emails, prepare drafts if needed, then send best-fit via Gmail?'
+      : 'Send best-fit outreach via Gmail (uses scraped contact emails)?';
     if (!window.confirm(label)) return;
     try {
       const path = mode === 'ready' ? '/api/prospects/send-ready' : '/api/prospects/send-batch';
@@ -410,14 +406,37 @@ export default function App() {
       }
       const failed = data.failed || 0;
       const prepared = data.prepared ? ` Prepared ${data.prepared}.` : '';
+      const resolved = data.resolvedEmails ? ` Resolved ${data.resolvedEmails} email(s).` : '';
+      const skipped = data.skippedNoEmail
+        ? ` ${data.skippedNoEmail} had no public email on their site.`
+        : '';
       window.alert(
-        `Sent ${data.sent || 0} email(s).${prepared}`
+        `Sent ${data.sent || 0} email(s).${prepared}${resolved}${skipped}`
         + (failed ? ` ${failed} failed.` : '')
         + (data.errors?.[0]?.error ? `\nFirst error: ${data.errors[0].company}: ${data.errors[0].error}` : ''),
       );
     } catch (err) {
       console.error(err);
       window.alert(err instanceof Error ? err.message : 'Bulk send failed');
+    }
+  };
+
+  const handleBackfillRecipients = async () => {
+    try {
+      const resp = await apiFetch('/api/prospects/backfill-recipients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 25 }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      const data = await resp.json();
+      const updated = (data.prospects || []) as Prospect[];
+      if (updated.length) {
+        const map = new Map(updated.map(p => [p.id, p]));
+        setProspects(prev => prev.map(p => map.get(p.id) || p));
+      }
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -647,6 +666,7 @@ export default function App() {
             onPrepareFollowUp={handlePrepareFollowUp}
             onSendAllReady={() => handleSendAllReady('batch')}
             onPrepareAndSend={() => handleSendAllReady('ready')}
+            onBackfillRecipients={handleBackfillRecipients}
             gmailConnected={Boolean(user?.gmail?.connected)}
           />
         )}
