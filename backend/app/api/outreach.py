@@ -87,7 +87,22 @@ def _sync_leads_to_sheets(session: Session, business_id: str, rows: List[Prospec
         biz = session.get(Business, business_id) if business_id else None
         seller = sheets_mod.resolve_company_tab_name(biz, fallback="Company")
         payload = []
+        dirty = False
         for record in rows:
+            stage = (record.stage or "To contact").strip()
+            draft = record.outreach_draft or {}
+            draft_status = (draft.get("status") or "").strip() if isinstance(draft, dict) else ""
+            # Emailed drafts must show Contacted even if stage lagged behind
+            if draft_status == "Sent" and stage in ("To contact", "Qualified", "New", "Researched", ""):
+                stage = "Contacted"
+                record.stage = stage
+                session.add(record)
+                dirty = True
+            elif draft_status == "Replied" and stage not in ("Re-contact", "Won", "Meeting", "Denied", "Avoid"):
+                stage = "Re-contact"
+                record.stage = stage
+                session.add(record)
+                dirty = True
             payload.append({
                 "id": record.id,
                 "company_name": record.company_name,
@@ -98,7 +113,7 @@ def _sync_leads_to_sheets(session: Session, business_id: str, rows: List[Prospec
                 "why_this_prospect": record.why_this_prospect,
                 "why_now": getattr(record, "why_now", None) or "",
                 "intent": (record.fit_breakdown or {}).get("intent") or "",
-                "stage": record.stage,
+                "stage": stage,
                 "discovered_at": record.discovered_at,
                 "source": record.source,
                 "phone": record.phone,
@@ -107,6 +122,8 @@ def _sync_leads_to_sheets(session: Session, business_id: str, rows: List[Prospec
                 "reply_summary": getattr(record, "reply_summary", None) or "",
                 "seller_name": seller,
             })
+        if dirty:
+            session.commit()
         sheets_mod.sync_leads(seller, payload)
     except Exception as exc:
         log.warning("Sheets sync after outreach failed: %s", exc)

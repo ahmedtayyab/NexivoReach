@@ -60,9 +60,9 @@ TIMELINE_HEADERS = [
 # Contacted = already emailed — deliberately stronger so it stands out.
 _LEAD_STATUS_COLORS: dict[str, dict[str, float]] = {
     "To contact": {"red": 1.0, "green": 1.0, "blue": 1.0},
-    "Contacted": {"red": 0.67, "green": 0.80, "blue": 0.94},   # emailed — clear blue
-    "Replied": {"red": 0.72, "green": 0.90, "blue": 0.76},     # they replied — green
-    "Re-contact": {"red": 0.98, "green": 0.90, "blue": 0.70},  # amber follow-up
+    "Contacted": {"red": 0.55, "green": 0.75, "blue": 0.95},   # emailed — vivid blue
+    "Replied": {"red": 0.60, "green": 0.88, "blue": 0.65},     # they replied — green
+    "Re-contact": {"red": 1.0, "green": 0.85, "blue": 0.55},   # amber follow-up
     "Denied": {"red": 0.93, "green": 0.84, "blue": 0.84},
     "Avoid": {"red": 0.93, "green": 0.84, "blue": 0.84},
     "Meeting": {"red": 0.72, "green": 0.82, "blue": 0.95},
@@ -88,14 +88,25 @@ def _apply_lead_status_row_colors(ws) -> int:
     if len(values) < 2:
         return 0
 
-    # Status = col I (index 8), Reply note = col P (index 15)
+    # Resolve Status / Reply note columns by header name (robust to column order)
+    headers = [(h or "").strip().lower() for h in (values[0] or [])]
+    try:
+        status_idx = headers.index("status")
+    except ValueError:
+        status_idx = 8
+    try:
+        reply_idx = headers.index("reply note")
+    except ValueError:
+        reply_idx = 15
+
     requests = []
     sheet_id = ws.id
-    cols = len(LEAD_HEADERS)
+    cols = max(len(LEAD_HEADERS), len(headers), 1)
     for idx, row in enumerate(values[1:], start=2):
-        stage = row[8] if len(row) > 8 else ""
-        reply = row[15] if len(row) > 15 else ""
+        stage = row[status_idx] if len(row) > status_idx else ""
+        reply = row[reply_idx] if len(row) > reply_idx else ""
         color = _status_fill_color(stage, reply)
+        # Google Sheets API requires userEnteredFormat (not userFormat)
         requests.append({
             "repeatCell": {
                 "range": {
@@ -105,8 +116,8 @@ def _apply_lead_status_row_colors(ws) -> int:
                     "startColumnIndex": 0,
                     "endColumnIndex": cols,
                 },
-                "cell": {"userFormat": {"backgroundColor": color}},
-                "fields": "userFormat.backgroundColor",
+                "cell": {"userEnteredFormat": {"backgroundColor": color}},
+                "fields": "userEnteredFormat.backgroundColor",
             }
         })
 
@@ -121,12 +132,12 @@ def _apply_lead_status_row_colors(ws) -> int:
                 "endColumnIndex": cols,
             },
             "cell": {
-                "userFormat": {
+                "userEnteredFormat": {
                     "backgroundColor": {"red": 0.92, "green": 0.91, "blue": 0.89},
                     "textFormat": {"bold": True},
                 }
             },
-            "fields": "userFormat.backgroundColor,userFormat.textFormat.bold",
+            "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat.bold",
         }
     })
 

@@ -6,16 +6,19 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app.api.deps import AuthUser, get_current_user
+from app.api.deps import AuthUser, get_current_user, resolve_business_id
 from app.api.serializers import product_to_frontend, prospect_to_frontend
 from app.database.session import engine
 from app.integrations import sheets as sheets_mod
 from app.models.schemas import Business, ICPConfig, ProductItem, ProspectRecord
 from app.tools.web_search import _registrable_domain
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sheets", tags=["sheets"])
 
@@ -23,6 +26,71 @@ router = APIRouter(prefix="/api/sheets", tags=["sheets"])
 @router.get("/status")
 def get_status(_user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
     return sheets_mod.connection_status()
+
+
+@router.post("/sync-leads")
+def sync_leads_now(request: Request, user: AuthUser = Depends(get_current_user)):
+    """Push all company leads to Sheets and re-apply status row colors (Contacted = blue)."""
+    if not sheets_mod.is_configured():
+        raise HTTPException(status_code=400, detail="Google Sheets not configured.")
+
+    with Session(engine) as session:
+        business_id = resolve_business_id(request, user, session)
+        biz = session.get(Business, business_id) if business_id else None
+        seller = sheets_mod.resolve_company_tab_name(biz, fallback="Company")
+        rows = session.exec(
+            select(ProspectRecord).where(ProspectRecord.business_id == business_id)
+        ).all()
+        payload = []
+        dirty = False
+        for record in rows:
+            stage = (record.stage or "To contact").strip()
+            draft = record.outreach_draft or {}
+            draft_status = (draft.get("status") or "").strip() if isinstance(draft, dict) else ""
+            if draft_status == "Sent" and stage in ("To contact", "Qualified", "New", "Researched", ""):
+                stage = "Contacted"
+                record.stage = stage
+                session.add(record)
+                dirty = True
+            elif draft_status == "Replied" and stage not in ("Re-contact", "Won", "Meeting", "Denied", "Avoid"):
+                stage = "Re-contact"
+                record.stage = stage
+                session.add(record)
+                dirty = True
+            payload.append({
+                "id": record.id,
+                "company_name": record.company_name,
+                "website": record.website,
+                "location": record.location,
+                "industry": record.industry,
+                "fit_score": record.fit_score,
+                "why_this_prospect": record.why_this_prospect,
+                "why_now": getattr(record, "why_now", None) or "",
+                "intent": (record.fit_breakdown or {}).get("intent") or "",
+                "stage": stage,
+                "discovered_at": record.discovered_at,
+                "source": record.source,
+                "phone": record.phone,
+                "email": getattr(record, "email", None) or "",
+                "contact_again": bool(getattr(record, "contact_again", True)),
+                "reply_summary": getattr(record, "reply_summary", None) or "",
+                "seller_name": seller,
+            })
+        if dirty:
+            session.commit()
+        if not payload:
+            return {"ok": True, "written": 0, "message": "No leads to sync"}
+        try:
+            result = sheets_mod.sync_leads(seller, payload)
+        except Exception as exc:
+            log.warning("Manual Sheets lead sync failed: %s", exc)
+            raise HTTPException(status_code=400, detail=f"Sheets sync failed: {exc}") from exc
+        return {
+            "ok": True,
+            "written": result.get("written") or 0,
+            "tab": result.get("tab") or "",
+            "url": result.get("url") or "",
+        }
 
 
 @router.get("/restore-options")

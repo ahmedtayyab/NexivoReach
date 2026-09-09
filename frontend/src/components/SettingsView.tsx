@@ -757,6 +757,8 @@ function IntegrationsSection({
   const [includeLeads, setIncludeLeads] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [restoreMsg, setRestoreMsg] = useState('');
+  const [syncingLeads, setSyncingLeads] = useState(false);
+  const [syncLeadsMsg, setSyncLeadsMsg] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -861,15 +863,45 @@ function IntegrationsSection({
         </div>
 
         {status?.connected && (
-          <a
-            href={status.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-[12.5px] text-accent hover:underline"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            {status.spreadsheet_title}
-          </a>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <a
+              href={status.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-[12.5px] text-accent hover:underline"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              {status.spreadsheet_title}
+            </a>
+            <button
+              type="button"
+              disabled={syncingLeads}
+              onClick={async () => {
+                setSyncingLeads(true);
+                setSyncLeadsMsg('');
+                try {
+                  const resp = await apiFetch('/api/sheets/sync-leads', { method: 'POST' });
+                  if (!resp.ok) throw new Error(await resp.text());
+                  const data = await resp.json();
+                  setSyncLeadsMsg(
+                    `Synced ${data.written || 0} lead(s)`
+                    + (data.tab ? ` to “${data.tab}”` : '')
+                    + ' — emailed rows should now be blue.',
+                  );
+                } catch (e) {
+                  setSyncLeadsMsg(e instanceof Error ? e.message : 'Sync failed');
+                } finally {
+                  setSyncingLeads(false);
+                }
+              }}
+              className="btn-secondary text-[12.5px] py-1.5 px-3 disabled:opacity-50"
+            >
+              {syncingLeads ? 'Coloring…' : 'Sync leads & colors'}
+            </button>
+            {syncLeadsMsg && (
+              <p className="w-full text-[12px] text-ink-secondary">{syncLeadsMsg}</p>
+            )}
+          </div>
         )}
 
         {!status?.connected && !loading && (
