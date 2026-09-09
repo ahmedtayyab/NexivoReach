@@ -85,7 +85,7 @@ async def extract_products_from_url(req: UrlParseRequest, _user: AuthUser = Depe
     pages, shop_products = await scraper.scrape_shop_catalog(req.url)
     combined = "\n".join(text for _, text in pages) or req.url
     provider = get_ai_provider()
-    # Prefer structured scrape; still run AI to catch leftovers when thin
+    # Prefer structured scrape; AI only fills gaps when the HTML crawl is thin
     fallback_products: list[dict] = []
     if len(shop_products) < 12:
         fallback_products = await provider.extract_products(combined, source_type="url")
@@ -103,16 +103,10 @@ async def extract_products_from_url(req: UrlParseRequest, _user: AuthUser = Depe
             f"Found {len(merged)} product{'s' if len(merged) != 1 else ''} "
             f"from {len(pages)} page{'s' if len(pages) != 1 else ''}."
         )
-        if len(merged) < 5 and len(pages) <= 2:
-            message += (
-                " Tip: for large brands (Nike, Adidas, etc.), paste a category/collection URL "
-                "(e.g. men’s shoes listing) rather than the homepage — those pages list more products."
-            )
     else:
         message = (
-            "No products were found on that page. Try a category/collection URL "
-            "(not just the homepage), upload a catalog file, or add items manually. "
-            "Some sites load products only in the browser and are hard to scrape."
+            "No products were found on that page. Try the shop homepage or a "
+            "/product-category/ URL, upload a catalog file, or add items manually."
         )
     return {
         "sourceUrl": req.url,

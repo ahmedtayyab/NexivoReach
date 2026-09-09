@@ -486,6 +486,10 @@ class WebSearchTool:
         }
 
     async def scrape_shop_catalog(self, url: str) -> tuple[List[tuple[str, str]], List[Dict[str, Any]]]:
+        """
+        Crawl a shop homepage + category pages for product cards.
+        WooCommerce (/product-category/) is the primary path — Alwasi-scale catalogs (~280+).
+        """
         if not url or _should_skip(url):
             return [], []
         pages: List[tuple[str, str]] = []
@@ -493,9 +497,11 @@ class WebSearchTool:
         seen_names: set[str] = set()
         seen_pages: set[str] = set()
         started = time.monotonic()
-        budget_s = 28.0
+        # Large Woo catalogs need headroom; concurrent fetches keep wall-clock down.
+        budget_s = 55.0
+        max_products = 500
         try:
-            async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=HEADERS) as client:
+            async with httpx.AsyncClient(timeout=18.0, follow_redirects=True, headers=HEADERS) as client:
                 first = await client.get(url)
                 if first.status_code != 200 or not first.text:
                     return [], []
@@ -505,39 +511,73 @@ class WebSearchTool:
                 seen_pages.add(start_url.rstrip("/").lower())
                 products.extend(_extract_page_products(html, start_url, seen_names))
 
-                # Prefer classic Woo category crawl when available (worked reliably before).
+                all_links = _catalog_links(html, start_url)
                 woo_cats = [
-                    u for u in _catalog_links(html, start_url)
+                    u for u in all_links
                     if "/product-category/" in (urlparse(u).path or "").lower()
                 ]
                 if woo_cats:
-                    extra_urls = woo_cats
+                    # Full Woo category crawl (was capped too low → missed most of 284 products)
+                    extra_urls = _prioritize_catalog_urls(woo_cats)[:40]
                 else:
-                    extra_urls = _catalog_links(html, start_url)
+                    extra_urls = _prioritize_catalog_urls(all_links)
                     if len(products) < 8:
-                        extra_urls = _guess_catalog_paths(start_url) + extra_urls
-                extra_urls = _prioritize_catalog_urls(extra_urls)
-                # Keep crawl small so the API returns before platform timeouts
-                max_extra = 12 if woo_cats else 10
-                for extra in extra_urls[:max_extra]:
-                    if time.monotonic() - started > budget_s:
-                        break
-                    if len(products) >= 80:
-                        break
+                        extra_urls = _prioritize_catalog_urls(
+                            _guess_catalog_paths(start_url) + extra_urls
+                        )[:16]
+                    else:
+                        extra_urls = extra_urls[:12]
+
+                async def _fetch_listing(extra: str) -> tuple[str, str, List[Dict[str, Any]]]:
                     key = extra.rstrip("/").lower()
                     if key in seen_pages:
-                        continue
+                        return "", "", []
                     seen_pages.add(key)
                     try:
                         res = await client.get(extra)
-                        if res.status_code == 200 and res.text:
-                            pages.append((str(res.url), _html_to_text(res.text, limit=18000)))
-                            products.extend(_extract_page_products(res.text, str(res.url), seen_names))
+                        if res.status_code != 200 or not res.text:
+                            return "", "", []
+                        page_url = str(res.url)
+                        page_products = _extract_page_products(res.text, page_url, seen_names)
+                        # One level of Woo pagination when the listing is truncated
+                        more: List[Dict[str, Any]] = []
+                        if len(page_products) >= 8:
+                            for page2 in _pagination_urls(res.text, page_url)[:2]:
+                                pkey = page2.rstrip("/").lower()
+                                if pkey in seen_pages:
+                                    continue
+                                seen_pages.add(pkey)
+                                try:
+                                    r2 = await client.get(page2)
+                                    if r2.status_code == 200 and r2.text:
+                                        more.extend(
+                                            _extract_page_products(r2.text, str(r2.url), seen_names)
+                                        )
+                                except Exception:
+                                    continue
+                        text = _html_to_text(res.text, limit=18000)
+                        return page_url, text, page_products + more
                     except Exception:
-                        continue
+                        return "", "", []
+
+                # Fetch category pages in concurrent batches (keep under typical 30–60s proxy limits)
+                for i in range(0, len(extra_urls), 8):
+                    if time.monotonic() - started > budget_s:
+                        break
+                    if len(products) >= max_products:
+                        break
+                    batch = extra_urls[i : i + 8]
+                    results = await asyncio.gather(*[_fetch_listing(u) for u in batch])
+                    for page_url, text, page_products in results:
+                        if page_url and text:
+                            pages.append((page_url, text))
+                        if page_products:
+                            products.extend(page_products)
+                    if len(products) >= max_products:
+                        break
         except Exception:
-            return pages, products
-        return pages, products
+            return pages, products[:max_products]
+        return pages, products[:max_products]
 
 
 def _html_to_text(html: str, limit: int = 12000) -> str:
@@ -676,11 +716,38 @@ def _prioritize_catalog_urls(urls: List[str]) -> List[str]:
         rank = 0
         if any(h in path for h in ("/product-category/", "/collections/", "/shop", "/w/", "/products")):
             rank -= 10
+        # Prefer deeper Woo leaf categories (more product cards per page)
+        if "/product-category/" in path:
+            rank -= path.count("/")
         if _looks_like_pdp(path):
             rank += 20
         return (rank, len(path), u)
 
     return sorted(dict.fromkeys(urls), key=score)
+
+
+def _pagination_urls(html: str, page_url: str) -> List[str]:
+    """Same-listing pagination links (Woo page/2, page/3)."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    base_host = _registrable_domain(page_url)
+    found: List[str] = []
+    seen = set()
+    for anchor in soup.select("a.page-numbers, a[href*='/page/'], .woocommerce-pagination a"):
+        href = (anchor.get("href") or "").strip()
+        if not href or href.startswith("#"):
+            continue
+        absolute = urljoin(page_url, href).split("#")[0]
+        if _registrable_domain(absolute) != base_host:
+            continue
+        path = (urlparse(absolute).path or "").lower()
+        if "/page/" not in path:
+            continue
+        key = absolute.rstrip("/").lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append(absolute)
+    return found
 
 
 def _looks_like_pdp(path: str) -> bool:
