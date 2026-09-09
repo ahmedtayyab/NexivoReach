@@ -85,19 +85,32 @@ async def extract_products_from_url(req: UrlParseRequest, _user: AuthUser = Depe
     pages, shop_products = await scraper.scrape_shop_catalog(req.url)
     combined = "\n".join(text for _, text in pages) or req.url
     provider = get_ai_provider()
-    fallback_products = await provider.extract_products(combined, source_type="url")
+    # Only call AI when HTML/REST scrape found little — saves time and avoids empty LLM [] wiping heuristics
+    fallback_products: list[dict] = []
+    if len(shop_products) < 15:
+        fallback_products = await provider.extract_products(combined, source_type="url")
+        # If the LLM returns an empty list, still try heuristics
+        if not fallback_products:
+            from app.providers.fallback import FallbackProvider
+            fallback_products = await FallbackProvider().extract_products(combined, source_type="url")
     merged: list[dict] = []
     seen = set()
     for raw in shop_products + fallback_products:
         item = normalize_extracted_product(raw, len(merged))
-        key = (item.get("name") or "").strip().lower()
-        if not key or key in seen:
+        # Prefer product URL for uniqueness (many Woo titles repeat)
+        key = (item.get("productUrl") or item.get("name") or "").strip().lower()
+        name_key = (item.get("name") or "").strip().lower()
+        if not name_key:
+            continue
+        if key in seen or name_key in seen:
             continue
         seen.add(key)
+        seen.add(name_key)
         merged.append(item)
     return {
         "sourceUrl": req.url,
         "pagesScanned": len(pages),
+        "shopProducts": len(shop_products),
         "products": merged,
         "message": (
             f"Found {len(merged)} product{'s' if len(merged) != 1 else ''} from {len(pages)} page{'s' if len(pages) != 1 else ''}."

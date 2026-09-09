@@ -57,9 +57,11 @@ class GroqProvider(AIProvider):
             )
             parsed = parse_json_payload(self._complete(prompt))
             if isinstance(parsed, list):
-                return parsed
-            if isinstance(parsed, dict) and isinstance(parsed.get("products"), list):
-                return parsed["products"]
+                if parsed:
+                    return parsed
+            elif isinstance(parsed, dict) and isinstance(parsed.get("products"), list):
+                if parsed["products"]:
+                    return parsed["products"]
         except Exception:
             pass
         from app.providers.fallback import FallbackProvider

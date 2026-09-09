@@ -1,4 +1,5 @@
 import asyncio
+import html as html_lib
 import re
 from typing import List, Dict, Any, Optional
 from urllib.parse import urljoin, urlparse
@@ -485,9 +486,10 @@ class WebSearchTool:
 
     async def scrape_shop_catalog(self, url: str) -> tuple[List[tuple[str, str]], List[Dict[str, Any]]]:
         """
-        WooCommerce catalog crawl (same parsers as dd06469).
-        Category pages are fetched concurrently so the full Alwasi-scale run
-        finishes under Render's ~30s request limit (sequential took ~31s+).
+        Catalog extract for Woo/WordPress shops.
+
+        Prefer WP REST `/wp-json/wp/v2/product` (fast, complete, works from Render).
+        Fall back to HTML /product-category/ crawl when REST is unavailable.
         """
         if not url or _should_skip(url):
             return [], []
@@ -495,13 +497,30 @@ class WebSearchTool:
         products: List[Dict[str, Any]] = []
         seen_names: set[str] = set()
         try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=HEADERS) as client:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=HEADERS) as client:
                 first = await client.get(url)
                 if first.status_code != 200 or not first.text:
                     return [], []
                 html = first.text
                 start_url = str(first.url)
                 pages.append((start_url, _html_to_text(html)))
+
+                # 1) WordPress product REST API (Alwasi: 338 products in ~4 requests)
+                rest_products = await _fetch_wp_rest_products(client, start_url)
+                if rest_products:
+                    for item in rest_products:
+                        key = (item.get("productUrl") or item.get("name") or "").strip().lower()
+                        if not key or key in seen_names:
+                            continue
+                        seen_names.add(key)
+                        name_key = (item.get("name") or "").strip().lower()
+                        if name_key:
+                            seen_names.add(name_key)
+                        products.append(item)
+                    pages.append((urljoin(start_url, "/wp-json/wp/v2/product"), f"WP REST products: {len(rest_products)}"))
+                    return pages, products
+
+                # 2) HTML homepage cards + Woo category crawl (legacy path)
                 products.extend(_shop_products(html, start_url, seen_names))
                 extra_urls = [item for item in _catalog_links(html, start_url) if "/product-category/" in item]
                 extra_urls = sorted(dict.fromkeys(extra_urls))[:30]
@@ -534,6 +553,95 @@ class WebSearchTool:
         except Exception:
             return pages, products
         return pages, products
+
+
+async def _fetch_wp_rest_products(client: httpx.AsyncClient, site_url: str) -> List[Dict[str, Any]]:
+    """Fetch all products via WordPress REST API when exposed (common on Woo shops)."""
+    parsed = urlparse(site_url)
+    root = f"{parsed.scheme}://{parsed.netloc}"
+    endpoint = f"{root}/wp-json/wp/v2/product"
+    products: List[Dict[str, Any]] = []
+    try:
+        first = await client.get(endpoint, params={"per_page": 100, "page": 1})
+        if first.status_code != 200:
+            return []
+        try:
+            rows = first.json()
+        except Exception:
+            return []
+        if not isinstance(rows, list) or not rows:
+            return []
+        products.extend(_wp_rest_rows_to_products(rows, site_url))
+        total_pages = int(first.headers.get("X-WP-TotalPages") or 1)
+        total_pages = max(1, min(total_pages, 20))  # safety cap
+        if total_pages > 1:
+            reqs = [
+                client.get(endpoint, params={"per_page": 100, "page": page})
+                for page in range(2, total_pages + 1)
+            ]
+            results = await asyncio.gather(*reqs, return_exceptions=True)
+            for res in results:
+                if isinstance(res, Exception) or getattr(res, "status_code", 0) != 200:
+                    continue
+                try:
+                    more = res.json()
+                except Exception:
+                    continue
+                if isinstance(more, list):
+                    products.extend(_wp_rest_rows_to_products(more, site_url))
+    except Exception:
+        return []
+    return products
+
+
+def _wp_rest_rows_to_products(rows: list, site_url: str) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        title_raw = raw.get("title") or {}
+        if isinstance(title_raw, dict):
+            name = title_raw.get("rendered") or ""
+        else:
+            name = str(title_raw or "")
+        name = BeautifulSoup(name, "html.parser").get_text(" ", strip=True)
+        name = html_lib.unescape(name).strip()
+        if not name:
+            continue
+        link = (raw.get("link") or "").strip() or site_url
+        slug = (raw.get("slug") or "").strip()
+        excerpt_raw = raw.get("excerpt") or {}
+        if isinstance(excerpt_raw, dict):
+            excerpt = excerpt_raw.get("rendered") or ""
+        else:
+            excerpt = str(excerpt_raw or "")
+        excerpt = BeautifulSoup(excerpt, "html.parser").get_text(" ", strip=True)
+        content_raw = raw.get("content") or {}
+        if isinstance(content_raw, dict):
+            content = content_raw.get("rendered") or ""
+        else:
+            content = str(content_raw or "")
+        content_text = BeautifulSoup(content, "html.parser").get_text(" ", strip=True)
+        blob = f"{excerpt} {content_text} {slug}"
+        sku_match = re.search(r"(AWE[-\s]?\d+)", blob, re.I)
+        sku = sku_match.group(1).upper().replace(" ", "-") if sku_match else ""
+        # Titles often repeat across variants — keep names unique for the UI merge-by-name
+        if sku:
+            display = f"{name} ({sku})"
+        elif slug:
+            display = f"{name} ({slug})"
+        else:
+            display = f"{name} #{raw.get('id')}"
+        out.append({
+            "name": display[:90],
+            "category": _category_from_url(link),
+            "description": (excerpt or content_text or name)[:180],
+            "productUrl": link,
+            "imageUrl": "",
+            "price": "",
+            "source_url": site_url,
+        })
+    return out
 
 
 def _html_to_text(html: str, limit: int = 12000) -> str:

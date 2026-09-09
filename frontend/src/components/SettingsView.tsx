@@ -302,11 +302,14 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
   const [manual, setManual] = useState({ name: '', category: '', description: '', price: '' });
 
   const mergeProducts = (incoming: Product[]) => {
-    const byName = new Map(products.map(p => [p.name.toLowerCase(), p]));
+    const byKey = new Map(
+      products.map(p => [(p.productUrl || p.name).toLowerCase(), p]),
+    );
     for (const item of incoming) {
-      byName.set(item.name.toLowerCase(), item);
+      const key = (item.productUrl || item.name).toLowerCase();
+      byKey.set(key, item);
     }
-    onSave(Array.from(byName.values()));
+    onSave(Array.from(byKey.values()));
   };
 
   const handleScrape = async () => {
