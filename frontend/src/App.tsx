@@ -421,6 +421,42 @@ export default function App() {
     }
   };
 
+  const handleSendSelected = async (ids: string[]) => {
+    if (!user?.gmail?.connected) {
+      window.alert('Connect Gmail in Settings → Integrations first, then you can send selected emails.');
+      return;
+    }
+    if (!ids.length) return;
+    try {
+      const resp = await apiFetch('/api/prospects/send-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, bestFitOnly: false, limit: ids.length }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      const data = await resp.json();
+      const updated = (data.prospects || []) as Prospect[];
+      if (updated.length) {
+        const map = new Map(updated.map(p => [p.id, p]));
+        setProspects(prev => prev.map(p => map.get(p.id) || p));
+      }
+      const failed = data.failed || 0;
+      const prepared = data.prepared ? ` Prepared ${data.prepared}.` : '';
+      const resolved = data.resolvedEmails ? ` Resolved ${data.resolvedEmails} email(s).` : '';
+      const skipped = data.skippedNoEmail
+        ? ` ${data.skippedNoEmail} had no public email on their site.`
+        : '';
+      window.alert(
+        `Sent ${data.sent || 0} email(s).${prepared}${resolved}${skipped}`
+        + (failed ? ` ${failed} failed.` : '')
+        + (data.errors?.[0]?.error ? `\nFirst error: ${data.errors[0].company}: ${data.errors[0].error}` : ''),
+      );
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : 'Send selected failed');
+    }
+  };
+
   const handleBackfillRecipients = async () => {
     try {
       const resp = await apiFetch('/api/prospects/backfill-recipients', {
@@ -517,6 +553,16 @@ export default function App() {
     }
     setProspects([]);
     setSelectedProspectId(null);
+  };
+
+  const handleRemoveProspect = async (prospectId: string) => {
+    const resp = await apiFetch(`/api/prospects/${prospectId}`, { method: 'DELETE' });
+    if (!resp.ok) {
+      console.warn('Failed to remove lead', await resp.text());
+      return;
+    }
+    setProspects(prev => prev.filter(p => p.id !== prospectId));
+    setSelectedProspectId(prev => (prev === prospectId ? null : prev));
   };
 
   const handleAddLog = (log: AgentRunLog) => {
@@ -654,6 +700,8 @@ export default function App() {
             products={products}
             onAddProspects={handleAddProspects}
             onAddLog={handleAddLog}
+            onClearLeads={handleClearLeads}
+            prospectCount={prospects.length}
           />
         )}
         {activeRoute === 'outreach' && (
@@ -667,6 +715,9 @@ export default function App() {
             onSendAllReady={() => handleSendAllReady('batch')}
             onPrepareAndSend={() => handleSendAllReady('ready')}
             onBackfillRecipients={handleBackfillRecipients}
+            onRemoveProspect={handleRemoveProspect}
+            onClearAll={handleClearLeads}
+            onSendSelected={handleSendSelected}
             gmailConnected={Boolean(user?.gmail?.connected)}
           />
         )}

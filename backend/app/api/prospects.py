@@ -69,6 +69,19 @@ def clear_prospects(request: Request, user: AuthUser = Depends(get_current_user)
         return {"ok": True, "deleted": deleted}
 
 
+@router.delete("/{prospect_id}")
+def delete_prospect(prospect_id: str, request: Request, user: AuthUser = Depends(get_current_user)):
+    """Delete one lead from Discover / Outreach lists."""
+    with Session(engine) as session:
+        business_id = resolve_business_id(request, user, session)
+        row = session.get(ProspectRecord, prospect_id)
+        if not row or row.business_id != business_id:
+            return {"ok": True, "deleted": 0}
+        session.delete(row)
+        session.commit()
+        return {"ok": True, "deleted": 1}
+
+
 @router.post("/save")
 def save_prospect(payload: Dict[str, Any], request: Request, user: AuthUser = Depends(get_current_user)):
     data = prospect_from_frontend(payload)

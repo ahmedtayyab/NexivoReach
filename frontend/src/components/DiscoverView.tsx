@@ -12,6 +12,8 @@ interface Props {
   products?: Product[];
   onAddProspects: (prospects: Prospect[]) => void;
   onAddLog: (log: AgentRunLog) => void;
+  onClearLeads?: () => void;
+  prospectCount?: number;
 }
 
 export default function DiscoverView({
@@ -20,6 +22,8 @@ export default function DiscoverView({
   products = [],
   onAddProspects,
   onAddLog,
+  onClearLeads,
+  prospectCount = 0,
 }: Props) {
   const [query, setQuery] = useState('');
   const [isRunning, setIsRunning] = useState(false);
@@ -107,11 +111,22 @@ export default function DiscoverView({
 
   return (
     <div className="max-w-2xl w-full">
-      <div className="mb-6 nr-enter">
-        <h1 className="text-lg font-semibold text-ink">Discover</h1>
-        <p className="text-sm text-ink-secondary mt-0.5">
-          The agent plans searches from your sales motion, filters junk, inspects promising sites, then saves accounts with Fit and Intent scored separately. Keyword overlap is not treated as buying intent.
-        </p>
+      <div className="mb-6 nr-enter flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-lg font-semibold text-ink">Discover</h1>
+          <p className="text-sm text-ink-secondary mt-0.5">
+            The agent plans searches from your sales motion, filters junk, inspects promising sites, then saves accounts with Fit and Intent scored separately. Keyword overlap is not treated as buying intent.
+          </p>
+        </div>
+        {onClearLeads && prospectCount > 0 && (
+          <button
+            type="button"
+            onClick={() => onClearLeads()}
+            className="shrink-0 px-3 py-1.5 text-[12px] border border-border rounded-md text-ink-secondary hover:border-ink-muted"
+          >
+            Clear all leads
+          </button>
+        )}
       </div>
 
       <div className="mb-5 nr-enter nr-enter-delay-1">

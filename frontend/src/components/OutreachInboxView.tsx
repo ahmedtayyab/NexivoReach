@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Prospect } from '../types';
-import { ChevronDown, ChevronUp, Mail } from 'lucide-react';
+import { ChevronDown, ChevronUp, Mail, X } from 'lucide-react';
 import MailFlow from './brand/MailFlow';
 import { leadRowToneClass, recipientEmail } from '../lib/leadTone';
 
@@ -17,6 +17,9 @@ interface Props {
   onSendAllReady?: () => void;
   onPrepareAndSend?: () => void;
   onBackfillRecipients?: () => Promise<void>;
+  onRemoveProspect?: (id: string) => void;
+  onClearAll?: () => void;
+  onSendSelected?: (ids: string[]) => Promise<void> | void;
   gmailConnected?: boolean;
 }
 
@@ -49,6 +52,9 @@ export default function OutreachInboxView({
   onSendAllReady,
   onPrepareAndSend,
   onBackfillRecipients,
+  onRemoveProspect,
+  onClearAll,
+  onSendSelected,
   gmailConnected = false,
 }: Props) {
   const withDrafts = useMemo(
@@ -79,9 +85,15 @@ export default function OutreachInboxView({
   const current = filtered[index] || null;
   const draft = current?.outreachDraft;
 
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
   useEffect(() => {
     setIndex(0);
   }, [filter, withDrafts.length]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [filter]);
 
   const backfillAttempted = useRef(false);
   useEffect(() => {
@@ -101,6 +113,10 @@ export default function OutreachInboxView({
       setIndex(filtered.length - 1);
     }
   }, [filtered.length, index]);
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
 
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
@@ -223,6 +239,30 @@ export default function OutreachInboxView({
               Prepare & send
             </button>
           )}
+          {gmailConnected && onSendSelected && selectedIds.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                const count = selectedIds.length;
+                if (!window.confirm(`Send ${count} selected outreach email(s) via Gmail?`)) return;
+                void Promise.resolve(onSendSelected(selectedIds)).then(() => setSelectedIds([])).catch(err => {
+                  console.error(err);
+                });
+              }}
+              className="nr-chip px-2.5 py-1 rounded-full text-[12px] border border-accent bg-accent text-white font-medium"
+            >
+              Send selected ({selectedIds.length})
+            </button>
+          )}
+          {selectedIds.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setSelectedIds([])}
+              className="nr-chip px-2.5 py-1 rounded-full text-[12px] border border-border bg-panel text-ink-secondary hover:border-ink-muted"
+            >
+              Clear selection
+            </button>
+          )}
           {onSyncReplies && (
             <button
               type="button"
@@ -230,6 +270,15 @@ export default function OutreachInboxView({
               className="nr-chip px-2.5 py-1 rounded-full text-[12px] border border-border bg-panel text-ink-secondary"
             >
               Sync replies
+            </button>
+          )}
+          {onClearAll && (
+            <button
+              type="button"
+              onClick={() => onClearAll()}
+              className="nr-chip px-2.5 py-1 rounded-full text-[12px] border border-border bg-panel text-ink-secondary hover:border-ink-muted"
+            >
+              Clear all
             </button>
           )}
           {(
@@ -275,25 +324,51 @@ export default function OutreachInboxView({
                 const st = p.outreachDraft?.status || 'Draft';
                 const intent = p.intent || p.fitBreakdown?.intent || 'none';
                 return (
-                  <button
+                  <div
                     key={p.id}
-                    type="button"
-                    onClick={() => setIndex(i)}
-                    className={`w-full text-left px-3 py-2.5 border-b border-border-subtle transition-colors lead-row-tone ${leadRowToneClass(p)} ${
+                    className={`border-b border-border-subtle transition-colors lead-row-tone ${leadRowToneClass(p)} ${
                       active ? 'ring-1 ring-inset ring-border' : ''
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-[13px] font-medium text-ink truncate">{p.companyName}</p>
-                      <span className="text-[11px] tabular-nums text-ink font-semibold shrink-0">{p.fitScore}</span>
+                    <div className="flex items-start gap-2">
+                      {onSendSelected && (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(p.id)}
+                          onChange={() => toggleSelected(p.id)}
+                          className="mt-3 h-4 w-4 accent-accent"
+                          aria-label={`Select ${p.companyName}`}
+                        />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setIndex(i)}
+                        className="flex-1 min-w-0 text-left px-3 py-2.5"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-[13px] font-medium text-ink truncate">{p.companyName}</p>
+                          <span className="text-[11px] tabular-nums text-ink font-semibold shrink-0">{p.fitScore}</span>
+                        </div>
+                        <p className="text-[11px] text-ink-muted truncate mt-0.5">
+                          Intent {intent} · {st}
+                        </p>
+                        <p className="text-[11px] text-ink-muted truncate">
+                          {recipientEmail(p) || 'Will resolve from site contacts'}
+                        </p>
+                      </button>
+                      {onRemoveProspect && (
+                        <button
+                          type="button"
+                          aria-label={`Remove ${p.companyName}`}
+                          title="Remove lead"
+                          onClick={() => onRemoveProspect(p.id)}
+                          className="mt-2 mr-2 p-1.5 rounded-md text-ink-muted hover:text-ink hover:bg-panel-elevated"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
-                    <p className="text-[11px] text-ink-muted truncate mt-0.5">
-                      Intent {intent} · {st}
-                    </p>
-                    <p className="text-[11px] text-ink-muted truncate">
-                      {recipientEmail(p) || 'Will resolve from site contacts'}
-                    </p>
-                  </button>
+                  </div>
                 );
               })}
             </div>
