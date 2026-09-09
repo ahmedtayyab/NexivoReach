@@ -107,10 +107,15 @@ async def extract_products_from_url(req: UrlParseRequest, _user: AuthUser = Depe
         seen.add(key)
         seen.add(name_key)
         merged.append(item)
+    log.info(
+        "extract-url %s: pages=%d scraped=%d ai=%d merged=%d",
+        req.url, len(pages), len(shop_products), len(fallback_products), len(merged),
+    )
     return {
         "sourceUrl": req.url,
         "pagesScanned": len(pages),
         "shopProducts": len(shop_products),
+        "aiProducts": len(fallback_products),
         "products": merged,
         "message": (
             f"Found {len(merged)} product{'s' if len(merged) != 1 else ''} from {len(pages)} page{'s' if len(pages) != 1 else ''}."

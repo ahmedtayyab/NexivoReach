@@ -1,5 +1,6 @@
 import asyncio
 import html as html_lib
+import logging
 import re
 from typing import List, Dict, Any, Optional
 from urllib.parse import urljoin, urlparse
@@ -8,6 +9,8 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.config import settings
+
+log = logging.getLogger(__name__)
 
 
 SKIP_DOMAINS = {
@@ -498,15 +501,9 @@ class WebSearchTool:
         seen_names: set[str] = set()
         try:
             async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=HEADERS) as client:
-                first = await client.get(url)
-                if first.status_code != 200 or not first.text:
-                    return [], []
-                html = first.text
-                start_url = str(first.url)
-                pages.append((start_url, _html_to_text(html)))
-
-                # 1) WordPress product REST API (Alwasi: 338 products in ~4 requests)
-                rest_products = await _fetch_wp_rest_products(client, start_url)
+                # 1) WordPress product REST API (Alwasi: 338 products in ~4 requests).
+                # Tried before the homepage so a blocked/slow HTML fetch can't sink the catalog.
+                rest_products = await _fetch_wp_rest_products(client, url)
                 if rest_products:
                     for item in rest_products:
                         key = (item.get("productUrl") or item.get("name") or "").strip().lower()
@@ -517,10 +514,25 @@ class WebSearchTool:
                         if name_key:
                             seen_names.add(name_key)
                         products.append(item)
-                    pages.append((urljoin(start_url, "/wp-json/wp/v2/product"), f"WP REST products: {len(rest_products)}"))
+                    pages.append((urljoin(url, "/wp-json/wp/v2/product"), f"WP REST products: {len(rest_products)}"))
+                    log.info("scrape_shop_catalog(%s): WP REST returned %d products", url, len(products))
                     return pages, products
 
                 # 2) HTML homepage cards + Woo category crawl (legacy path)
+                try:
+                    first = await client.get(url)
+                except Exception as exc:
+                    log.warning("scrape_shop_catalog(%s): homepage fetch failed: %r", url, exc)
+                    return [], []
+                if first.status_code != 200 or not first.text:
+                    log.warning(
+                        "scrape_shop_catalog(%s): homepage status=%s len=%d",
+                        url, first.status_code, len(first.text or ""),
+                    )
+                    return [], []
+                html = first.text
+                start_url = str(first.url)
+                pages.append((start_url, _html_to_text(html)))
                 products.extend(_shop_products(html, start_url, seen_names))
                 extra_urls = [item for item in _catalog_links(html, start_url) if "/product-category/" in item]
                 extra_urls = sorted(dict.fromkeys(extra_urls))[:30]
@@ -550,7 +562,12 @@ class WebSearchTool:
                             if name_key:
                                 seen_names.add(name_key)
                             products.append(item)
-        except Exception:
+                log.info(
+                    "scrape_shop_catalog(%s): HTML crawl scanned %d pages, %d products",
+                    url, len(pages), len(products),
+                )
+        except Exception as exc:
+            log.warning("scrape_shop_catalog(%s): aborted: %r", url, exc)
             return pages, products
         return pages, products
 
@@ -564,12 +581,15 @@ async def _fetch_wp_rest_products(client: httpx.AsyncClient, site_url: str) -> L
     try:
         first = await client.get(endpoint, params={"per_page": 100, "page": 1})
         if first.status_code != 200:
+            log.info("WP REST %s: status=%s", endpoint, first.status_code)
             return []
         try:
             rows = first.json()
-        except Exception:
+        except Exception as exc:
+            log.info("WP REST %s: non-JSON body (%r)", endpoint, exc)
             return []
         if not isinstance(rows, list) or not rows:
+            log.info("WP REST %s: empty payload", endpoint)
             return []
         products.extend(_wp_rest_rows_to_products(rows, site_url))
         total_pages = int(first.headers.get("X-WP-TotalPages") or 1)
@@ -589,7 +609,8 @@ async def _fetch_wp_rest_products(client: httpx.AsyncClient, site_url: str) -> L
                     continue
                 if isinstance(more, list):
                     products.extend(_wp_rest_rows_to_products(more, site_url))
-    except Exception:
+    except Exception as exc:
+        log.info("WP REST %s: request failed: %r", endpoint, exc)
         return []
     return products
 

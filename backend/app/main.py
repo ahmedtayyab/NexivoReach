@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 
@@ -11,6 +12,12 @@ from app.database.session import init_db
 from app.config import settings, effective_app_url, database_backend
 
 STATIC_DIR = Path(os.getenv("STATIC_DIR", str(Path(__file__).resolve().parent.parent / "static")))
+
+# Uvicorn only configures its own loggers; without this our app.* INFO logs never reach Render.
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(levelname)s %(name)s: %(message)s",
+)
 
 app = FastAPI(
     title="NexivoReach API",
