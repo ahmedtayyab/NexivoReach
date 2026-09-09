@@ -12,6 +12,11 @@ from app.config import settings
 
 log = logging.getLogger(__name__)
 
+# Shared hosts (CSF/LFD, Imunify360) auto-ban IPs that burst. Stay under their radar.
+CATALOG_CONCURRENCY = 4
+CATALOG_BATCH_PAUSE = 0.4
+CATALOG_LIMITS = httpx.Limits(max_connections=CATALOG_CONCURRENCY, max_keepalive_connections=CATALOG_CONCURRENCY)
+
 
 SKIP_DOMAINS = {
     "wikipedia.org",
@@ -505,7 +510,9 @@ class WebSearchTool:
         products: List[Dict[str, Any]] = []
         seen_names: set[str] = set()
         try:
-            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=HEADERS) as client:
+            async with httpx.AsyncClient(
+                timeout=20.0, follow_redirects=True, headers=HEADERS, limits=CATALOG_LIMITS
+            ) as client:
                 # 1) WordPress product REST API (Alwasi: 338 products in ~4 requests).
                 # Tried before the homepage so a blocked/slow HTML fetch can't sink the catalog.
                 rest_products, rest_error = await _fetch_wp_rest_products(client, url)
@@ -557,8 +564,10 @@ class WebSearchTool:
                     except Exception:
                         return "", "", []
 
-                for i in range(0, len(extra_urls), 8):
-                    batch = extra_urls[i : i + 8]
+                for i in range(0, len(extra_urls), CATALOG_CONCURRENCY):
+                    if i:
+                        await asyncio.sleep(CATALOG_BATCH_PAUSE)
+                    batch = extra_urls[i : i + CATALOG_CONCURRENCY]
                     results = await asyncio.gather(*[_fetch_category(u) for u in batch])
                     for page_url, text, found in results:
                         if page_url and text:
@@ -623,10 +632,13 @@ async def _fetch_wp_rest_products(
         products.extend(_wp_rest_rows_to_products(rows, site_url))
         total_pages = int(first.headers.get("X-WP-TotalPages") or 1)
         total_pages = max(1, min(total_pages, 20))  # safety cap
-        if total_pages > 1:
+        remaining = list(range(2, total_pages + 1))
+        for i in range(0, len(remaining), CATALOG_CONCURRENCY):
+            if i:
+                await asyncio.sleep(CATALOG_BATCH_PAUSE)
             reqs = [
                 client.get(endpoint, params={"per_page": 100, "page": page})
-                for page in range(2, total_pages + 1)
+                for page in remaining[i : i + CATALOG_CONCURRENCY]
             ]
             results = await asyncio.gather(*reqs, return_exceptions=True)
             for res in results:

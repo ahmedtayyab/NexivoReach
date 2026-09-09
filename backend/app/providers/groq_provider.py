@@ -1,14 +1,17 @@
+import logging
 from typing import Any, Dict, List
 from app.providers.base import AIProvider
 from app.providers.json_util import parse_json_payload
 from app.config import settings
+
+log = logging.getLogger(__name__)
 
 
 class GroqProvider(AIProvider):
     def __init__(self):
         self.api_key = settings.GROQ_API_KEY
         self.available = bool(self.api_key)
-        self.model = "llama-3.3-70b-versatile"
+        self.model = settings.GROQ_MODEL
 
     def name(self) -> str:
         return "Groq API Provider"
@@ -19,11 +22,17 @@ class GroqProvider(AIProvider):
 
     def _complete(self, prompt: str) -> str:
         client = self._client()
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
+        try:
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+        except Exception as exc:
+            # Callers swallow this to reach the heuristic fallback; log so a dead
+            # model or bad key doesn't silently degrade every extraction.
+            log.warning("Groq completion failed (model=%s): %r", self.model, exc)
+            raise
         return (response.choices[0].message.content or "").strip()
 
     async def extract_business_profile(self, text: str) -> Dict[str, Any]:

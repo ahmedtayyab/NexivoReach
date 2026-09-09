@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     APP_NAME: str = "NexivoReach"
     GEMINI_API_KEY: str = ""
     GROQ_API_KEY: str = ""
+    # Groq retires models without notice; override here when the default 404s.
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
     SERPER_API_KEY: str = ""
     BRAVE_SEARCH_API_KEY: str = ""
     TAVILY_API_KEY: str = ""
