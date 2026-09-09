@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     # Groq retires models without notice; override here when the default 404s.
     GROQ_MODEL: str = "openai/gpt-oss-120b"
+    # Cloudflare Worker relay used when a host firewalls our egress IP (see infra/cloudflare-worker).
+    SCRAPE_PROXY_URL: str = ""
+    SCRAPE_PROXY_TOKEN: str = ""
     SERPER_API_KEY: str = ""
     BRAVE_SEARCH_API_KEY: str = ""
     TAVILY_API_KEY: str = ""

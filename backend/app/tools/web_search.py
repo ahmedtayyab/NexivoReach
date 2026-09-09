@@ -513,9 +513,10 @@ class WebSearchTool:
             async with httpx.AsyncClient(
                 timeout=20.0, follow_redirects=True, headers=HEADERS, limits=CATALOG_LIMITS
             ) as client:
+                fetcher = _CatalogFetcher(client)
                 # 1) WordPress product REST API (Alwasi: 338 products in ~4 requests).
                 # Tried before the homepage so a blocked/slow HTML fetch can't sink the catalog.
-                rest_products, rest_error = await _fetch_wp_rest_products(client, url)
+                rest_products, rest_error = await _fetch_wp_rest_products(fetcher, url)
                 if rest_error:
                     # Transport-level failure: the HTML crawl would only burn another timeout.
                     self.last_catalog_error = rest_error
@@ -536,7 +537,7 @@ class WebSearchTool:
 
                 # 2) HTML homepage cards + Woo category crawl (legacy path)
                 try:
-                    first = await client.get(url)
+                    first = await fetcher.get(url)
                 except Exception as exc:
                     log.warning("scrape_shop_catalog(%s): homepage fetch failed: %r", url, exc)
                     self.last_catalog_error = _connect_error_kind(exc)
@@ -548,7 +549,7 @@ class WebSearchTool:
                     )
                     return [], []
                 html = first.text
-                start_url = str(first.url)
+                start_url = _CatalogFetcher.final_url(first, url)
                 pages.append((start_url, _html_to_text(html)))
                 products.extend(_shop_products(html, start_url, seen_names))
                 extra_urls = [item for item in _catalog_links(html, start_url) if "/product-category/" in item]
@@ -556,11 +557,12 @@ class WebSearchTool:
 
                 async def _fetch_category(extra: str) -> tuple[str, str, list]:
                     try:
-                        res = await client.get(extra)
+                        res = await fetcher.get(extra)
                         if res.status_code != 200 or not res.text:
                             return "", "", []
-                        found = _shop_products(res.text, str(res.url), set())
-                        return str(res.url), _html_to_text(res.text, limit=16000), found
+                        page_url = _CatalogFetcher.final_url(res, extra)
+                        found = _shop_products(res.text, page_url, set())
+                        return page_url, _html_to_text(res.text, limit=16000), found
                     except Exception:
                         return "", "", []
 
@@ -592,6 +594,43 @@ class WebSearchTool:
         return pages, products
 
 
+class _CatalogFetcher:
+    """
+    GET wrapper that relays through the Cloudflare Worker when a host blocks our IP.
+
+    The first transport failure flips the whole scrape to proxy mode, so we pay the
+    connect timeout once rather than on every page.
+    """
+
+    def __init__(self, client: httpx.AsyncClient) -> None:
+        self.client = client
+        self.proxy_url = (settings.SCRAPE_PROXY_URL or "").strip()
+        self.proxy_token = (settings.SCRAPE_PROXY_TOKEN or "").strip()
+        self.using_proxy = False
+
+    async def get(self, url: str, params: Optional[Dict[str, Any]] = None) -> httpx.Response:
+        if self.using_proxy:
+            return await self._via_proxy(url, params)
+        try:
+            return await self.client.get(url, params=params)
+        except httpx.TransportError as exc:
+            if not self.proxy_url:
+                raise
+            log.info("Direct fetch of %s failed (%r); relaying through proxy", url, exc)
+            self.using_proxy = True
+            return await self._via_proxy(url, params)
+
+    async def _via_proxy(self, url: str, params: Optional[Dict[str, Any]] = None) -> httpx.Response:
+        target = str(httpx.URL(url, params=params)) if params else url
+        headers = {"X-Proxy-Token": self.proxy_token} if self.proxy_token else {}
+        return await self.client.get(self.proxy_url, params={"url": target}, headers=headers)
+
+    @staticmethod
+    def final_url(response: httpx.Response, fallback: str) -> str:
+        """Real upstream URL — response.url points at the Worker when proxied."""
+        return response.headers.get("X-Proxy-Final-Url") or str(response.url) or fallback
+
+
 def _connect_error_kind(exc: Exception) -> str:
     """Classify a transport failure so the UI can say 'unreachable' instead of 'no products'."""
     if isinstance(exc, (httpx.ConnectTimeout, httpx.ConnectError)):
@@ -604,7 +643,7 @@ def _connect_error_kind(exc: Exception) -> str:
 
 
 async def _fetch_wp_rest_products(
-    client: httpx.AsyncClient, site_url: str
+    fetcher: "_CatalogFetcher", site_url: str
 ) -> tuple[List[Dict[str, Any]], str]:
     """
     Fetch all products via WordPress REST API when exposed (common on Woo shops).
@@ -617,7 +656,7 @@ async def _fetch_wp_rest_products(
     endpoint = f"{root}/wp-json/wp/v2/product"
     products: List[Dict[str, Any]] = []
     try:
-        first = await client.get(endpoint, params={"per_page": 100, "page": 1})
+        first = await fetcher.get(endpoint, params={"per_page": 100, "page": 1})
         if first.status_code != 200:
             log.info("WP REST %s: status=%s", endpoint, first.status_code)
             return [], ""
@@ -637,7 +676,7 @@ async def _fetch_wp_rest_products(
             if i:
                 await asyncio.sleep(CATALOG_BATCH_PAUSE)
             reqs = [
-                client.get(endpoint, params={"per_page": 100, "page": page})
+                fetcher.get(endpoint, params={"per_page": 100, "page": page})
                 for page in remaining[i : i + CATALOG_CONCURRENCY]
             ]
             results = await asyncio.gather(*reqs, return_exceptions=True)

@@ -20,6 +20,11 @@ services:
         sync: false
       - key: SERPER_API_KEY
         sync: false
+      # Cloudflare Worker relay for hosts that firewall Render's egress IPs.
+      - key: SCRAPE_PROXY_URL
+        sync: false
+      - key: SCRAPE_PROXY_TOKEN
+        sync: false
       - key: TAVILY_API_KEY
         sync: false
       - key: GOOGLE_CLIENT_ID
