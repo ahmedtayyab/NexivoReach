@@ -119,27 +119,23 @@ class GeminiProvider(AIProvider):
         signals: List[Dict[str, Any]],
         matched_products: List[Dict[str, Any]],
         seller_name: str = "Sales Team",
-    ) -> Dict[str, str]:
-        if not self.available:
-            from app.providers.fallback import FallbackProvider
-            return await FallbackProvider().generate_personalized_outreach(
-                company_name, why_prospect, signals, matched_products, seller_name
-            )
-
-        try:
-            prompt = (
-                f"You represent {seller_name}. Draft a personalized B2B outreach email as JSON with keys "
-                f"subject, body, personalizedReason for {company_name}. Sign the email as {seller_name}. "
-                f"Context: {why_prospect}. Signals: {signals}. MatchedProducts: {matched_products}"
-            )
-            parsed = parse_json_payload(self._generate(prompt))
-            if isinstance(parsed, dict) and parsed.get("subject") and parsed.get("body"):
-                return parsed
-        except Exception:
-            pass
-        from app.providers.fallback import FallbackProvider
-        return await FallbackProvider().generate_personalized_outreach(
-            company_name, why_prospect, signals, matched_products, seller_name
+        **context: Any,
+    ) -> Dict[str, Any]:
+        from app.agents.outreach_writer import compose_personalized_outreach
+        return await compose_personalized_outreach(
+            self,
+            company_name=company_name,
+            why_prospect=why_prospect,
+            signals=signals,
+            matched_products=matched_products,
+            seller_name=seller_name,
+            why_now=str(context.get("why_now") or ""),
+            evidence=list(context.get("evidence") or []),
+            location=str(context.get("location") or ""),
+            industry=str(context.get("industry") or ""),
+            recommended_approach=str(context.get("recommended_approach") or ""),
+            fit_summary=str(context.get("fit_summary") or ""),
+            intent=str(context.get("intent") or ""),
         )
 
     async def generate_follow_up_outreach(
@@ -150,26 +146,24 @@ class GeminiProvider(AIProvider):
         prior_body: str,
         reply_summary: str = "",
         seller_name: str = "Sales Team",
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
+        from app.agents.outreach_writer import compose_follow_up_outreach
         if not self.available:
             from app.providers.fallback import FallbackProvider
             return await FallbackProvider().generate_follow_up_outreach(
                 company_name, why_prospect, prior_subject, prior_body, reply_summary, seller_name
             )
-        try:
-            mode = "their reply" if reply_summary.strip() else "no reply yet (polite bump)"
-            prompt = (
-                f"You represent {seller_name}. Draft a short B2B follow-up email as JSON with keys "
-                f"subject, body, personalizedReason for {company_name}. Mode: {mode}. "
-                f"Prior subject: {prior_subject}. Prior body: {prior_body[:600]}. "
-                f"Reply summary: {reply_summary[:500]}. Context: {why_prospect}. "
-                f"Sign as {seller_name}. Keep under 120 words."
-            )
-            parsed = parse_json_payload(self._generate(prompt))
-            if isinstance(parsed, dict) and parsed.get("subject") and parsed.get("body"):
-                return parsed
-        except Exception:
-            pass
+        draft = await compose_follow_up_outreach(
+            self,
+            company_name=company_name,
+            why_prospect=why_prospect,
+            prior_subject=prior_subject,
+            prior_body=prior_body,
+            reply_summary=reply_summary,
+            seller_name=seller_name,
+        )
+        if draft.get("subject") and draft.get("body"):
+            return draft
         from app.providers.fallback import FallbackProvider
         return await FallbackProvider().generate_follow_up_outreach(
             company_name, why_prospect, prior_subject, prior_body, reply_summary, seller_name

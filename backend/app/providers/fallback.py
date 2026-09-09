@@ -181,23 +181,24 @@ class FallbackProvider(AIProvider):
         signals: List[Dict[str, Any]],
         matched_products: List[Dict[str, Any]],
         seller_name: str = "Sales Team",
-    ) -> Dict[str, str]:
-        product_name = "our products"
-        if matched_products:
-            product_name = matched_products[0].get("productName") or matched_products[0].get("name") or product_name
-        signal_label = signals[0]["signal"] if signals else "recent public activity"
-        sender = seller_name or "Sales Team"
-        return {
-            "subject": f"{product_name} for {company_name}",
-            "body": (
-                f"Hi {company_name} team,\n\n"
-                f"I noticed {company_name}'s {signal_label.lower()} and wanted to introduce {product_name} from {sender}.\n\n"
-                f"{why_prospect}\n\n"
-                "If useful, I can send a short spec sheet and pricing for the items that appear to fit.\n\n"
-                f"Best regards,\n{sender}"
-            ),
-            "personalizedReason": f"Drafted from {company_name}'s {signal_label.lower()} and catalog match on {product_name}.",
-        }
+        **context: Any,
+    ) -> Dict[str, Any]:
+        from app.agents.outreach_strategy import build_outreach_brief, render_fallback_email
+        brief = build_outreach_brief(
+            company_name=company_name,
+            why_prospect=why_prospect,
+            why_now=str(context.get("why_now") or ""),
+            signals=signals or [],
+            matched_products=matched_products or [],
+            evidence=list(context.get("evidence") or []),
+            location=str(context.get("location") or ""),
+            industry=str(context.get("industry") or ""),
+            recommended_approach=str(context.get("recommended_approach") or ""),
+            fit_summary=str(context.get("fit_summary") or ""),
+            intent=str(context.get("intent") or ""),
+            seller_name=seller_name,
+        )
+        return render_fallback_email(brief)
 
     async def generate_follow_up_outreach(
         self,
@@ -207,7 +208,7 @@ class FallbackProvider(AIProvider):
         prior_body: str,
         reply_summary: str = "",
         seller_name: str = "Sales Team",
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         sender = seller_name or "Sales Team"
         subj = prior_subject or f"Following up — {company_name}"
         if not subj.lower().startswith("re:"):
@@ -215,18 +216,25 @@ class FallbackProvider(AIProvider):
         if reply_summary.strip():
             body = (
                 f"Hi {company_name} team,\n\n"
-                f"Thanks for your note — I read your reply about: {reply_summary.strip()[:280]}\n\n"
-                f"Happy to answer that and share next steps on how we can help.\n\n"
-                f"Context from our side: {why_prospect[:220]}\n\n"
+                f"Thanks for getting back to me — noting your point about "
+                f"{reply_summary.strip()[:280]}.\n\n"
+                f"I can take that from here and share the specific options that fit, "
+                f"plus any MOQ or lead-time detail you need.\n\n"
+                f"Would it help if I replied with a shortlist based on what you asked?\n\n"
                 f"Best regards,\n{sender}"
             )
             reason = "Follow-up drafted from their reply."
         else:
+            snippet = (why_prospect or "").strip()[:220]
             body = (
                 f"Hi {company_name} team,\n\n"
-                f"Just bumping this in case it got buried. "
-                f"Happy to send a short one-pager if useful.\n\n"
-                f"{why_prospect[:220]}\n\n"
+                f"Circling back in case this got buried. "
+            )
+            if snippet:
+                body += f"{snippet}\n\n"
+            body += (
+                "Happy to send a concise one-pager with the most relevant options "
+                "if that would be useful.\n\n"
                 f"Best regards,\n{sender}"
             )
             reason = "Follow-up after silence (no reply logged yet)."

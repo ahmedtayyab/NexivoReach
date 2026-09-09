@@ -73,7 +73,7 @@ Goal Specification (ICP & Catalog)
 | **Web Research Engine** | ✅ Completed | Search & public website scraper with source links and excerpt attributions |
 | **Transparent Prospect Scoring** | ✅ Completed | Transparent 100-point fit formula (Industry, Location, Overlap, Signals, Scale) with evidence |
 | **Prospect Research Detail Drawer** | ✅ Completed | Slide-over drawer with executive summary, evidence quotes, product fit matrix, and draft review |
-| **Personalized Outreach Engine** | ✅ Completed | AI personalized messaging based on verified company evidence & expansion news |
+| **Personalized Outreach Engine** | ✅ Completed | Research→Relevance→Problem→Value→Credibility→CTA drafts with rationale + QC |
 | **Human Approval System** | ✅ Completed | Explicit permission barrier for message dispatch (Default: Sending requires human approval) |
 | **Agent Operational Log** | ✅ Completed | Full tool execution trace history, step decisions, and source inspection |
 | **Sales Command Dashboard** | ✅ Completed | Command Center, priority approvals queue, recent discoveries & Apex Fitness demo mode |
@@ -185,12 +185,37 @@ API endpoints (selected):
 
 ---
 
+## ✉️ Personalized Outreach Strategy
+
+Drafts are not “company name in a template.” Generation follows:
+
+```text
+Prospect research → Evidence validation → Signal selection
+        → Why You / Why Now → Pain hypothesis → Product match
+        → Value proposition → Credibility → CTA
+        → Email generation → Quality check → Final draft
+```
+
+**Principles**
+- Prefer business signals (expansion, hiring, new facilities, procurement) over Tier-4 fluff (founded year, “leading company”).
+- Translate signals into hedged business implications (`may` / `likely` / `can`) — never invent timing or social proof.
+- Match catalog products to the prospect’s situation; sell outcomes (consistency, procurement ease), not feature dumps.
+- Target ~120–180 words (up to ~220 for high-confidence prospects). One low-friction CTA.
+- Gemini primary → Groq fallback → deterministic commercial template if no LLM.
+- UI shows an **Outreach rationale** (signal, pain hypothesis, matched product, approach, confidence) without exposing chain-of-thought.
+- Humans still approve before send.
+
+Implementation: `backend/app/agents/outreach_strategy.py`, `outreach_writer.py` (used by Gemini / Groq / Fallback providers).
+
+---
+
 ## 💡 Important Design Decisions
 
 1. **No Fake Chatbot / No Hardcoded Pipelines**: The agent evaluates search results dynamically and invokes tools based on observation steps.
 2. **Transparent AI Reasoning**: Every claim includes source links/excerpts. No black-box scores.
 3. **Human-in-the-Loop Safety**: AI creates outreach drafts; humans approve before dispatch.
-4. **Clean B2B Design System**: Modern, high-precision dark accent design system tailored for B2B SaaS users.
+4. **Evidence-bound personalization**: Outreach never fabricates company events; weak research stays conservative.
+5. **Clean B2B Design System**: Modern, high-precision dark accent design system tailored for B2B SaaS users.
 
 ---
 

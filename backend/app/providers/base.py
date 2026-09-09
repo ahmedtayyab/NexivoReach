@@ -40,8 +40,14 @@ class AIProvider(ABC):
         signals: List[Dict[str, Any]],
         matched_products: List[Dict[str, Any]],
         seller_name: str = "Sales Team",
-    ) -> Dict[str, str]:
-        """Draft personalized B2B outreach email."""
+        **context: Any,
+    ) -> Dict[str, Any]:
+        """
+        Draft personalized B2B outreach email.
+        Optional context kwargs: why_now, evidence, location, industry,
+        recommended_approach, fit_summary, intent.
+        Returns subject, body, personalizedReason, outreachRationale.
+        """
         pass
 
     async def generate_follow_up_outreach(
@@ -52,7 +58,7 @@ class AIProvider(ABC):
         prior_body: str,
         reply_summary: str = "",
         seller_name: str = "Sales Team",
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """Draft a follow-up (after reply or silence). Default uses fallback template."""
         from app.providers.fallback import FallbackProvider
         return await FallbackProvider().generate_follow_up_outreach(

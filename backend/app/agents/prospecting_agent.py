@@ -323,7 +323,7 @@ class ProspectingAgent:
                     try:
                         found = await discover_contacts(
                             website=website,
-                            homepage_html=(page.get("html") or "")[:200000],
+                            homepage_html=(page.get("html") or "")[:400000],
                             homepage_text=site_text,
                             homepage_url=page.get("url") or website,
                             seed_phone=phone,
@@ -386,6 +386,13 @@ class ProspectingAgent:
                             signals=q.get("buyingSignals") or [],
                             matched_products=q.get("productFit") or [],
                             seller_name=seller_name,
+                            why_now=q.get("whyNow") or "",
+                            evidence=(q.get("fitBreakdown") or {}).get("evidence") or q.get("evidence") or [],
+                            location=(q.get("location") or co.get("location") or ""),
+                            industry=(q.get("industry") or ""),
+                            recommended_approach=q.get("recommendedApproach") or "",
+                            fit_summary=q.get("fitSummary") or "",
+                            intent=q.get("intent") or "",
                         )
                         draft_hit = True
                         outreach_draft = {
@@ -393,6 +400,7 @@ class ProspectingAgent:
                             "subject": draft.get("subject") or f"Introduction — {seller_name}",
                             "body": draft.get("body") or "",
                             "personalizedReason": draft.get("personalizedReason") or "",
+                            "outreachRationale": draft.get("outreachRationale") or None,
                             "status": "Draft",
                             "createdAt": now,
                             "toEmail": email or "",
