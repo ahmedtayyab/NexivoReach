@@ -85,14 +85,9 @@ class FallbackProvider(AIProvider):
             if re.match(r"^art\s*#", lowered) or re.match(r"^awe-\d+", lowered):
                 continue
             looks_like_product = bool(re.search(
-                r"\b(glove|belt|strap|hoodie|jacket|shirt|suit|bag|wrap|sleeve|hook|band|coverall|"
-                r"shoe|shoes|sneaker|boot|trainer|jersey|pant|short|cap|hat|sock|cleat|"
-                r"air\s*force|air\s*max|dunk|pegasus|react)\b",
+                r"\b(glove|belt|strap|hoodie|jacket|shirt|suit|bag|wrap|sleeve|hook|band|coverall)\b",
                 lowered,
             ))
-            if source_type == "url" and not looks_like_product:
-                # On URL extracts, accept title-like lines with brand/model patterns
-                looks_like_product = bool(re.search(r"[A-Za-z].*\d", line)) and " " in line
             if not looks_like_product:
                 continue
             name = re.split(r"\s[-–:|]\s", line)[0][:80].strip()

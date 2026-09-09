@@ -1,7 +1,5 @@
 import asyncio
-import json
 import re
-import time
 from typing import List, Dict, Any, Optional
 from urllib.parse import urljoin, urlparse
 
@@ -486,103 +484,36 @@ class WebSearchTool:
         }
 
     async def scrape_shop_catalog(self, url: str) -> tuple[List[tuple[str, str]], List[Dict[str, Any]]]:
-        """
-        Crawl a shop homepage + category pages for product cards.
-        WooCommerce (/product-category/) is the primary path — Alwasi-scale catalogs (~280+).
-        """
         if not url or _should_skip(url):
             return [], []
         pages: List[tuple[str, str]] = []
         products: List[Dict[str, Any]] = []
         seen_names: set[str] = set()
-        seen_pages: set[str] = set()
-        started = time.monotonic()
-        # Large Woo catalogs need headroom; concurrent fetches keep wall-clock down.
-        budget_s = 55.0
-        max_products = 500
         try:
-            async with httpx.AsyncClient(timeout=18.0, follow_redirects=True, headers=HEADERS) as client:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=HEADERS) as client:
                 first = await client.get(url)
                 if first.status_code != 200 or not first.text:
                     return [], []
-                start_url = str(first.url)
                 html = first.text
-                pages.append((start_url, _html_to_text(html, limit=18000)))
-                seen_pages.add(start_url.rstrip("/").lower())
-                products.extend(_extract_page_products(html, start_url, seen_names))
-
-                all_links = _catalog_links(html, start_url)
-                woo_cats = [
-                    u for u in all_links
-                    if "/product-category/" in (urlparse(u).path or "").lower()
-                ]
-                if woo_cats:
-                    # Full Woo category crawl (was capped too low → missed most of 284 products)
-                    extra_urls = _prioritize_catalog_urls(woo_cats)[:40]
-                else:
-                    extra_urls = _prioritize_catalog_urls(all_links)
-                    if len(products) < 8:
-                        extra_urls = _prioritize_catalog_urls(
-                            _guess_catalog_paths(start_url) + extra_urls
-                        )[:16]
-                    else:
-                        extra_urls = extra_urls[:12]
-
-                async def _fetch_listing(extra: str) -> tuple[str, str, List[Dict[str, Any]]]:
-                    key = extra.rstrip("/").lower()
-                    if key in seen_pages:
-                        return "", "", []
-                    seen_pages.add(key)
+                pages.append((str(first.url), _html_to_text(html)))
+                products.extend(_shop_products(html, str(first.url), seen_names))
+                extra_urls = [item for item in _catalog_links(html, str(first.url)) if "/product-category/" in item]
+                extra_urls.sort()
+                for extra in extra_urls[:30]:
                     try:
                         res = await client.get(extra)
-                        if res.status_code != 200 or not res.text:
-                            return "", "", []
-                        page_url = str(res.url)
-                        page_products = _extract_page_products(res.text, page_url, seen_names)
-                        # One level of Woo pagination when the listing is truncated
-                        more: List[Dict[str, Any]] = []
-                        if len(page_products) >= 8:
-                            for page2 in _pagination_urls(res.text, page_url)[:2]:
-                                pkey = page2.rstrip("/").lower()
-                                if pkey in seen_pages:
-                                    continue
-                                seen_pages.add(pkey)
-                                try:
-                                    r2 = await client.get(page2)
-                                    if r2.status_code == 200 and r2.text:
-                                        more.extend(
-                                            _extract_page_products(r2.text, str(r2.url), seen_names)
-                                        )
-                                except Exception:
-                                    continue
-                        text = _html_to_text(res.text, limit=18000)
-                        return page_url, text, page_products + more
+                        if res.status_code == 200 and res.text:
+                            pages.append((str(res.url), _html_to_text(res.text, limit=16000)))
+                            products.extend(_shop_products(res.text, str(res.url), seen_names))
                     except Exception:
-                        return "", "", []
-
-                # Fetch category pages in concurrent batches (keep under typical 30–60s proxy limits)
-                for i in range(0, len(extra_urls), 8):
-                    if time.monotonic() - started > budget_s:
-                        break
-                    if len(products) >= max_products:
-                        break
-                    batch = extra_urls[i : i + 8]
-                    results = await asyncio.gather(*[_fetch_listing(u) for u in batch])
-                    for page_url, text, page_products in results:
-                        if page_url and text:
-                            pages.append((page_url, text))
-                        if page_products:
-                            products.extend(page_products)
-                    if len(products) >= max_products:
-                        break
+                        continue
         except Exception:
-            return pages, products[:max_products]
-        return pages, products[:max_products]
+            return pages, products
+        return pages, products
 
 
 def _html_to_text(html: str, limit: int = 12000) -> str:
     soup = BeautifulSoup(html or "", "html.parser")
-    # Keep JSON-LD / Next data out of visible text path; parsed separately
     for tag in soup(["script", "style", "noscript", "svg", "nav", "form"]):
         tag.decompose()
     text = soup.get_text(separator="\n")
@@ -655,22 +586,14 @@ def _guess_signal_paths(base_url: str) -> List[str]:
     ]
 
 
-_LISTING_PATH_HINTS = (
-    "/product-category/", "/collections/", "/collection/", "/category/",
-    "/categories/", "/shop/", "/store/", "/catalog/", "/catalogue/",
-    "/products", "/w/", "/c/", "/men", "/women", "/kids", "/new",
-)
-
-
 def _catalog_links(html: str, base_url: str) -> List[str]:
     soup = BeautifulSoup(html or "", "html.parser")
     found: List[str] = []
     seen = set()
     keywords = (
-        "product", "catalog", "catalogue", "category", "shop", "collection", "store",
+        "product", "catalog", "category", "shop", "collection", "store",
         "item", "range", "series", "solutions", "equipment", "supplies",
-        "wear", "apparel", "parts", "goods", "shoes", "clothing", "new",
-        "men", "women", "kids", "sale",
+        "wear", "apparel", "parts", "goods",
     )
     for anchor in soup.find_all("a", href=True):
         href = (anchor.get("href") or "").strip()
@@ -682,442 +605,76 @@ def _catalog_links(html: str, base_url: str) -> List[str]:
         if host != _registrable_domain(base_url) or absolute in seen:
             continue
         path = (urlparse(absolute).path or "").lower()
-        # Skip obvious single PDPs when looking for listing pages
-        if _looks_like_pdp(path) and not any(h in path for h in ("/product-category/", "/collections/")):
-            continue
-        if any(h in path for h in _LISTING_PATH_HINTS) or any(key in path or key in label for key in keywords):
+        if "/product-category/" in path or any(key in path or key in label for key in keywords):
+            if "/product/" in path and "/product-category/" not in path:
+                continue
             seen.add(absolute)
             found.append(absolute)
     return found
-
-
-def _guess_catalog_paths(base_url: str) -> List[str]:
-    parsed = urlparse(base_url)
-    root = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
-    if not root:
-        return []
-    return [
-        f"{root}/shop",
-        f"{root}/products",
-        f"{root}/collections/all",
-        f"{root}/collections",
-        f"{root}/catalog",
-        f"{root}/w/new",
-        f"{root}/w/mens-shoes",
-        f"{root}/w/womens-shoes",
-        f"{root}/men",
-        f"{root}/women",
-    ]
-
-
-def _prioritize_catalog_urls(urls: List[str]) -> List[str]:
-    def score(u: str) -> tuple:
-        path = (urlparse(u).path or "").lower()
-        rank = 0
-        if any(h in path for h in ("/product-category/", "/collections/", "/shop", "/w/", "/products")):
-            rank -= 10
-        # Prefer deeper Woo leaf categories (more product cards per page)
-        if "/product-category/" in path:
-            rank -= path.count("/")
-        if _looks_like_pdp(path):
-            rank += 20
-        return (rank, len(path), u)
-
-    return sorted(dict.fromkeys(urls), key=score)
-
-
-def _pagination_urls(html: str, page_url: str) -> List[str]:
-    """Same-listing pagination links (Woo page/2, page/3)."""
-    soup = BeautifulSoup(html or "", "html.parser")
-    base_host = _registrable_domain(page_url)
-    found: List[str] = []
-    seen = set()
-    for anchor in soup.select("a.page-numbers, a[href*='/page/'], .woocommerce-pagination a"):
-        href = (anchor.get("href") or "").strip()
-        if not href or href.startswith("#"):
-            continue
-        absolute = urljoin(page_url, href).split("#")[0]
-        if _registrable_domain(absolute) != base_host:
-            continue
-        path = (urlparse(absolute).path or "").lower()
-        if "/page/" not in path:
-            continue
-        key = absolute.rstrip("/").lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        found.append(absolute)
-    return found
-
-
-def _looks_like_pdp(path: str) -> bool:
-    path = (path or "").lower()
-    if "/product-category/" in path or "/collections/" in path:
-        return False
-    if re.search(r"/product/[^/]+/?$", path):
-        return True
-    if re.search(r"/products/[^/]+/?$", path):
-        return True
-    # Nike-style PDP: /t/slug-...
-    if re.search(r"/t/[a-z0-9-]+", path):
-        return True
-    return False
-
-
-def _extract_page_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
-    """Combine Woo cards, JSON-LD, optional Next.js data, and product link grids."""
-    products: List[Dict[str, Any]] = []
-    # Woo / generic cards first (historically reliable)
-    products.extend(_shop_products(html, page_url, seen))
-    products.extend(_jsonld_products(html, page_url, seen))
-    # Only parse embedded app JSON when present — never scan arbitrary JS bundles
-    if "__NEXT_DATA__" in (html or "") or 'id="__NEXT_DATA__"' in (html or ""):
-        products.extend(_embedded_json_products(html, page_url, seen))
-    # Link-grid fill-in when still thin (Nike /t/, Shopify /products/)
-    if len(products) < 12:
-        products.extend(_product_link_grid(html, page_url, seen))
-    return products
-
-
-def _add_product(
-    products: List[Dict[str, Any]],
-    seen: set,
-    *,
-    name: str,
-    page_url: str,
-    category: str = "",
-    description: str = "",
-    product_url: str = "",
-    image_url: str = "",
-    price: str = "",
-    allow_listing_url: bool = False,
-) -> None:
-    name = re.sub(r"\s+", " ", (name or "")).strip()
-    name = re.split(r"\s*Art\s*#", name, maxsplit=1)[0].strip()
-    if not name or len(name) < 3 or len(name) > 120:
-        return
-    lowered = name.lower()
-    if lowered in {
-        "read more", "view product", "shop now", "buy now", "nike", "home",
-        "shoes", "men", "women", "kids", "new", "sale", "shop", "products",
-        "clothing", "apparel", "accessories", "sportswear",
-    }:
-        return
-    product_path = (urlparse(product_url or page_url).path or "").lower()
-    # Skip category/listing titles that aren't real PDPs (unless Woo card fallback)
-    if (
-        not allow_listing_url
-        and product_url
-        and not _looks_like_pdp(product_path)
-        and (product_url or "").rstrip("/").lower() == (page_url or "").rstrip("/").lower()
-    ):
-        return
-    # Deduplicate by name for listing-url fallbacks so one category page doesn't collapse cards
-    key = (product_url or "").lower() if _looks_like_pdp(product_path) else f"name:{(name or '').lower()}"
-    if not key.strip():
-        key = f"name:{lowered}"
-    if key in seen:
-        return
-    seen.add(key)
-    products.append({
-        "name": name[:90],
-        "category": category or _category_from_url(page_url),
-        "description": (description or name)[:180],
-        "productUrl": product_url or page_url,
-        "imageUrl": image_url or "",
-        "price": (price or "")[:40],
-        "source_url": page_url,
-    })
-
-
-def _jsonld_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
-    soup = BeautifulSoup(html or "", "html.parser")
-    products: List[Dict[str, Any]] = []
-
-    def walk(node: Any) -> None:
-        if isinstance(node, list):
-            for item in node:
-                walk(item)
-            return
-        if not isinstance(node, dict):
-            return
-        types = node.get("@type") or node.get("type") or ""
-        if isinstance(types, list):
-            type_set = {str(t).lower() for t in types}
-        else:
-            type_set = {str(types).lower()}
-
-        if "itemlist" in type_set:
-            for el in node.get("itemListElement") or []:
-                walk(el.get("item") if isinstance(el, dict) else el)
-        if "product" in type_set or "productgroup" in type_set:
-            name = node.get("name") or ""
-            url = node.get("url") or node.get("@id") or ""
-            if isinstance(url, dict):
-                url = url.get("@id") or ""
-            image = node.get("image") or ""
-            if isinstance(image, list) and image:
-                image = image[0]
-            if isinstance(image, dict):
-                image = image.get("url") or image.get("contentUrl") or ""
-            offers = node.get("offers") or {}
-            if isinstance(offers, list) and offers:
-                offers = offers[0]
-            price = ""
-            if isinstance(offers, dict):
-                price = str(offers.get("price") or offers.get("lowPrice") or "")
-                if price and offers.get("priceCurrency"):
-                    price = f"{offers.get('priceCurrency')} {price}".strip()
-            _add_product(
-                products,
-                seen,
-                name=str(name),
-                page_url=page_url,
-                description=str(node.get("description") or "")[:180],
-                product_url=urljoin(page_url, str(url)) if url else page_url,
-                image_url=urljoin(page_url, str(image)) if image else "",
-                price=price,
-            )
-        for key in ("@graph", "mainEntity", "hasVariant", "isVariantOf"):
-            if key in node:
-                walk(node.get(key))
-
-    for script in soup.find_all("script", attrs={"type": re.compile(r"ld\+json", re.I)}):
-        raw = (script.string or script.get_text() or "").strip()
-        if not raw:
-            continue
-        try:
-            data = json.loads(raw)
-        except Exception:
-            continue
-        walk(data)
-    return products
-
-
-def _walk_for_productish(obj: Any, out: List[Dict[str, str]], depth: int = 0) -> None:
-    if depth > 8 or len(out) >= 100:
-        return
-    if isinstance(obj, list):
-        for item in obj[:80]:
-            _walk_for_productish(item, out, depth + 1)
-        return
-    if not isinstance(obj, dict):
-        return
-    name = obj.get("title") or obj.get("fullTitle") or obj.get("productName") or obj.get("name") or ""
-    url = obj.get("url") or obj.get("pdpUrl") or obj.get("productUrl") or obj.get("slug") or ""
-    image = (
-        obj.get("imageUrl")
-        or obj.get("image")
-        or (obj.get("images") or [None])[0]
-        or ""
-    )
-    if isinstance(image, dict):
-        image = image.get("url") or image.get("src") or ""
-    price = ""
-    for key in ("price", "currentPrice", "salePrice", "amount"):
-        val = obj.get(key)
-        if val is None and isinstance(obj.get("price"), dict):
-            val = obj["price"].get("currentPrice") or obj["price"].get("amount")
-        if val is not None and str(val).strip():
-            price = str(val)
-            break
-    # Likely a product card if it has a title and product-ish URL/id
-    pid = obj.get("productId") or obj.get("styleColor") or obj.get("sku") or obj.get("id")
-    if name and (url or pid) and isinstance(name, str) and 3 < len(name) < 120:
-        out.append({
-            "name": name,
-            "url": str(url or ""),
-            "image": str(image or ""),
-            "price": price,
-            "description": str(obj.get("subtitle") or obj.get("description") or "")[:180],
-        })
-    for val in list(obj.values())[:40]:
-        if isinstance(val, (dict, list)):
-            _walk_for_productish(val, out, depth + 1)
-
-
-def _embedded_json_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
-    """Pull products from __NEXT_DATA__ only (safe). Avoid scanning large JS bundles."""
-    soup = BeautifulSoup(html or "", "html.parser")
-    products: List[Dict[str, Any]] = []
-    node = soup.find("script", id="__NEXT_DATA__")
-    if not node:
-        return products
-    raw = (node.string or node.get_text() or "").strip()
-    if not raw or len(raw) > 2_000_000:
-        return products
-    try:
-        data = json.loads(raw)
-    except Exception:
-        return products
-
-    found: List[Dict[str, str]] = []
-    _walk_for_productish(data, found)
-
-    for item in found:
-        href = item.get("url") or ""
-        if href and not href.startswith("http"):
-            if href.startswith("/"):
-                href = urljoin(page_url, href)
-            else:
-                href = urljoin(page_url, f"/t/{href}" if "/" not in href else href)
-        _add_product(
-            products,
-            seen,
-            name=item.get("name") or "",
-            page_url=page_url,
-            description=item.get("description") or "",
-            product_url=href,
-            image_url=urljoin(page_url, item["image"]) if item.get("image") else "",
-            price=item.get("price") or "",
-        )
-    return products
 
 
 def _shop_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
     soup = BeautifulSoup(html or "", "html.parser")
     category = _category_from_url(page_url)
     products: List[Dict[str, Any]] = []
-    # WooCommerce first (li.product), then other card patterns — avoid one giant .product wrapper
-    cards = soup.select("li.product")
-    if not cards:
-        cards = soup.select(
-            "li.product-item, .product-card, .product-item, "
-            "[data-product-id], [data-productid]"
-        )
-    if not cards:
-        cards = [
-            c for c in soup.select(".product")
-            if len(c.get_text(" ", strip=True) or "") < 600
-            and (
-                c.select_one("a[href*='/product/']")
-                or c.select_one("a[href*='/products/']")
-                or c.select_one("h2, h3, .woocommerce-loop-product__title, .product-title")
-            )
-        ]
+    cards = soup.select("li.product") or soup.select(".product")
     for card in cards:
-        link = (
-            card.select_one("a[href*='/product/']")
-            or card.select_one("a[href*='/products/']")
-            or card.select_one("a[href*='/t/']")
-            or card.select_one("a[href]")
-        )
+        link = card.select_one("a[href*='/product/']")
         href = (link.get("href") if link else "") or ""
-        if href:
-            href = urljoin(page_url, href)
         heading = ""
-        for sel in (
-            "h2", "h3", "h4",
-            ".woocommerce-loop-product__title", ".product-title",
-            ".product-card__title", "[data-testid='product-card__link']",
-            ".card-title", ".product-name",
-        ):
+        for sel in ("h2", "h3", ".woocommerce-loop-product__title", ".product-title"):
             node = card.select_one(sel)
             if node and node.get_text(" ", strip=True):
                 heading = node.get_text(" ", strip=True)
                 break
-        if not heading and link:
-            heading = (
-                (link.get("aria-label") or "")
-                or link.get_text(" ", strip=True)
-            )
         blob = re.sub(r"\s+", " ", card.get_text(" ", strip=True))
         blob = re.sub(r"\s*Read more\s*", " ", blob, flags=re.I).strip()
         sku_match = re.search(r"(AWE[-\s]?\d+)", blob, re.I)
-        name = heading
+        name = heading or (link.get_text(" ", strip=True) if link else "")
         name = re.split(r"\s*Art\s*#", name, maxsplit=1)[0].strip()
-        if not name or name.lower() in {"read more", "view product"}:
-            img_tag = card.select_one("img")
-            if img_tag:
-                name = (img_tag.get("alt") or "").strip()
         if not name or name.lower() in {"read more", "view product"}:
             continue
         sku = sku_match.group(1).upper().replace(" ", "-") if sku_match else ""
         display = f"{name} ({sku})" if sku else name
+        key = href.lower() or display.lower()
+        if key in seen or len(display) < 3:
+            continue
+        seen.add(key)
 
+        # ── Image extraction ──────────────────────────────────────────────
         image_url = ""
         img_tag = card.select_one("img")
         if img_tag:
+            # Try srcset first (highest-res thumbnail), then src, then data-src (lazy)
             srcset = img_tag.get("srcset") or img_tag.get("data-srcset") or ""
             if srcset:
+                # srcset format: "url1 300w, url2 600w" — take last (largest)
                 candidates = [s.strip().split()[0] for s in srcset.split(",") if s.strip()]
                 if candidates:
                     image_url = urljoin(page_url, candidates[-1])
             if not image_url:
                 src = img_tag.get("src") or img_tag.get("data-src") or img_tag.get("data-lazy-src") or ""
-                if src and not src.startswith("data:"):
+                if src and not src.startswith("data:"):  # skip base64 placeholders
                     image_url = urljoin(page_url, src)
 
-        price_node = card.select_one(".price, [data-testid='product-price'], .product-price")
+        price_node = card.select_one(".price")
         price = price_node.get_text(" ", strip=True)[:40] if price_node else ""
 
-        # Woo cards always keep product even if href is the category page fallback
-        product_url = href if href and _looks_like_pdp(urlparse(href).path or "") else (href or "")
-        if not product_url and href:
-            product_url = href
-        _add_product(
-            products,
-            seen,
-            name=display,
-            page_url=page_url,
-            category=category,
-            description=blob[:180],
-            product_url=product_url or href or f"{page_url}#{len(seen)}",
-            image_url=image_url,
-            price=price,
-            allow_listing_url=True,
-        )
-    return products
-
-
-def _product_link_grid(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
-    """Fallback: collect product PDP links and use link text / img alt as names."""
-    soup = BeautifulSoup(html or "", "html.parser")
-    products: List[Dict[str, Any]] = []
-    for anchor in soup.select("a[href*='/product/'], a[href*='/products/'], a[href*='/t/']"):
-        href = (anchor.get("href") or "").strip()
-        if not href:
-            continue
-        absolute = urljoin(page_url, href).split("#")[0]
-        path = (urlparse(absolute).path or "").lower()
-        if not _looks_like_pdp(path):
-            continue
-        name = (
-            (anchor.get("aria-label") or "").strip()
-            or anchor.get_text(" ", strip=True)
-        )
-        if not name or len(name) < 3:
-            img = anchor.select_one("img")
-            if img:
-                name = (img.get("alt") or "").strip()
-        if not name:
-            # slug → title
-            slug = path.rstrip("/").split("/")[-1]
-            name = re.sub(r"[-_]+", " ", slug)
-            name = re.sub(r"\b(mens|womens|kids|shoes|shoe)\b", "", name, flags=re.I)
-            name = re.sub(r"\s+", " ", name).strip().title()
-        image_url = ""
-        img = anchor.select_one("img")
-        if img:
-            src = img.get("src") or img.get("data-src") or ""
-            if src and not src.startswith("data:"):
-                image_url = urljoin(page_url, src)
-        _add_product(
-            products,
-            seen,
-            name=name,
-            page_url=page_url,
-            product_url=absolute,
-            image_url=image_url,
-        )
-        if len(products) >= 60:
-            break
+        products.append({
+            "name": display[:90],
+            "category": category,
+            "description": blob[:180],
+            "productUrl": href or page_url,
+            "imageUrl": image_url,
+            "price": price,
+            "source_url": page_url,
+        })
     return products
 
 
 def _category_from_url(url: str) -> str:
     path = (urlparse(url).path or "").strip("/")
-    parts = [p for p in path.split("/") if p and p not in ("product-category", "collections", "w", "t", "products", "product")]
+    parts = [p for p in path.split("/") if p and p != "product-category"]
     if not parts:
         return "Uncategorized"
     slug = parts[0].replace("-", " ").replace("and", "&")

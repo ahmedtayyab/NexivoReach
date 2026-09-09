@@ -47,11 +47,9 @@ class GeminiProvider(AIProvider):
 
         try:
             prompt = (
-                f"Extract ALL distinct sellable products as a JSON array from this {source_type} content. "
-                "Return up to 40 products. Each item must include name, category, description, price, moq, "
-                "specs (array), target_buyer. Prefer product listing items over nav/footer noise. "
-                "If many products appear, include as many unique names as possible — do not stop at one.\n"
-                f"{content[:14000]}"
+                f"Extract an array of products as JSON from the following {source_type} content. "
+                "Each item must include name, category, description, price, moq, specs (array), target_buyer.\n"
+                f"{content[:6000]}"
             )
             parsed = parse_json_payload(self._generate(prompt))
             if isinstance(parsed, list):

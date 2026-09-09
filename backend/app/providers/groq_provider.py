@@ -51,10 +51,9 @@ class GroqProvider(AIProvider):
             return await FallbackProvider().extract_products(content, source_type)
         try:
             prompt = (
-                f"Extract ALL distinct sellable products as a JSON array from this {source_type} content. "
-                "Return up to 40 products. Each item must include name, category, description, price, moq, "
-                "specs (array), target_buyer. Prefer listing items over nav/footer. Do not stop at one product.\n"
-                f"{content[:14000]}"
+                f"Extract an array of products as JSON from this {source_type} content. "
+                "Each item must include name, category, description, price, moq, specs (array), target_buyer.\n"
+                f"{content[:6000]}"
             )
             parsed = parse_json_payload(self._complete(prompt))
             if isinstance(parsed, list):
