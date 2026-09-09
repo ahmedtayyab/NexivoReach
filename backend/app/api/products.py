@@ -85,10 +85,7 @@ async def extract_products_from_url(req: UrlParseRequest, _user: AuthUser = Depe
     pages, shop_products = await scraper.scrape_shop_catalog(req.url)
     combined = "\n".join(text for _, text in pages) or req.url
     provider = get_ai_provider()
-    # Skip slow AI pass when Woo crawl already found a real catalog
-    fallback_products: list[dict] = []
-    if len(shop_products) < 15:
-        fallback_products = await provider.extract_products(combined, source_type="url")
+    fallback_products = await provider.extract_products(combined, source_type="url")
     merged: list[dict] = []
     seen = set()
     for raw in shop_products + fallback_products:
