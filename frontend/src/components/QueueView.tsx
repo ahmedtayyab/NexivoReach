@@ -25,6 +25,10 @@ interface Props {
   onPrepareOutreach?: () => void;
 }
 
+type IntentFilter = 'all' | 'high' | 'low' | 'none';
+type FitFilter = 'all' | 'high' | 'medium' | 'low' | 'score75' | 'score90';
+type PriorityFilter = 'all' | 'priority' | 'nurture' | 'review' | 'low';
+
 export default function QueueView({
   prospects,
   agentLogs,
@@ -34,6 +38,9 @@ export default function QueueView({
   onPrepareOutreach,
 }: Props) {
   const [filter, setFilter] = useState<string>('To contact');
+  const [intentFilter, setIntentFilter] = useState<IntentFilter>('all');
+  const [fitFilter, setFitFilter] = useState<FitFilter>('all');
+  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all');
   const [clearing, setClearing] = useState(false);
   const lastRun = agentLogs[0];
   const lastRunLabel = lastRun ? formatRelative(lastRun.timestamp) : null;
@@ -62,10 +69,26 @@ export default function QueueView({
     return map;
   }, [prospects]);
 
-  const visible = prospects.filter(p => {
+  const qualityFiltered = useMemo(() => {
+    return prospects.filter(p => matchesQualityFilters(p, intentFilter, fitFilter, priorityFilter));
+  }, [prospects, intentFilter, fitFilter, priorityFilter]);
+
+  const stageCounts = useMemo(() => {
+    const map: Record<string, number> = { All: qualityFiltered.length };
+    for (const s of LEAD_STAGES) map[s] = 0;
+    for (const p of qualityFiltered) {
+      const key = normalizeStage(p.stage);
+      map[key] = (map[key] || 0) + 1;
+    }
+    return map;
+  }, [qualityFiltered]);
+
+  const visible = qualityFiltered.filter(p => {
     if (filter === 'All') return true;
     return normalizeStage(p.stage) === filter;
   });
+
+  const filtersActive = intentFilter !== 'all' || fitFilter !== 'all' || priorityFilter !== 'all';
   const pipelineLive = (counts['To contact'] || 0) + (counts['Re-contact'] || 0) > 0;
 
   return (
@@ -109,13 +132,75 @@ export default function QueueView({
         <LeadPipeline active={pipelineLive} />
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 mb-3 nr-enter nr-enter-delay-2">
+        <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-secondary">
+          <span className="text-ink-muted shrink-0">Intent</span>
+          <select
+            value={intentFilter}
+            onChange={e => setIntentFilter(e.target.value as IntentFilter)}
+            className="text-[12px] border border-border rounded-md px-2 py-1 bg-panel text-ink"
+          >
+            <option value="all">All</option>
+            <option value="high">High</option>
+            <option value="low">Low</option>
+            <option value="none">None</option>
+          </select>
+        </label>
+        <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-secondary">
+          <span className="text-ink-muted shrink-0">Fit</span>
+          <select
+            value={fitFilter}
+            onChange={e => setFitFilter(e.target.value as FitFilter)}
+            className="text-[12px] border border-border rounded-md px-2 py-1 bg-panel text-ink"
+          >
+            <option value="all">All</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+            <option value="score90">Score 90+</option>
+            <option value="score75">Score 75+</option>
+          </select>
+        </label>
+        <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-secondary">
+          <span className="text-ink-muted shrink-0">Priority</span>
+          <select
+            value={priorityFilter}
+            onChange={e => setPriorityFilter(e.target.value as PriorityFilter)}
+            className="text-[12px] border border-border rounded-md px-2 py-1 bg-panel text-ink"
+          >
+            <option value="all">All</option>
+            <option value="priority">Priority</option>
+            <option value="nurture">Nurture</option>
+            <option value="review">Review</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+        {filtersActive && (
+          <button
+            type="button"
+            onClick={() => {
+              setIntentFilter('all');
+              setFitFilter('all');
+              setPriorityFilter('all');
+            }}
+            className="text-[12px] text-accent hover:underline"
+          >
+            Clear filters
+          </button>
+        )}
+        <span className="text-[12px] text-ink-muted ml-auto tabular-nums">
+          {visible.length} shown
+          {filtersActive || filter !== 'All' ? ` of ${prospects.length}` : ''}
+        </span>
+      </div>
+
       <div className="flex flex-nowrap sm:flex-wrap gap-1.5 mb-4 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-none nr-enter nr-enter-delay-2">
-        <FilterChip label="All" count={prospects.length} active={filter === 'All'} onClick={() => setFilter('All')} />
+        <FilterChip label="All" count={stageCounts.All || 0} active={filter === 'All'} onClick={() => setFilter('All')} />
         {LEAD_STAGES.map(s => (
           <FilterChip
             key={s}
             label={s}
-            count={counts[s] || 0}
+            count={stageCounts[s] || 0}
             active={filter === s}
             onClick={() => setFilter(s)}
           />
@@ -139,14 +224,16 @@ export default function QueueView({
             alt="Empty leads queue"
             className="mx-auto mb-5 w-full max-w-[280px] sm:max-w-[360px] rounded-lg border border-border-subtle shadow-sm object-cover nr-empty-art"
           />
-          <p className="text-[13.5px] font-medium text-ink-secondary">No leads in this bucket</p>
+          <p className="text-[13.5px] font-medium text-ink-secondary">No leads match these filters</p>
           <p className="text-[13px] text-ink-muted mt-1 max-w-sm mx-auto">
-            Run Discover to hunt buyers from your catalog, then update their status here.
+            {filtersActive || filter !== 'All'
+              ? 'Try clearing Intent / Fit / Priority or switch status to All.'
+              : 'Run Discover to hunt buyers from your catalog, then update their status here.'}
           </p>
         </div>
       ) : (
         <>
-          <div key={`m-${filter}`} className="md:hidden space-y-2 nr-stagger">
+          <div key={`m-${filter}-${intentFilter}-${fitFilter}-${priorityFilter}`} className="md:hidden space-y-2 nr-stagger">
             {visible.map(prospect => (
               <div
                 key={prospect.id}
@@ -188,7 +275,7 @@ export default function QueueView({
               <span className="section-label text-right">Fit</span>
               <span className="section-label text-right">Status</span>
             </div>
-            <div key={`d-${filter}`} className="divide-y divide-border-subtle nr-stagger">
+            <div key={`d-${filter}-${intentFilter}-${fitFilter}-${priorityFilter}`} className="divide-y divide-border-subtle nr-stagger">
               {visible.map(prospect => (
                 <div
                   key={prospect.id}
@@ -253,6 +340,45 @@ function normalizeStage(stage: string): string {
     Researched: 'To contact',
   };
   return map[stage] || stage || 'To contact';
+}
+
+function prospectIntent(p: Prospect): string {
+  return (p.intent || p.fitBreakdown?.intent || 'none').toLowerCase();
+}
+
+function prospectFitSummary(p: Prospect): string {
+  return (p.fitBreakdown?.fitSummary || p.icpFit || '').toLowerCase();
+}
+
+function prospectPriority(p: Prospect): string {
+  return (p.priority || p.fitBreakdown?.priority || '').toLowerCase();
+}
+
+function matchesQualityFilters(
+  p: Prospect,
+  intentFilter: IntentFilter,
+  fitFilter: FitFilter,
+  priorityFilter: PriorityFilter,
+): boolean {
+  if (intentFilter !== 'all' && prospectIntent(p) !== intentFilter) return false;
+
+  if (fitFilter === 'score90' && (p.fitScore || 0) < 90) return false;
+  if (fitFilter === 'score75' && (p.fitScore || 0) < 75) return false;
+  if (fitFilter === 'high' || fitFilter === 'medium' || fitFilter === 'low') {
+    const summary = prospectFitSummary(p);
+    if (summary) {
+      if (summary !== fitFilter) return false;
+    } else {
+      // Fall back to score bands when summary is missing
+      const score = p.fitScore || 0;
+      if (fitFilter === 'high' && score < 75) return false;
+      if (fitFilter === 'medium' && (score < 55 || score >= 75)) return false;
+      if (fitFilter === 'low' && score >= 55) return false;
+    }
+  }
+
+  if (priorityFilter !== 'all' && prospectPriority(p) !== priorityFilter) return false;
+  return true;
 }
 
 function formatRelative(timestamp: string): string {
