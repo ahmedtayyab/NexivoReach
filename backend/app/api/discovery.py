@@ -38,6 +38,9 @@ def _sync_leads_job(business_id: str, prospects: list[dict]) -> None:
     try:
         with Session(engine) as session:
             biz = session.get(Business, business_id)
+            sheet_id = sheets_mod.business_spreadsheet_id(biz)
+            if not sheet_id:
+                return
             from app.models.schemas import ProductItem
             product_rows = session.exec(
                 select(ProductItem).where(ProductItem.business_id == business_id)
@@ -48,7 +51,7 @@ def _sync_leads_job(business_id: str, prospects: list[dict]) -> None:
                 if r.source_url or r.product_url
             ]
             seller = sheets_mod.resolve_company_tab_name(biz, products, fallback="Company")
-        sheets_mod.sync_leads(seller, prospects)
+        sheets_mod.sync_leads(seller, prospects, spreadsheet_id=sheet_id)
     except Exception as exc:
         log.warning("Sheets lead sync failed: %s", exc)
 

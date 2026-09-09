@@ -22,9 +22,25 @@ def init_db():
     SQLModel.metadata.create_all(engine)
     _ensure_prospect_contact_columns()
     _ensure_user_gmail_columns()
+    _ensure_business_sheets_columns()
     if _backend == "sqlite":
         _ensure_sqlite_columns()
         _migrate_multi_company()
+
+
+def _ensure_business_sheets_columns():
+    """Per-business Google Spreadsheet ID/title (SQLite + Postgres)."""
+    additions = [
+        ("business", "sheets_spreadsheet_id", "VARCHAR"),
+        ("business", "sheets_spreadsheet_title", "VARCHAR"),
+    ]
+    with engine.connect() as conn:
+        for table, column, coltype in additions:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
 
 
 def _ensure_prospect_contact_columns():

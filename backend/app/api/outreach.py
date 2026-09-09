@@ -85,6 +85,9 @@ def _sync_leads_to_sheets(session: Session, business_id: str, rows: List[Prospec
         return
     try:
         biz = session.get(Business, business_id) if business_id else None
+        sheet_id = sheets_mod.business_spreadsheet_id(biz)
+        if not sheet_id:
+            return
         seller = sheets_mod.resolve_company_tab_name(biz, fallback="Company")
         payload = []
         dirty = False
@@ -124,7 +127,7 @@ def _sync_leads_to_sheets(session: Session, business_id: str, rows: List[Prospec
             })
         if dirty:
             session.commit()
-        sheets_mod.sync_leads(seller, payload)
+        sheets_mod.sync_leads(seller, payload, spreadsheet_id=sheet_id)
     except Exception as exc:
         log.warning("Sheets sync after outreach failed: %s", exc)
 

@@ -12,6 +12,9 @@ class Business(SQLModel, table=True):
     primary_categories: List[str] = Field(default=[], sa_type=JSON)
     extracted_by_ai: bool = True
     updated_at: str = ""
+    # Per-company Google Sheet (not shared across users/businesses)
+    sheets_spreadsheet_id: Optional[str] = Field(default=None)
+    sheets_spreadsheet_title: Optional[str] = Field(default=None)
 
 
 class ProductItem(SQLModel, table=True):

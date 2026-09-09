@@ -1,14 +1,12 @@
 """
 Google Sheets integration for NexivoReach.
 
-Uses a service-account credential (JSON) shared with a spreadsheet.
-Two worksheets are managed automatically:
-  • Products   — one row per product (keyed on name+category)
-  • Prospects  — one row per prospect (keyed on website) + a Timeline tab
+Platform uses one service-account credential (env).
+Each company (Business) connects its own spreadsheet ID — users never share one sheet.
 
-Environment variables (set in backend/.env):
-  GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON  – the full service-account JSON (one line)
-  GOOGLE_SHEETS_SPREADSHEET_ID        – the spreadsheet ID from the URL
+Env:
+  GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON  – service-account JSON (one line)
+  GOOGLE_SHEETS_SPREADSHEET_ID        – unused for sync; each Business stores its own ID
 """
 
 from __future__ import annotations
@@ -17,7 +15,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from app.config import settings
 from app.tools.web_search import display_name_from_url, site_display_name_from_url, _registrable_domain
@@ -188,23 +186,153 @@ def _get_client():
 
 
 def is_configured() -> bool:
-    return bool(
-        settings.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON.strip()
-        and settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip()
-    )
+    """True when the platform service account is available (not per-business sheet)."""
+    return bool((settings.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON or "").strip())
 
 
-def connection_status() -> dict:
-    if not is_configured():
-        return {"connected": False, "reason": "not_configured"}
+def service_account_email() -> str:
+    raw = (settings.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON or "").strip()
+    if not raw:
+        return ""
+    try:
+        return (json.loads(raw).get("client_email") or "").strip()
+    except Exception:
+        return ""
+
+
+def parse_spreadsheet_id(raw: str) -> str:
+    """Accept a bare ID or a full docs.google.com/spreadsheets URL."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", text)
+    if m:
+        return m.group(1)
+    # bare id
+    if re.fullmatch(r"[a-zA-Z0-9-_]{20,}", text):
+        return text
+    return text
+
+
+def resolve_spreadsheet_id(spreadsheet_id: str | None = None) -> str:
+    """Business-specific ID only — never fall back to a shared global sheet."""
+    return (spreadsheet_id or "").strip()
+
+
+def business_spreadsheet_id(business: Any | None) -> str:
+    if business is None:
+        return ""
+    return (getattr(business, "sheets_spreadsheet_id", None) or "").strip()
+
+
+def connection_status(spreadsheet_id: str | None = None) -> dict:
+    platform = is_configured()
+    sa_email = service_account_email() if platform else ""
+    if not platform:
+        return {
+            "connected": False,
+            "platformReady": False,
+            "reason": "not_configured",
+            "serviceAccountEmail": "",
+        }
     client = _get_client()
     if client is None:
-        return {"connected": False, "reason": "auth_failed"}
+        return {
+            "connected": False,
+            "platformReady": False,
+            "reason": "auth_failed",
+            "serviceAccountEmail": sa_email,
+        }
+    sid = resolve_spreadsheet_id(spreadsheet_id)
+    if not sid:
+        return {
+            "connected": False,
+            "platformReady": True,
+            "reason": "business_not_linked",
+            "serviceAccountEmail": sa_email,
+            "message": "Connect a spreadsheet for this company (each company has its own Sheet).",
+        }
     try:
-        sh = client.open_by_key(settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip())
-        return {"connected": True, "spreadsheet_title": sh.title, "url": f"https://docs.google.com/spreadsheets/d/{sh.id}"}
+        sh = client.open_by_key(sid)
+        return {
+            "connected": True,
+            "platformReady": True,
+            "spreadsheet_title": sh.title,
+            "spreadsheetId": sh.id,
+            "url": f"https://docs.google.com/spreadsheets/d/{sh.id}",
+            "serviceAccountEmail": sa_email,
+        }
     except Exception as exc:
-        return {"connected": False, "reason": str(exc)}
+        return {
+            "connected": False,
+            "platformReady": True,
+            "reason": str(exc),
+            "spreadsheetId": sid,
+            "serviceAccountEmail": sa_email,
+        }
+
+
+def create_business_spreadsheet(title: str, share_with_email: str = "") -> dict:
+    """
+    Create a new spreadsheet owned by the service account and optionally share
+    it with the signed-in user so they can open it in Drive.
+    """
+    client = _get_client()
+    if client is None:
+        return {"ok": False, "error": "Sheets service account not configured"}
+    name = (title or "NexivoReach").strip()[:80] or "NexivoReach"
+    try:
+        sh = client.create(f"NexivoReach — {name}")
+        # Seed default tabs
+        _get_or_create_sheet(sh, f"{_sanitize_tab_label(name)} - Products", PRODUCT_HEADERS)
+        _get_or_create_sheet(sh, f"{_sanitize_tab_label(name)} - Leads", LEAD_HEADERS)
+        # Remove default "Sheet1" if present
+        try:
+            default = sh.worksheet("Sheet1")
+            if len(sh.worksheets()) > 1:
+                sh.del_worksheet(default)
+        except Exception:
+            pass
+        email = (share_with_email or "").strip()
+        if email and "@" in email:
+            try:
+                sh.share(email, perm_type="user", role="writer", notify=True)
+            except Exception as exc:
+                log.warning("Could not share new spreadsheet with %s: %s", email, exc)
+        return {
+            "ok": True,
+            "spreadsheetId": sh.id,
+            "spreadsheet_title": sh.title,
+            "url": f"https://docs.google.com/spreadsheets/d/{sh.id}",
+        }
+    except Exception as exc:
+        log.warning("Create spreadsheet failed: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
+def verify_spreadsheet_access(spreadsheet_id: str) -> dict:
+    client = _get_client()
+    if client is None:
+        return {"ok": False, "error": "Sheets service account not configured"}
+    sid = parse_spreadsheet_id(spreadsheet_id)
+    if not sid:
+        return {"ok": False, "error": "Invalid spreadsheet ID or URL"}
+    try:
+        sh = client.open_by_key(sid)
+        return {
+            "ok": True,
+            "spreadsheetId": sh.id,
+            "spreadsheet_title": sh.title,
+            "url": f"https://docs.google.com/spreadsheets/d/{sh.id}",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": (
+                f"Cannot open spreadsheet ({exc}). Share it with "
+                f"{service_account_email() or 'the service account'} as Editor."
+            ),
+        }
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
@@ -299,7 +427,7 @@ def resolve_company_tab_name(
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
-def sync_products(company_name: str, products: list[dict]) -> dict:
+def sync_products(company_name: str, products: list[dict], spreadsheet_id: str = "") -> dict:
     """
     Write/update products to a per-company worksheet named '<Company> — Products'.
     Upserts on Name+Category key.
@@ -310,7 +438,9 @@ def sync_products(company_name: str, products: list[dict]) -> dict:
     if client is None:
         return {"written": 0, "error": "Sheets not configured"}
 
-    sheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip()
+    sheet_id = resolve_spreadsheet_id(spreadsheet_id)
+    if not sheet_id:
+        return {"written": 0, "error": "No spreadsheet linked for this company"}
     sh = client.open_by_key(sheet_id)
     tab_name = f"{_sanitize_tab_label(company_name)} - Products"
     ws = _get_or_create_sheet(sh, tab_name, PRODUCT_HEADERS)
@@ -369,7 +499,7 @@ def sync_products(company_name: str, products: list[dict]) -> dict:
     return {"written": written, "url": url, "tab": tab_name}
 
 
-def sync_leads(seller_name: str, prospects: list[dict]) -> dict:
+def sync_leads(seller_name: str, prospects: list[dict], spreadsheet_id: str = "") -> dict:
     """
     Upsert leads onto a per-seller tab: '<Seller> - Leads'.
     Separate from the product catalog tab. Includes seller company name on every row.
@@ -379,7 +509,9 @@ def sync_leads(seller_name: str, prospects: list[dict]) -> dict:
     if client is None:
         return {"written": 0, "error": "Sheets not configured"}
 
-    sheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip()
+    sheet_id = resolve_spreadsheet_id(spreadsheet_id)
+    if not sheet_id:
+        return {"written": 0, "error": "No spreadsheet linked for this company"}
     sh = client.open_by_key(sheet_id)
     generic = GENERIC_COMPANY_NAMES
     resolved = (seller_name or "").strip()
@@ -477,12 +609,14 @@ def sync_leads(seller_name: str, prospects: list[dict]) -> dict:
     return {"written": written, "url": url, "tab": tab_name}
 
 
-def list_restore_tabs() -> list[dict[str, Any]]:
+def list_restore_tabs(spreadsheet_id: str = "") -> list[dict[str, Any]]:
     """Return Products/Leads worksheet pairs found in the spreadsheet."""
     client = _get_client()
     if client is None:
         return []
-    sheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip()
+    sheet_id = resolve_spreadsheet_id(spreadsheet_id)
+    if not sheet_id:
+        return []
     sh = client.open_by_key(sheet_id)
     products: dict[str, str] = {}
     leads: dict[str, str] = {}
@@ -504,11 +638,13 @@ def list_restore_tabs() -> list[dict[str, Any]]:
     ]
 
 
-def fetch_products_from_tab(tab_name: str) -> list[dict[str, Any]]:
+def fetch_products_from_tab(tab_name: str, spreadsheet_id: str = "") -> list[dict[str, Any]]:
     client = _get_client()
     if client is None:
         return []
-    sheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip()
+    sheet_id = resolve_spreadsheet_id(spreadsheet_id)
+    if not sheet_id:
+        return []
     sh = client.open_by_key(sheet_id)
     ws = sh.worksheet(tab_name)
     rows = ws.get_all_values()
@@ -550,11 +686,13 @@ def fetch_products_from_tab(tab_name: str) -> list[dict[str, Any]]:
     return products
 
 
-def fetch_leads_from_tab(tab_name: str) -> list[dict[str, Any]]:
+def fetch_leads_from_tab(tab_name: str, spreadsheet_id: str = "") -> list[dict[str, Any]]:
     client = _get_client()
     if client is None:
         return []
-    sheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID.strip()
+    sheet_id = resolve_spreadsheet_id(spreadsheet_id)
+    if not sheet_id:
+        return []
     sh = client.open_by_key(sheet_id)
     ws = sh.worksheet(tab_name)
     rows = ws.get_all_values()

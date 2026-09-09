@@ -112,7 +112,10 @@ export default function SettingsView({
         />
       )}
       {section === 'integrations' && (
-        <IntegrationsSection onRestoredFromSheets={onRestoredFromSheets} />
+        <IntegrationsSection
+          companyId={businessInfo.id}
+          onRestoredFromSheets={onRestoredFromSheets}
+        />
       )}
       </div>
     </div>
@@ -645,9 +648,18 @@ function ICPSection({
 
 // ── Integrations Section ─────────────────────────────────────────────────────
 
-type SheetsStatus =
-  | { connected: true; spreadsheet_title: string; url: string }
-  | { connected: false; reason: string };
+type SheetsStatus = {
+  connected: boolean;
+  platformReady?: boolean;
+  reason?: string;
+  spreadsheet_title?: string;
+  spreadsheetId?: string;
+  url?: string;
+  serviceAccountEmail?: string;
+  message?: string;
+  companyName?: string;
+  companyId?: string;
+};
 
 function GmailConnectCard() {
   const [status, setStatus] = useState<{ connected: boolean; email?: string; connectedAt?: string } | null>(null);
@@ -739,8 +751,10 @@ function GmailConnectCard() {
 }
 
 function IntegrationsSection({
+  companyId,
   onRestoredFromSheets,
 }: {
+  companyId?: string;
   onRestoredFromSheets?: (payload: {
     company?: BusinessInfo;
     products?: Product[];
@@ -750,6 +764,10 @@ function IntegrationsSection({
 }) {
   const [status, setStatus] = useState<SheetsStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sheetInput, setSheetInput] = useState('');
+  const [connectBusy, setConnectBusy] = useState(false);
+  const [createBusy, setCreateBusy] = useState(false);
+  const [connectMsg, setConnectMsg] = useState('');
   const [restoreOptions, setRestoreOptions] = useState<
     Array<{ companyName: string; productsTab?: string; leadsTab?: string }>
   >([]);
@@ -777,6 +795,8 @@ function IntegrationsSection({
               setRestoreCompany(companies[0].companyName);
             }
           }
+        } else {
+          setRestoreOptions([]);
         }
       }
     } catch {
@@ -786,7 +806,58 @@ function IntegrationsSection({
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [companyId]);
+
+  const handleConnect = async () => {
+    if (!sheetInput.trim() || connectBusy) return;
+    setConnectBusy(true);
+    setConnectMsg('');
+    try {
+      const resp = await apiFetch('/api/sheets/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spreadsheet: sheetInput.trim() }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      setSheetInput('');
+      setConnectMsg('Sheet linked to this company.');
+      await load();
+    } catch (e) {
+      setConnectMsg(e instanceof Error ? e.message : 'Connect failed');
+    } finally {
+      setConnectBusy(false);
+    }
+  };
+
+  const handleCreate = async () => {
+    if (createBusy) return;
+    setCreateBusy(true);
+    setConnectMsg('');
+    try {
+      const resp = await apiFetch('/api/sheets/create', { method: 'POST' });
+      if (!resp.ok) throw new Error(await resp.text());
+      const data = await resp.json();
+      setConnectMsg(
+        data.sharedWith
+          ? `Created and shared with ${data.sharedWith}.`
+          : 'Spreadsheet created for this company.',
+      );
+      await load();
+    } catch (e) {
+      setConnectMsg(e instanceof Error ? e.message : 'Create failed');
+    } finally {
+      setCreateBusy(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!window.confirm('Unlink this company’s Google Sheet? Data in the sheet is kept.')) return;
+    const resp = await apiFetch('/api/sheets/disconnect', { method: 'POST' });
+    if (resp.ok) {
+      setConnectMsg('Sheet unlinked from this company.');
+      await load();
+    }
+  };
 
   const handleRestore = async () => {
     if (!restoreCompany || restoring) return;
@@ -835,6 +906,9 @@ function IntegrationsSection({
     }
   };
 
+  const platformReady = Boolean(status?.platformReady);
+  const saEmail = status?.serviceAccountEmail || '';
+
   return (
     <div className="space-y-8">
       {/* Gmail card */}
@@ -846,7 +920,7 @@ function IntegrationsSection({
           <div>
             <h3 className="text-[14px] font-semibold text-ink">Google Sheets</h3>
             <p className="text-[12.5px] text-ink-secondary mt-0.5">
-              Optional export of catalog and leads. The live product database is Postgres in production — Sheets is backup, not the source of truth.
+              Each company has its own spreadsheet. Catalog and leads sync only to the sheet linked here — never a shared sheet across accounts.
             </p>
           </div>
           {loading ? (
@@ -857,12 +931,12 @@ function IntegrationsSection({
             </span>
           ) : (
             <span className="flex items-center gap-1.5 text-[12px] text-amber-600 font-medium">
-              <XCircle className="w-4 h-4" /> Not connected
+              <XCircle className="w-4 h-4" /> Not linked
             </span>
           )}
         </div>
 
-        {status?.connected && (
+        {status?.connected && status.url && (
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <a
               href={status.url}
@@ -871,7 +945,7 @@ function IntegrationsSection({
               className="inline-flex items-center gap-1.5 text-[12.5px] text-accent hover:underline"
             >
               <ExternalLink className="w-3.5 h-3.5" />
-              {status.spreadsheet_title}
+              {status.spreadsheet_title || 'Open spreadsheet'}
             </a>
             <button
               type="button"
@@ -898,28 +972,75 @@ function IntegrationsSection({
             >
               {syncingLeads ? 'Coloring…' : 'Sync leads & colors'}
             </button>
+            <button
+              type="button"
+              onClick={handleDisconnect}
+              className="px-3 py-1.5 text-[12.5px] border border-border rounded-md text-ink-secondary hover:border-ink-muted"
+            >
+              Unlink sheet
+            </button>
             {syncLeadsMsg && (
               <p className="w-full text-[12px] text-ink-secondary">{syncLeadsMsg}</p>
             )}
           </div>
         )}
 
-        {!status?.connected && !loading && (
+        {!status?.connected && !loading && platformReady && (
           <div className="space-y-3 pt-1">
             <p className="text-[12.5px] text-ink-secondary leading-relaxed">
-              To connect, add these two variables to your <code className="bg-canvas px-1 rounded text-[11.5px]">backend/.env</code> file and restart the server:
+              Link a spreadsheet for <strong className="text-ink">this company only</strong>.
+              Share it with the service account as Editor, or create one automatically.
             </p>
-            <div className="rounded-lg bg-canvas border border-border p-3 font-mono text-[11.5px] text-ink-secondary space-y-1 select-all">
-              <div>GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON={"<paste service-account JSON>"}</div>
-              <div>GOOGLE_SHEETS_SPREADSHEET_ID={"<your spreadsheet ID>"}</div>
+            {saEmail && (
+              <p className="text-[12px] text-ink-secondary rounded-lg bg-canvas border border-border px-3 py-2 font-mono break-all select-all">
+                {saEmail}
+              </p>
+            )}
+            <div className="flex flex-col sm:flex-row gap-2 max-w-xl">
+              <input
+                type="text"
+                value={sheetInput}
+                onChange={e => setSheetInput(e.target.value)}
+                placeholder="Paste spreadsheet URL or ID"
+                className="flex-1 border border-border rounded-md px-3 py-2 text-[13px] text-ink bg-panel"
+              />
+              <button
+                type="button"
+                disabled={connectBusy || !sheetInput.trim()}
+                onClick={handleConnect}
+                className="px-3 py-2 text-[13px] bg-accent hover:bg-accent-hover disabled:opacity-40 text-white rounded-md"
+              >
+                {connectBusy ? 'Linking…' : 'Link sheet'}
+              </button>
             </div>
-            <ol className="text-[12px] text-ink-secondary space-y-1 list-decimal list-inside leading-relaxed">
-              <li>Go to <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Google Cloud Console</a> → Create a service account → Download JSON key.</li>
-              <li>Enable the <strong>Google Sheets API</strong> and <strong>Google Drive API</strong> in your project.</li>
-              <li>Create a new Google Sheet, then share it with the service account email (<em>Editor</em> access).</li>
-              <li>Copy the spreadsheet ID from the URL (the long string between <code>/d/</code> and <code>/edit</code>).</li>
-              <li>Paste the JSON (as a single line) and the ID into your <code>.env</code>, then restart.</li>
-            </ol>
+            <div className="flex flex-wrap gap-2 items-center">
+              <button
+                type="button"
+                disabled={createBusy}
+                onClick={handleCreate}
+                className="btn-secondary text-[12.5px] py-1.5 px-4 disabled:opacity-50"
+              >
+                {createBusy ? 'Creating…' : 'Create my sheet'}
+              </button>
+              <button
+                type="button"
+                onClick={load}
+                className="text-[12.5px] text-ink-secondary hover:text-ink underline-offset-2 hover:underline"
+              >
+                Refresh status
+              </button>
+            </div>
+            {connectMsg && <p className="text-[12.5px] text-ink-secondary">{connectMsg}</p>}
+          </div>
+        )}
+
+        {!status?.connected && !loading && !platformReady && (
+          <div className="space-y-3 pt-1">
+            <p className="text-[12.5px] text-ink-secondary leading-relaxed">
+              Sheets export is not available yet — the server needs{' '}
+              <code className="bg-canvas px-1 rounded text-[11.5px]">GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON</code>.
+              Once that is set, each company links its own spreadsheet here.
+            </p>
             <button
               onClick={load}
               className="btn-secondary text-[12.5px] py-1.5 px-4"
@@ -928,14 +1049,18 @@ function IntegrationsSection({
             </button>
           </div>
         )}
+
+        {connectMsg && status?.connected && (
+          <p className="text-[12.5px] text-ink-secondary">{connectMsg}</p>
+        )}
       </div>
 
       {status?.connected && restoreOptions.length > 0 && (
         <div className="rounded-xl border border-border bg-surface p-6 space-y-4">
           <div>
-            <h3 className="text-[14px] font-semibold text-ink">Restore company from Sheets</h3>
+            <h3 className="text-[14px] font-semibold text-ink">Restore from this company’s sheet</h3>
             <p className="text-[12.5px] text-ink-secondary mt-0.5 leading-relaxed">
-              Recreates the company in the app (name, website, catalog) from your Sheets tabs. Pick Alwasi Enterprises to bring it back into the sidebar.
+              Pull catalog (and optionally leads) from tabs in the spreadsheet linked above into this company.
             </p>
           </div>
           <div>
@@ -986,7 +1111,7 @@ function IntegrationsSection({
           </li>
           <li className="flex gap-2">
             <span className="text-accent font-bold mt-0.5">→</span>
-            <span><strong className="text-ink">Prospects</strong> — written to your company <em>Leads</em> tab (keyed on website). Status drives row color: white = To contact, blue = Contacted (emailed), green = Replied, amber = Re-contact. Stage changes also land in a <em>Timeline</em> tab when enabled.</span>
+            <span><strong className="text-ink">Prospects</strong> — written to your company <em>Leads</em> tab (keyed on website). Status drives row color: white = To contact, blue = Contacted (emailed), green = Replied, amber = Re-contact.</span>
           </li>
         </ul>
       </div>

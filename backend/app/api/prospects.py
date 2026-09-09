@@ -163,11 +163,17 @@ def _maybe_sync_prospect(record: ProspectRecord):
         return
     try:
         seller = "Company"
+        sheet_id = ""
         if record.business_id:
             from app.models.schemas import Business
             with Session(engine) as session:
                 biz = session.get(Business, record.business_id)
+                sheet_id = sheets_mod.business_spreadsheet_id(biz)
+                if not sheet_id:
+                    return
                 seller = sheets_mod.resolve_company_tab_name(biz, fallback="Company")
+        else:
+            return
         sheets_mod.sync_leads(seller, [{
             "id": record.id,
             "company_name": record.company_name,
@@ -186,6 +192,6 @@ def _maybe_sync_prospect(record: ProspectRecord):
             "contact_again": bool(getattr(record, "contact_again", True)),
             "reply_summary": getattr(record, "reply_summary", None) or "",
             "seller_name": seller,
-        }])
+        }], spreadsheet_id=sheet_id)
     except Exception as exc:
         log.warning("Sheets prospect sync failed: %s", exc)
