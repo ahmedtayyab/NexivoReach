@@ -180,6 +180,213 @@ async def prepare_outreach_batch(
         }
 
 
+def _draft_ready_to_send(row: ProspectRecord) -> bool:
+    draft = row.outreach_draft or {}
+    if not draft:
+        return False
+    status = (draft.get("status") or "").strip()
+    if status not in ("Draft", "Approved"):
+        return False
+    to = (draft.get("toEmail") or row.email or "").strip()
+    if not to or "@" not in to:
+        return False
+    if not (draft.get("subject") or "").strip():
+        return False
+    if not (draft.get("body") or "").strip():
+        return False
+    return True
+
+
+async def _send_one_gmail(
+    session: Session,
+    row: ProspectRecord,
+    db_user: User,
+    *,
+    to: str = "",
+    subject: str = "",
+    body: str = "",
+) -> ProspectRecord:
+    draft = dict(row.outreach_draft or {})
+    if not draft:
+        raise HTTPException(status_code=400, detail="No outreach draft")
+    to_addr = (to or draft.get("toEmail") or row.email or "").strip()
+    subj = (subject or draft.get("subject") or "").strip()
+    body_text = (body or draft.get("body") or "").strip()
+    if not to_addr or "@" not in to_addr:
+        raise HTTPException(status_code=400, detail=f"Missing recipient email for {row.company_name}")
+    if not subj or not body_text:
+        raise HTTPException(status_code=400, detail=f"Incomplete draft for {row.company_name}")
+
+    sent = await gmail_mod.send_email(
+        session,
+        db_user,
+        to=to_addr,
+        subject=subj,
+        body=body_text,
+    )
+    draft["toEmail"] = to_addr
+    draft["subject"] = subj
+    draft["body"] = body_text
+    draft["status"] = "Sent"
+    draft["gmailMessageId"] = sent.get("messageId") or ""
+    draft["gmailThreadId"] = sent.get("threadId") or ""
+    draft["sentAt"] = _now()
+    draft["sentVia"] = "gmail"
+    row.stage = "Contacted"
+    timeline = list(row.agent_timeline or [])
+    timeline.append({"time": _clock(), "action": f"Sent via Gmail to {to_addr}"})
+    row.outreach_draft = draft
+    row.agent_timeline = timeline
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return row
+
+
+@router.post("/send-batch")
+async def send_batch(
+    payload: Dict[str, Any],
+    request: Request,
+    user: AuthUser = Depends(get_current_user),
+):
+    """
+    One-click: send ready outreach drafts via Gmail.
+    Defaults to best-fit Draft/Approved leads that have a recipient email.
+    """
+    ids = payload.get("ids") or []
+    best_fit_only = payload.get("bestFitOnly", True) if not ids else False
+    limit = min(40, max(1, int(payload.get("limit") or 25)))
+
+    with Session(engine) as session:
+        business_id = resolve_business_id(request, user, session)
+        db_user = session.get(User, user.id)
+        if not db_user or not gmail_mod.is_connected(db_user):
+            raise HTTPException(
+                status_code=400,
+                detail="Connect Gmail in Settings → Integrations to send in one click",
+            )
+
+        rows = session.exec(
+            select(ProspectRecord).where(ProspectRecord.business_id == business_id)
+        ).all()
+        id_set = set(ids) if ids else None
+        targets: List[ProspectRecord] = []
+        for row in rows:
+            if id_set is not None and row.id not in id_set:
+                continue
+            if not _draft_ready_to_send(row):
+                continue
+            if best_fit_only and not _is_outreach_ready(row):
+                continue
+            targets.append(row)
+
+        # Prefer higher fit first
+        targets.sort(key=lambda r: int(r.fit_score or 0), reverse=True)
+        targets = targets[:limit]
+
+        sent_rows: List[ProspectRecord] = []
+        errors: List[Dict[str, str]] = []
+        for row in targets:
+            try:
+                # Small pause reduces Gmail rate-limit risk
+                if sent_rows:
+                    time.sleep(0.35)
+                sent_rows.append(await _send_one_gmail(session, row, db_user))
+            except Exception as exc:
+                log.warning("Batch send failed for %s: %s", row.id, exc)
+                errors.append({
+                    "id": row.id or "",
+                    "company": row.company_name or "",
+                    "error": str(exc)[:200],
+                })
+
+        return {
+            "ok": True,
+            "sent": len(sent_rows),
+            "failed": len(errors),
+            "skipped": 0,
+            "errors": errors[:20],
+            "prospects": [prospect_to_frontend(r) for r in sent_rows],
+        }
+
+
+@router.post("/send-ready")
+async def send_ready(
+    payload: Dict[str, Any],
+    request: Request,
+    user: AuthUser = Depends(get_current_user),
+):
+    """
+    Full one-click automation: prepare missing drafts for best-fit leads (with email),
+    then send all ready drafts via Gmail.
+    """
+    limit = min(25, max(1, int(payload.get("limit") or 15)))
+    with Session(engine) as session:
+        business_id = resolve_business_id(request, user, session)
+        db_user = session.get(User, user.id)
+        if not db_user or not gmail_mod.is_connected(db_user):
+            raise HTTPException(
+                status_code=400,
+                detail="Connect Gmail in Settings → Integrations to send in one click",
+            )
+        seller = _seller_name(session, business_id)
+        rows = session.exec(
+            select(ProspectRecord).where(ProspectRecord.business_id == business_id)
+        ).all()
+
+        prepared = 0
+        # Prepare best-fit leads that have an email but no draft yet
+        for row in sorted(rows, key=lambda r: int(r.fit_score or 0), reverse=True):
+            if prepared >= limit:
+                break
+            if not _is_outreach_ready(row):
+                continue
+            has_email = bool((row.email or "").strip() and "@" in (row.email or ""))
+            if not has_email:
+                continue
+            if row.outreach_draft and _draft_ready_to_send(row):
+                continue
+            if row.outreach_draft and (row.outreach_draft or {}).get("status") in ("Sent", "Replied"):
+                continue
+            try:
+                await _prepare_one(session, row, seller, force=False)
+                prepared += 1
+            except Exception as exc:
+                log.warning("Prepare before send failed for %s: %s", row.id, exc)
+
+        # Re-load and send
+        rows = session.exec(
+            select(ProspectRecord).where(ProspectRecord.business_id == business_id)
+        ).all()
+        targets = [r for r in rows if _draft_ready_to_send(r) and _is_outreach_ready(r)]
+        targets.sort(key=lambda r: int(r.fit_score or 0), reverse=True)
+        targets = targets[:limit]
+
+        sent_rows: List[ProspectRecord] = []
+        errors: List[Dict[str, str]] = []
+        for row in targets:
+            try:
+                if sent_rows:
+                    time.sleep(0.35)
+                sent_rows.append(await _send_one_gmail(session, row, db_user))
+            except Exception as exc:
+                log.warning("Send-ready failed for %s: %s", row.id, exc)
+                errors.append({
+                    "id": row.id or "",
+                    "company": row.company_name or "",
+                    "error": str(exc)[:200],
+                })
+
+        return {
+            "ok": True,
+            "prepared": prepared,
+            "sent": len(sent_rows),
+            "failed": len(errors),
+            "errors": errors[:20],
+            "prospects": [prospect_to_frontend(r) for r in sent_rows],
+        }
+
+
 @router.post("/{prospect_id}/refresh-contacts")
 async def refresh_contacts(
     prospect_id: str,
@@ -339,28 +546,18 @@ async def send_outreach(
 
         if use_gmail:
             try:
-                sent = await gmail_mod.send_email(
+                row = await _send_one_gmail(
                     session,
+                    row,
                     db_user,
                     to=to,
                     subject=draft.get("subject") or "",
                     body=draft.get("body") or "",
                 )
+            except HTTPException:
+                raise
             except Exception as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-            draft["status"] = "Sent"
-            draft["gmailMessageId"] = sent.get("messageId") or ""
-            draft["gmailThreadId"] = sent.get("threadId") or ""
-            draft["sentAt"] = _now()
-            draft["sentVia"] = "gmail"
-            row.stage = "Contacted"
-            timeline = list(row.agent_timeline or [])
-            timeline.append({"time": _clock(), "action": f"Sent via Gmail to {to or '(no to)'}"})
-            row.outreach_draft = draft
-            row.agent_timeline = timeline
-            session.add(row)
-            session.commit()
-            session.refresh(row)
             return {
                 "ok": True,
                 "via": "gmail",

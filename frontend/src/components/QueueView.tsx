@@ -23,6 +23,8 @@ interface Props {
   onUpdateStage: (id: string, stage: Prospect['stage']) => void;
   onClearLeads?: () => Promise<void> | void;
   onPrepareOutreach?: () => void;
+  onSendAllReady?: () => void;
+  gmailConnected?: boolean;
 }
 
 type IntentFilter = 'all' | 'high' | 'low' | 'none';
@@ -36,6 +38,8 @@ export default function QueueView({
   onUpdateStage,
   onClearLeads,
   onPrepareOutreach,
+  onSendAllReady,
+  gmailConnected = false,
 }: Props) {
   const [filter, setFilter] = useState<string>('To contact');
   const [intentFilter, setIntentFilter] = useState<IntentFilter>('all');
@@ -102,6 +106,15 @@ export default function QueueView({
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {onSendAllReady && gmailConnected && (
+            <button
+              type="button"
+              onClick={() => onSendAllReady()}
+              className="px-3 py-1.5 text-[12px] bg-accent hover:bg-accent-hover text-white rounded-md nr-btn-press"
+            >
+              Send emails
+            </button>
+          )}
           {onPrepareOutreach && prospects.some(p => !p.outreachDraft && (
             (p.fitScore || 0) >= 75
             || (p.fitBreakdown?.fitSummary || '').toLowerCase() === 'high'
@@ -110,7 +123,7 @@ export default function QueueView({
             <button
               type="button"
               onClick={() => onPrepareOutreach()}
-              className="px-3 py-1.5 text-[12px] bg-accent hover:bg-accent-hover text-white rounded-md nr-btn-press"
+              className="px-3 py-1.5 text-[12px] border border-border text-ink-secondary hover:text-ink hover:border-ink-muted rounded-md nr-btn-press"
             >
               Prepare outreach
             </button>

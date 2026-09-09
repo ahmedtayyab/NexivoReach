@@ -14,6 +14,8 @@ interface Props {
   onSkip?: (id: string) => void;
   onSyncReplies?: () => void;
   onPrepareFollowUp?: (id: string) => void;
+  onSendAllReady?: () => void;
+  onPrepareAndSend?: () => void;
   gmailConnected?: boolean;
 }
 
@@ -43,6 +45,8 @@ export default function OutreachInboxView({
   onSkip,
   onSyncReplies,
   onPrepareFollowUp,
+  onSendAllReady,
+  onPrepareAndSend,
   gmailConnected = false,
 }: Props) {
   const withDrafts = useMemo(
@@ -119,6 +123,12 @@ export default function OutreachInboxView({
     return () => window.removeEventListener('keydown', onKey);
   }, [filtered.length, current, draft?.status, onSendViaEmail, subject, body, toEmail]);
 
+  const sendableCount = withDrafts.filter(p => {
+    const st = p.outreachDraft?.status;
+    const to = (p.outreachDraft?.toEmail || p.email || '').trim();
+    return (st === 'Draft' || st === 'Approved') && to.includes('@') && isBestFit(p);
+  }).length;
+
   const bestFitCount = withDrafts.filter(
     p => (p.outreachDraft?.status === 'Draft' || p.outreachDraft?.status === 'Approved') && isBestFit(p),
   ).length;
@@ -150,8 +160,17 @@ export default function OutreachInboxView({
           <Mail className="w-8 h-8 text-ink-muted mx-auto mb-3 nr-pop" strokeWidth={1.5} />
           <p className="text-[13.5px] font-medium text-ink-secondary">No drafts yet</p>
           <p className="text-[13px] text-ink-muted mt-1">
-            Run Discover or use Leads → Prepare outreach for high-fit accounts.
+            Run Discover or use Leads → Prepare outreach. Then send all ready emails in one click (Gmail connected).
           </p>
+          {gmailConnected && onPrepareAndSend && (
+            <button
+              type="button"
+              onClick={() => onPrepareAndSend()}
+              className="mt-4 px-4 py-2 text-[13px] bg-accent hover:bg-accent-hover text-white rounded-md nr-btn-press"
+            >
+              Prepare & send best-fit
+            </button>
+          )}
         </div>
       </div>
     );
@@ -171,6 +190,24 @@ export default function OutreachInboxView({
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
+          {gmailConnected && onSendAllReady && sendableCount > 0 && (
+            <button
+              type="button"
+              onClick={() => onSendAllReady()}
+              className="nr-chip px-3 py-1 rounded-full text-[12px] border border-accent bg-accent text-white font-medium"
+            >
+              Send all ready ({sendableCount})
+            </button>
+          )}
+          {gmailConnected && onPrepareAndSend && (
+            <button
+              type="button"
+              onClick={() => onPrepareAndSend()}
+              className="nr-chip px-2.5 py-1 rounded-full text-[12px] border border-border bg-panel text-ink-secondary hover:border-ink-muted"
+            >
+              Prepare & send
+            </button>
+          )}
           {onSyncReplies && (
             <button
               type="button"

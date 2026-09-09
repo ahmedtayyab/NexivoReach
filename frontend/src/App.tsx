@@ -380,6 +380,47 @@ export default function App() {
     }
   };
 
+  const handleSendAllReady = async (mode: 'batch' | 'ready' = 'batch') => {
+    if (!user?.gmail?.connected) {
+      window.alert('Connect Gmail in Settings → Integrations first, then you can send in one click.');
+      return;
+    }
+    const readyCount = prospects.filter(p => {
+      const st = p.outreachDraft?.status;
+      const to = (p.outreachDraft?.toEmail || p.email || '').trim();
+      return (st === 'Draft' || st === 'Approved') && to.includes('@');
+    }).length;
+    const label = mode === 'ready'
+      ? 'Prepare any missing drafts, then send best-fit emails via Gmail?'
+      : `Send ${readyCount || 'all'} ready outreach email(s) via Gmail now?`;
+    if (!window.confirm(label)) return;
+    try {
+      const path = mode === 'ready' ? '/api/prospects/send-ready' : '/api/prospects/send-batch';
+      const resp = await apiFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bestFitOnly: true, limit: 20 }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      const data = await resp.json();
+      const updated = (data.prospects || []) as Prospect[];
+      if (updated.length) {
+        const map = new Map(updated.map(p => [p.id, p]));
+        setProspects(prev => prev.map(p => map.get(p.id) || p));
+      }
+      const failed = data.failed || 0;
+      const prepared = data.prepared ? ` Prepared ${data.prepared}.` : '';
+      window.alert(
+        `Sent ${data.sent || 0} email(s).${prepared}`
+        + (failed ? ` ${failed} failed.` : '')
+        + (data.errors?.[0]?.error ? `\nFirst error: ${data.errors[0].company}: ${data.errors[0].error}` : ''),
+      );
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : 'Bulk send failed');
+    }
+  };
+
   const handleSyncReplies = async () => {
     try {
       const resp = await apiFetch('/api/prospects/sync-replies', { method: 'POST' });
@@ -583,6 +624,8 @@ export default function App() {
             onUpdateStage={handleUpdateStage}
             onClearLeads={handleClearLeads}
             onPrepareOutreach={() => handlePrepareOutreach()}
+            onSendAllReady={() => handleSendAllReady('ready')}
+            gmailConnected={Boolean(user?.gmail?.connected)}
           />
         )}
         {activeRoute === 'discover' && (
@@ -602,6 +645,8 @@ export default function App() {
             onSkip={handleSkipOutreach}
             onSyncReplies={handleSyncReplies}
             onPrepareFollowUp={handlePrepareFollowUp}
+            onSendAllReady={() => handleSendAllReady('batch')}
+            onPrepareAndSend={() => handleSendAllReady('ready')}
             gmailConnected={Boolean(user?.gmail?.connected)}
           />
         )}
