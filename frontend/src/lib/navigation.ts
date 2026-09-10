@@ -57,8 +57,9 @@ export function isSettingsRoute(route: AppRoute): route is SettingsSection {
 }
 
 export function sidebarTabForRoute(route: AppRoute): string {
-  if (route === 'catalog') return 'catalog';
-  if (route === 'company' || route === 'icp' || route === 'integrations') return 'settings';
+  if (route === 'company' || route === 'catalog' || route === 'icp' || route === 'integrations') {
+    return 'settings';
+  }
   return route;
 }
 

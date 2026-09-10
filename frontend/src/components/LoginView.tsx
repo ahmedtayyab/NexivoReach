@@ -19,10 +19,10 @@ export default function LoginView({ error }: Props) {
           <BrandLockup size="md" />
         </div>
 
-        <div className="bg-panel-elevated border border-border rounded-lg p-5 sm:p-6 shadow-sm nr-enter nr-enter-delay-2">
-          <h1 className="text-[15px] font-semibold text-ink">Sign in to continue</h1>
-          <p className="text-[13px] text-ink-secondary mt-1 mb-6">
-            Use your Google account to save your companies, catalogs, and prospect queues — and pick up where you left off.
+        <div className="bg-panel-elevated border border-border p-5 sm:p-6 nr-enter nr-enter-delay-2">
+          <h1 className="font-display text-[1.35rem] font-bold text-ink leading-tight">Sign in to continue</h1>
+          <p className="text-[13.5px] text-ink-secondary mt-2 mb-6 leading-relaxed">
+            Use your Google account to save companies, catalogs, and prospect queues — and pick up where you left off.
           </p>
 
           {error && (

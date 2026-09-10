@@ -1,4 +1,4 @@
-import { Search, Settings, LayoutList, Database, Mail } from 'lucide-react';
+import { Search, Settings, LayoutList, Activity, Mail } from 'lucide-react';
 import type { AppRoute } from '../../lib/navigation';
 
 interface Props {
@@ -13,8 +13,8 @@ const items = [
   { id: 'queue', label: 'Leads', icon: LayoutList },
   { id: 'discover', label: 'Discover', icon: Search },
   { id: 'outreach', label: 'Outreach', icon: Mail },
-  { id: 'catalog', label: 'Catalog', icon: Database },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'settings', label: 'Setup', icon: Settings },
+  { id: 'activity', label: 'Activity', icon: Activity },
 ] as const;
 
 export default function MobileNav({
@@ -32,11 +32,9 @@ export default function MobileNav({
       <div className="grid grid-cols-5 h-14">
         {items.map(({ id, label, icon: Icon }) => {
           const isActive =
-            id === 'catalog'
-              ? activeRoute === 'catalog'
-              : id === 'settings'
-                ? activeRoute === 'company' || activeRoute === 'icp' || activeRoute === 'integrations'
-                : activeTab === id;
+            id === 'settings'
+              ? activeRoute === 'company' || activeRoute === 'catalog' || activeRoute === 'icp' || activeRoute === 'integrations'
+              : activeTab === id;
           const badge =
             id === 'queue' ? pendingCount
             : id === 'outreach' ? draftCount

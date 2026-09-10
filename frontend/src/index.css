@@ -1,49 +1,77 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap');
+/* Instrument desk: Syne for display, IBM Plex for UI — not Inter/Roboto/system. */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Syne:wght@500;600;700;800&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --color-canvas: #E8E6E1;
-  --color-surface: #DFDCD6;
-  --color-panel: #F3F2EE;
-  --color-panel-elevated: #FAF9F7;
-  --color-muted: #EAE8E3;
-  --color-border: #C9C5BE;
-  --color-border-subtle: #DAD7D1;
-  --color-ink: #1C1B19;
-  --color-ink-secondary: #5A5854;
-  --color-ink-muted: #8A8680;
-  --color-accent: #3D5A80;
-  --color-accent-hover: #314A66;
+  --font-display: "Syne", ui-sans-serif, sans-serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, sans-serif;
+  --color-canvas: #D6D8D5;
+  --color-surface: #C9CCC8;
+  --color-panel: #ECEEEB;
+  --color-panel-elevated: #F5F6F4;
+  --color-muted: #E0E3DF;
+  --color-border: #B4B8B2;
+  --color-border-subtle: #CCD0CB;
+  --color-ink: #141816;
+  --color-ink-secondary: #4A524C;
+  --color-ink-muted: #7A847C;
+  --color-accent: #2F536E;
+  --color-accent-hover: #243F54;
 }
 
 @layer base {
   :root {
-    --bg-app: #E8E6E1;
-    --bg-panel: #F3F2EE;
-    --border: #C9C5BE;
-    --border-subtle: #DAD7D1;
-    --text-primary: #1C1B19;
-    --text-secondary: #5A5854;
-    --text-muted: #8A8680;
-    --accent: #3D5A80;
-    --accent-hover: #314A66;
+    --bg-app: #D6D8D5;
+    --bg-panel: #ECEEEB;
+    --border: #B4B8B2;
+    --border-subtle: #CCD0CB;
+    --text-primary: #141816;
+    --text-secondary: #4A524C;
+    --text-muted: #7A847C;
+    --accent: #2F536E;
+    --accent-hover: #243F54;
     --green: #2D6A4F;
     --amber: #9A6700;
-    --row-hover: #EAE8E3;
+    --row-hover: #E0E3DF;
+    --font-display: "Syne", ui-sans-serif, sans-serif;
+    --font-sans: "IBM Plex Sans", ui-sans-serif, sans-serif;
   }
 
   * { box-sizing: border-box; }
 
   body {
     background-color: var(--bg-app);
+    background-image:
+      radial-gradient(ellipse 80% 55% at 100% -10%, rgba(47, 83, 110, 0.14), transparent 55%),
+      radial-gradient(circle at 0% 100%, rgba(20, 24, 22, 0.06), transparent 42%),
+      repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 23px,
+        rgba(20, 24, 22, 0.035) 23px,
+        rgba(20, 24, 22, 0.035) 24px
+      ),
+      repeating-linear-gradient(
+        90deg,
+        transparent,
+        transparent 23px,
+        rgba(20, 24, 22, 0.035) 23px,
+        rgba(20, 24, 22, 0.035) 24px
+      );
+    background-attachment: fixed;
     color: var(--text-primary);
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    font-size: 13.5px;
+    font-size: 14px;
     line-height: 1.55;
     margin: 0;
     padding: 0;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
   }
 }
 
@@ -664,7 +692,7 @@ input:focus, textarea:focus, select:focus {
   height: 100%;
 }
 .config-link {
-  stroke: rgba(61, 90, 128, 0.35);
+  stroke: rgba(47, 83, 110, 0.4);
   stroke-width: 1.5;
   stroke-dasharray: 6 5;
   animation: config-dash 8s linear infinite;
@@ -679,7 +707,7 @@ input:focus, textarea:focus, select:focus {
 .config-hub {
   position: absolute;
   border-radius: 50%;
-  background: #3D5A80;
+  background: #2F536E;
   animation: config-pulse 3.8s ease-in-out infinite;
 }
 .config-hub {
@@ -688,7 +716,7 @@ input:focus, textarea:focus, select:focus {
   width: 14px;
   height: 14px;
   margin: -7px 0 0 -7px;
-  box-shadow: 0 0 0 4px rgba(61, 90, 128, 0.16);
+  box-shadow: 0 0 0 4px rgba(47, 83, 110, 0.18);
 }
 .config-node {
   width: 10px;
@@ -704,4 +732,189 @@ input:focus, textarea:focus, select:focus {
 @keyframes config-pulse {
   0%, 100% { transform: scale(1); opacity: 0.7; }
   45% { transform: scale(1.18); opacity: 1; }
+}
+
+/* ── Workspace desk (single-page setup) ───────────────────────────────────── */
+.setup-desk {
+  position: relative;
+  max-width: 68rem;
+}
+.setup-desk__hero {
+  position: relative;
+  margin-bottom: 1.75rem;
+  padding: 1.25rem 0 1.5rem;
+  overflow: hidden;
+}
+.setup-desk__hero::before {
+  content: "";
+  position: absolute;
+  inset: -20% -10% auto auto;
+  width: min(420px, 70vw);
+  height: min(420px, 70vw);
+  border-radius: 50%;
+  border: 1px solid rgba(47, 83, 110, 0.22);
+  box-shadow:
+    inset 0 0 0 28px transparent,
+    0 0 0 48px rgba(47, 83, 110, 0.05);
+  pointer-events: none;
+  animation: setup-radar 18s linear infinite;
+}
+@keyframes setup-radar {
+  to { transform: rotate(360deg); }
+}
+.setup-desk__kicker {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 0.5rem;
+}
+.setup-desk__title {
+  font-family: var(--font-display);
+  font-size: clamp(1.85rem, 3.4vw, 2.55rem);
+  font-weight: 700;
+  line-height: 1.05;
+  color: var(--text-primary);
+  margin: 0;
+  max-width: 14ch;
+}
+.setup-desk__lede {
+  margin: 0.75rem 0 0;
+  max-width: 36rem;
+  font-size: 14.5px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+.setup-desk__layout {
+  display: grid;
+  gap: 1.5rem;
+}
+@media (min-width: 960px) {
+  .setup-desk__layout {
+    grid-template-columns: 11rem minmax(0, 1fr);
+    gap: 2.25rem;
+    align-items: start;
+  }
+}
+.setup-rail {
+  display: none;
+}
+@media (min-width: 960px) {
+  .setup-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    position: sticky;
+    top: 1.5rem;
+  }
+}
+.setup-rail__item {
+  display: grid;
+  grid-template-columns: 1.75rem 1fr;
+  gap: 0.55rem;
+  align-items: baseline;
+  padding: 0.55rem 0.4rem;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-muted);
+  border-left: 2px solid transparent;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+.setup-rail__item:hover { color: var(--text-primary); }
+.setup-rail__item.is-active {
+  color: var(--text-primary);
+  border-left-color: var(--accent);
+  background: rgba(47, 83, 110, 0.07);
+}
+.setup-rail__num {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.setup-rail__label {
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+.setup-rail__meta {
+  grid-column: 2;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: -0.1rem;
+}
+.setup-mobile-jump {
+  display: flex;
+  gap: 0.35rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+@media (min-width: 960px) {
+  .setup-mobile-jump { display: none; }
+}
+.setup-mobile-jump button {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 0.4rem 0.7rem;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+.setup-mobile-jump button.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.setup-stage {
+  position: relative;
+  padding: 1.35rem 0 2rem;
+  border-top: 1px solid rgba(20, 24, 22, 0.14);
+  scroll-margin-top: 1.25rem;
+  animation: nr-fade-up 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.setup-stage:nth-of-type(1) { animation-delay: 40ms; }
+.setup-stage:nth-of-type(2) { animation-delay: 100ms; }
+.setup-stage:nth-of-type(3) { animation-delay: 160ms; }
+.setup-stage:nth-of-type(4) { animation-delay: 220ms; }
+.setup-stage__head {
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-start;
+  margin-bottom: 1.15rem;
+}
+.setup-stage__index {
+  font-family: var(--font-display);
+  font-size: 1.65rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--accent);
+  opacity: 0.88;
+  min-width: 2.2rem;
+}
+.setup-stage__title {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin: 0;
+  color: var(--text-primary);
+}
+.setup-stage__desc {
+  margin: 0.35rem 0 0;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  max-width: 40rem;
+  line-height: 1.5;
+}
+.setup-stage__body {
+  padding-left: 0;
+}
+@media (min-width: 640px) {
+  .setup-stage__body { padding-left: 3.1rem; }
 }

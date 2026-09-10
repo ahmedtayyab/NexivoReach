@@ -23,7 +23,7 @@ export default function BrandLockup({ size = 'sm', className = '', showWordmark 
         className={`${s.mark} rounded-md object-cover shrink-0 shadow-sm ring-1 ring-border/60`}
       />
       {showWordmark && (
-        <span className={`font-semibold text-ink tracking-tight ${s.text}`}>NexivoReach</span>
+        <span className={`font-display font-semibold text-ink tracking-tight ${s.text}`}>NexivoReach</span>
       )}
     </div>
   );

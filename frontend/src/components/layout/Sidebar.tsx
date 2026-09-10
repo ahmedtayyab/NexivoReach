@@ -2,7 +2,7 @@ import { Plus, LogOut, ChevronDown, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { AuthUser, BusinessInfo } from '../../types';
 import type { AppRoute } from '../../lib/navigation';
-import { Search, Settings, Database, LayoutList, Activity, Mail } from 'lucide-react';
+import { Search, Settings, LayoutList, Activity, Mail } from 'lucide-react';
 import BrandLockup from '../brand/BrandLockup';
 
 interface Props {
@@ -62,12 +62,11 @@ export default function Sidebar({
     { id: 'queue', label: 'Leads', icon: LayoutList },
     { id: 'discover', label: 'Discover', icon: Search },
     { id: 'outreach', label: 'Outreach', icon: Mail },
-    { id: 'catalog', label: 'Catalog', icon: Database },
   ];
 
   const secondary = [
     { id: 'activity', label: 'Activity', icon: Activity },
-    { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'settings', label: 'Workspace', icon: Settings },
   ];
 
   const go = (id: string) => {
@@ -157,7 +156,7 @@ export default function Sidebar({
 
         <nav className="flex-1 px-2 pt-2 pb-2 space-y-px overflow-y-auto">
           {primary.map(({ id, label: itemLabel, icon: Icon }) => {
-            const isActive = id === 'catalog' ? activeRoute === 'catalog' : activeTab === id;
+            const isActive = activeTab === id;
             return (
               <button
                 key={id}
@@ -196,7 +195,7 @@ export default function Sidebar({
         <div className="px-2 py-2 space-y-px">
           {secondary.map(({ id, label: itemLabel, icon: Icon }) => {
             const isActive = id === 'settings'
-              ? activeRoute === 'company' || activeRoute === 'icp' || activeRoute === 'integrations'
+              ? activeRoute === 'company' || activeRoute === 'catalog' || activeRoute === 'icp' || activeRoute === 'integrations'
               : activeTab === id;
             return (
               <button

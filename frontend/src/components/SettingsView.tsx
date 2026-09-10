@@ -53,84 +53,171 @@ export default function SettingsView({
   onSaveICP,
   onRestoredFromSheets,
 }: Props) {
-  const titles: Record<SettingsSection, string> = {
-    company: 'Company Profile',
-    catalog: 'Product Catalog',
-    icp: 'ICP & Signals',
-    integrations: 'Integrations',
+  const stages: { id: SettingsSection; num: string; label: string; title: string; desc: string }[] = [
+    {
+      id: 'company',
+      num: '01',
+      label: 'Company',
+      title: 'Who you are',
+      desc: 'What this company sells, how it sells, and which markets it wants. Discover uses this for search strategy and business-model fit.',
+    },
+    {
+      id: 'catalog',
+      num: '02',
+      label: 'Catalog',
+      title: 'What you sell',
+      desc: 'Products or services in this company’s catalog. Offer fit is scored against these names and categories.',
+    },
+    {
+      id: 'icp',
+      num: '03',
+      label: 'Buyers',
+      title: 'Who should buy',
+      desc: 'Ideal customers — buyer types, countries, size. Fit is scored here. Signal rules are optional timing clues only.',
+    },
+    {
+      id: 'integrations',
+      num: '04',
+      label: 'Connect',
+      title: 'Connect tools',
+      desc: 'Gmail for sending. Sheets for a private spreadsheet per company.',
+    },
+  ];
+
+  const companyReady = Boolean(businessInfo.name?.trim() && businessInfo.description?.trim());
+  const catalogReady = products.length > 0;
+  const icpReady = (icp.targetBuyerTypes?.length ?? 0) > 0;
+  const readyMeta: Record<SettingsSection, string> = {
+    company: companyReady ? 'Ready' : 'Needed',
+    catalog: catalogReady ? `${products.length} items` : 'Needed',
+    icp: icpReady ? 'Ready' : 'Optional',
+    integrations: 'Optional',
   };
-  const descriptions: Record<SettingsSection, string> = {
-    company:
-      'Describe this selling company: what it offers, how it sells (private label, wholesale, direct, SaaS, local services), and which markets it wants. Discover uses this to choose search strategies and to judge business-model fit — not just category keywords.',
-    catalog:
-      'The products or services this company actually sells. Offer fit is checked against this catalog, so keep names and categories accurate.',
-    icp:
-      'The ideal customer is who should buy — not who you are. Set buyer types (brands, distributors, hospitals, plants, etc.), countries, and size. Fit is scored against this. Buying-signal rules are optional timing clues; they do not turn a keyword match into intent.',
-    integrations:
-      'Connect Google Sheets and other destinations so qualified leads and catalog rows sync out of NexivoReach.',
+
+  const [activeStage, setActiveStage] = useState<SettingsSection>(section);
+
+  const jump = (id: SettingsSection) => {
+    setActiveStage(id);
+    onSectionChange(id);
+    requestAnimationFrame(() => {
+      document.getElementById(`setup-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   };
+
+  useEffect(() => {
+    setActiveStage(section);
+    const el = document.getElementById(`setup-${section}`);
+    if (!el) return;
+    const t = window.setTimeout(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 40);
+    return () => window.clearTimeout(t);
+  }, [section]);
+
+  useEffect(() => {
+    const nodes = stages
+      .map(s => document.getElementById(`setup-${s.id}`))
+      .filter(Boolean) as HTMLElement[];
+    if (!nodes.length) return;
+    const observer = new IntersectionObserver(
+      entries => {
+        const visible = entries
+          .filter(e => e.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visible?.target?.id) return;
+        const id = visible.target.id.replace('setup-', '') as SettingsSection;
+        setActiveStage(id);
+      },
+      { rootMargin: '-18% 0px -55% 0px', threshold: [0.12, 0.35, 0.55] },
+    );
+    nodes.forEach(n => observer.observe(n));
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <div className="max-w-3xl">
-      <div className="mb-6 nr-enter">
-        <h1 className="text-[15px] font-semibold text-ink tracking-tight">
-          {titles[section]}
-        </h1>
-        <p className="text-[13px] text-ink-secondary mt-1.5 leading-relaxed max-w-2xl">
-          {descriptions[section]}
+    <div className="setup-desk">
+      <header className="setup-desk__hero nr-enter">
+        <p className="setup-desk__kicker">Workspace</p>
+        <h1 className="setup-desk__title">Set up this company</h1>
+        <p className="setup-desk__lede">
+          One page for the selling company, its catalog, and who should buy.
+          Finish the top three, then discover buyers — connect Gmail when you’re ready to send.
         </p>
-      </div>
+        <div className="mt-4 max-w-md">
+          <ConfigLattice active={activeStage === 'integrations'} />
+        </div>
+      </header>
 
-      <div className="mb-5 nr-enter nr-enter-delay-1">
-        <ConfigLattice active={section === 'integrations'} />
-      </div>
-
-      <div className="flex gap-4 sm:gap-6 border-b border-border mb-6 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0 nr-enter nr-enter-delay-2">
-        {([
-          ['company', 'Company Profile'],
-          ['catalog', 'Product Catalog'],
-          ['icp', 'ICP & Signals'],
-          ['integrations', 'Integrations'],
-        ] as [SettingsSection, string][]).map(([id, label]) => (
+      <div className="setup-mobile-jump nr-enter nr-enter-delay-1">
+        {stages.map(s => (
           <button
-            key={id}
-            onClick={() => onSectionChange(id)}
-            className={`shrink-0 pb-2.5 text-[13px] border-b-2 -mb-px transition-all duration-200 ${
-              section === id
-                ? 'border-accent text-accent font-medium'
-                : 'border-transparent text-ink-secondary hover:text-ink'
-            }`}
+            key={s.id}
+            type="button"
+            className={activeStage === s.id ? 'is-active' : ''}
+            onClick={() => jump(s.id)}
           >
-            {label}
+            {s.num} {s.label}
           </button>
         ))}
       </div>
 
-      <div key={section} className="nr-enter nr-enter-delay-3">
-      {section === 'company' && (
-        <CompanySection
-          key={businessInfo.id ?? 'company'}
-          businessInfo={businessInfo}
-          products={products}
-          onSave={onSaveBusiness}
-        />
-      )}
-      {section === 'catalog' && <CatalogSection products={products} onSave={onSaveProducts} />}
-      {section === 'icp' && (
-        <ICPSection
-          key={icp.companySize + icp.targetCountries.join('|')}
-          icp={icp}
-          businessInfo={businessInfo}
-          products={products}
-          onSave={onSaveICP}
-        />
-      )}
-      {section === 'integrations' && (
-        <IntegrationsSection
-          companyId={businessInfo.id}
-          onRestoredFromSheets={onRestoredFromSheets}
-        />
-      )}
+      <div className="setup-desk__layout">
+        <nav className="setup-rail nr-enter nr-enter-delay-1" aria-label="Setup stages">
+          {stages.map(s => (
+            <button
+              key={s.id}
+              type="button"
+              className={`setup-rail__item ${activeStage === s.id ? 'is-active' : ''}`}
+              onClick={() => jump(s.id)}
+            >
+              <span className="setup-rail__num">{s.num}</span>
+              <span className="setup-rail__label">{s.label}</span>
+              <span className="setup-rail__meta">{readyMeta[s.id]}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div>
+          {stages.map(s => (
+            <section key={s.id} id={`setup-${s.id}`} className="setup-stage">
+              <div className="setup-stage__head">
+                <span className="setup-stage__index" aria-hidden>{s.num}</span>
+                <div>
+                  <h2 className="setup-stage__title">{s.title}</h2>
+                  <p className="setup-stage__desc">{s.desc}</p>
+                </div>
+              </div>
+              <div className="setup-stage__body">
+                {s.id === 'company' && (
+                  <CompanySection
+                    key={businessInfo.id ?? 'company'}
+                    businessInfo={businessInfo}
+                    products={products}
+                    onSave={onSaveBusiness}
+                  />
+                )}
+                {s.id === 'catalog' && (
+                  <CatalogSection products={products} onSave={onSaveProducts} />
+                )}
+                {s.id === 'icp' && (
+                  <ICPSection
+                    key={icp.companySize + icp.targetCountries.join('|')}
+                    icp={icp}
+                    businessInfo={businessInfo}
+                    products={products}
+                    onSave={onSaveICP}
+                  />
+                )}
+                {s.id === 'integrations' && (
+                  <IntegrationsSection
+                    companyId={businessInfo.id}
+                    onRestoredFromSheets={onRestoredFromSheets}
+                  />
+                )}
+              </div>
+            </section>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -720,10 +807,10 @@ function GmailConnectCard() {
   };
 
   return (
-    <div className="rounded-xl border border-border bg-surface p-6 space-y-4">
+    <div className="border border-border bg-panel/80 p-5 space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h3 className="text-[14px] font-semibold text-ink">Gmail</h3>
+          <h3 className="font-display text-[15px] font-semibold text-ink">Gmail</h3>
           <p className="text-[12.5px] text-ink-secondary mt-0.5">
             Connect your mailbox to send from Outreach/Leads. Once connected, the To: field can be any email —
             Google “test users” only limit who can authorize this app, not who you can message.
@@ -948,10 +1035,10 @@ function IntegrationsSection({
       <GmailConnectCard />
 
       {/* Google Sheets card */}
-      <div className="rounded-xl border border-border bg-surface p-6 space-y-4">
+      <div className="border border-border bg-panel/80 p-5 space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h3 className="text-[14px] font-semibold text-ink">Google Sheets</h3>
+            <h3 className="font-display text-[15px] font-semibold text-ink">Google Sheets</h3>
             <p className="text-[12.5px] text-ink-secondary mt-0.5">
               Connect your Google account once, then each company uses a spreadsheet in your Drive — nobody else can see it.
             </p>
