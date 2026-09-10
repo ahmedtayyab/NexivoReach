@@ -108,15 +108,21 @@ async def extract_products_from_url(req: UrlParseRequest, _user: AuthUser = Depe
         seen.add(name_key)
         merged.append(item)
     reach_error = getattr(scraper, "last_catalog_error", "")
+    truncated = bool(getattr(scraper, "catalog_truncated", False))
     log.info(
-        "extract-url %s: pages=%d scraped=%d ai=%d merged=%d reach=%s",
-        req.url, len(pages), len(shop_products), len(fallback_products), len(merged), reach_error or "ok",
+        "extract-url %s: pages=%d scraped=%d ai=%d merged=%d reach=%s truncated=%s",
+        req.url, len(pages), len(shop_products), len(fallback_products), len(merged),
+        reach_error or "ok", truncated,
     )
     if merged:
         message = (
             f"Found {len(merged)} product{'s' if len(merged) != 1 else ''} "
             f"from {len(pages)} page{'s' if len(pages) != 1 else ''}."
         )
+        if truncated:
+            message += (
+                " Stopped at the safety limit — the live catalog may have more products."
+            )
     elif reach_error == "unreachable":
         message = (
             "Could not reach that website from our servers — the connection timed out. "
@@ -132,6 +138,7 @@ async def extract_products_from_url(req: UrlParseRequest, _user: AuthUser = Depe
         "shopProducts": len(shop_products),
         "aiProducts": len(fallback_products),
         "reachError": reach_error,
+        "truncated": truncated,
         "products": merged,
         "message": message,
     }
