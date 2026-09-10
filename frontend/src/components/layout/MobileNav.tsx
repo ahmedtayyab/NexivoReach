@@ -1,4 +1,4 @@
-import { Search, Settings, LayoutList, Activity, Mail } from 'lucide-react';
+import { Settings, LayoutList, Activity, Mail } from 'lucide-react';
 import type { AppRoute } from '../../lib/navigation';
 
 interface Props {
@@ -10,10 +10,9 @@ interface Props {
 }
 
 const items = [
-  { id: 'queue', label: 'Leads', icon: LayoutList },
-  { id: 'discover', label: 'Discover', icon: Search },
-  { id: 'outreach', label: 'Outreach', icon: Mail },
   { id: 'settings', label: 'Setup', icon: Settings },
+  { id: 'queue', label: 'Leads', icon: LayoutList },
+  { id: 'outreach', label: 'Outreach', icon: Mail },
   { id: 'activity', label: 'Activity', icon: Activity },
 ] as const;
 
@@ -26,10 +25,10 @@ export default function MobileNav({
 }: Props) {
   return (
     <nav
-      className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-panel-elevated/95 backdrop-blur border-t border-border safe-bottom"
+      className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-panel-elevated border-t border-border safe-bottom"
       aria-label="Primary"
     >
-      <div className="grid grid-cols-5 h-14">
+      <div className="grid grid-cols-4 h-14">
         {items.map(({ id, label, icon: Icon }) => {
           const isActive =
             id === 'settings'
@@ -45,13 +44,13 @@ export default function MobileNav({
               type="button"
               onClick={() => onTabChange(id)}
               className={`flex flex-col items-center justify-center gap-0.5 text-[10px] ${
-                isActive ? 'text-accent font-medium' : 'text-ink-muted'
+                isActive ? 'text-accent font-semibold' : 'text-ink-muted'
               }`}
             >
               <span className="relative">
                 <Icon className="w-5 h-5" strokeWidth={isActive ? 2 : 1.75} />
                 {badge > 0 && (
-                  <span className="absolute -top-1.5 -right-2 min-w-[14px] h-3.5 px-0.5 rounded-full bg-accent text-panel-elevated text-[9px] leading-3.5 text-center tabular-nums">
+                  <span className="absolute -top-1.5 -right-2 min-w-[14px] h-3.5 px-0.5 bg-accent text-panel-elevated text-[9px] leading-3.5 text-center tabular-nums">
                     {badge > 9 ? '9+' : badge}
                   </span>
                 )}

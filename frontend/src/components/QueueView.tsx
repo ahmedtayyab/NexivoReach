@@ -25,6 +25,7 @@ interface Props {
   onPrepareOutreach?: () => void;
   onSendAllReady?: () => void;
   gmailConnected?: boolean;
+  onGoWorkspace?: () => void;
 }
 
 type IntentFilter = 'all' | 'high' | 'low' | 'none';
@@ -40,6 +41,7 @@ export default function QueueView({
   onPrepareOutreach,
   onSendAllReady,
   gmailConnected = false,
+  onGoWorkspace,
 }: Props) {
   const [filter, setFilter] = useState<string>('To contact');
   const [intentFilter, setIntentFilter] = useState<IntentFilter>('all');
@@ -231,18 +233,23 @@ export default function QueueView({
       )}
 
       {visible.length === 0 ? (
-        <div className="bg-panel border border-border rounded-lg px-5 py-8 sm:py-10 text-center nr-panel nr-enter nr-enter-delay-3">
+        <div className="empty-state nr-enter nr-enter-delay-3">
           <img
             src={EMPTY_QUEUE_IMG}
-            alt="Empty leads queue"
-            className="mx-auto mb-5 w-full max-w-[280px] sm:max-w-[360px] rounded-lg border border-border-subtle shadow-sm object-cover nr-empty-art"
+            alt=""
+            className="empty-state__art"
           />
-          <p className="text-[13.5px] font-medium text-ink-secondary">No leads match these filters</p>
-          <p className="text-[13px] text-ink-muted mt-1 max-w-sm mx-auto">
+          <p className="empty-state__title">No leads match these filters</p>
+          <p className="empty-state__desc">
             {filtersActive || filter !== 'All'
               ? 'Try clearing Intent / Fit / Priority or switch status to All.'
-              : 'Run Discover to hunt buyers from your catalog, then update their status here.'}
+              : 'Brief the agent in Workspace, then run Find buyers. Qualified accounts land here.'}
           </p>
+          {!(filtersActive || filter !== 'All') && onGoWorkspace && (
+            <button type="button" className="btn btn-primary mt-4" onClick={onGoWorkspace}>
+              Open Workspace
+            </button>
+          )}
         </div>
       ) : (
         <>

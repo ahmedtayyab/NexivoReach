@@ -21,6 +21,7 @@ interface Props {
   onClearAll?: () => void;
   onSendSelected?: (ids: string[]) => Promise<void> | void;
   gmailConnected?: boolean;
+  onGoWorkspace?: () => void;
 }
 
 type Filter = 'best_fit' | 'needs_review' | 'sent' | 'all';
@@ -56,6 +57,7 @@ export default function OutreachInboxView({
   onClearAll,
   onSendSelected,
   gmailConnected = false,
+  onGoWorkspace,
 }: Props) {
   const withDrafts = useMemo(
     () => prospects.filter(p => p.outreachDraft),
@@ -178,30 +180,30 @@ export default function OutreachInboxView({
   if (!withDrafts.length) {
     return (
       <div className="max-w-2xl w-full">
-        <div className="nr-enter">
-          <h1 className="text-[15px] font-semibold text-ink tracking-tight">Outreach</h1>
-          <p className="text-[13px] text-ink-secondary mt-1 mb-5">
-            Best-fit queue: high Fit / Intent leads with drafts. You can send to any email address once Gmail is connected.
+        <div className="page-header nr-enter">
+          <h1 className="page-header__title">Outreach</h1>
+          <p className="page-header__desc">
+            Best-fit queue with drafts. Send to any address once Gmail is connected.
           </p>
         </div>
-        <div className="mb-5 nr-enter nr-enter-delay-1">
-          <MailFlow active={false} />
-        </div>
-        <div className="bg-panel border border-border rounded-lg px-5 py-10 text-center nr-panel nr-enter nr-enter-delay-2">
-          <Mail className="w-8 h-8 text-ink-muted mx-auto mb-3 nr-pop" strokeWidth={1.5} />
-          <p className="text-[13.5px] font-medium text-ink-secondary">No drafts yet</p>
-          <p className="text-[13px] text-ink-muted mt-1">
-            Run Discover or use Leads → Prepare outreach. Then send all ready emails in one click (Gmail connected).
+        <div className="empty-state nr-enter nr-enter-delay-2">
+          <Mail className="w-7 h-7 text-ink-muted mx-auto mb-3" strokeWidth={1.5} />
+          <p className="empty-state__title">No drafts yet</p>
+          <p className="empty-state__desc">
+            Find buyers in Workspace, then use Leads → Prepare outreach. Send ready emails here.
           </p>
-          {gmailConnected && onPrepareAndSend && (
-            <button
-              type="button"
-              onClick={() => onPrepareAndSend()}
-              className="mt-4 px-4 py-2 text-[13px] bg-accent hover:bg-accent-hover text-white rounded-md nr-btn-press"
-            >
-              Prepare & send best-fit
-            </button>
-          )}
+          <div className="flex flex-wrap justify-center gap-2 mt-4">
+            {onGoWorkspace && (
+              <button type="button" className="btn btn-secondary" onClick={onGoWorkspace}>
+                Open Workspace
+              </button>
+            )}
+            {gmailConnected && onPrepareAndSend && (
+              <button type="button" className="btn btn-primary" onClick={() => onPrepareAndSend()}>
+                Prepare & send best-fit
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );

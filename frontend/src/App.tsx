@@ -23,7 +23,6 @@ import {
 import Sidebar from './components/layout/Sidebar';
 import MobileNav from './components/layout/MobileNav';
 import QueueView from './components/QueueView';
-import DiscoverView from './components/DiscoverView';
 import SettingsView from './components/SettingsView';
 import OutreachInboxView from './components/OutreachInboxView';
 import ReviewDrawer from './components/prospects/ReviewDrawer';
@@ -38,7 +37,7 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const [activeRoute, setActiveRoute] = useState<AppRoute>('queue');
+  const [activeRoute, setActiveRoute] = useState<AppRoute>('company');
   const [companies, setCompanies] = useState<BusinessInfo[]>([]);
   const [activeCompanyId, setActiveCompanyIdState] = useState<string | null>(null);
   const [businessInfo, setBusinessInfo] = useState<BusinessInfo>(emptyBusinessInfo);
@@ -188,12 +187,11 @@ export default function App() {
     if (authLoading || !user) return;
     const valid =
       activeRoute === 'queue' ||
-      activeRoute === 'discover' ||
       activeRoute === 'outreach' ||
       activeRoute === 'activity' ||
       isSettingsRoute(activeRoute);
     if (!valid) {
-      navigate('queue', true);
+      navigate('company', true);
     }
   }, [activeRoute, authLoading, user]);
 
@@ -650,12 +648,12 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-dvh bg-canvas text-ink flex flex-col md:flex-row">
-      <header className="md:hidden sticky top-0 z-30 h-12 px-3 flex items-center justify-between gap-3 bg-surface/95 backdrop-blur border-b border-border">
+    <div className="app-shell text-ink flex flex-col md:flex-row">
+      <header className="md:hidden sticky top-0 z-30 h-12 px-3 flex items-center justify-between gap-3 bg-surface border-b border-border">
         <button
           type="button"
           onClick={() => setMobileNavOpen(true)}
-          className="p-2 -ml-1 rounded-md text-ink-secondary hover:bg-muted"
+          className="p-2 -ml-1 text-ink-secondary hover:bg-muted"
           aria-label="Open menu"
         >
           <Menu className="w-5 h-5" strokeWidth={1.75} />
@@ -682,7 +680,7 @@ export default function App() {
 
       <main
         key={isSettingsRoute(activeRoute) ? 'workspace' : activeRoute}
-        className="flex-1 min-w-0 px-4 py-5 sm:px-6 md:px-10 md:py-8 pb-20 md:pb-8"
+        className="app-main flex-1 min-w-0 px-4 py-5 sm:px-6 md:px-10 md:py-8 pb-20 md:pb-8"
       >
         {activeRoute === 'queue' && (
           <QueueView
@@ -694,17 +692,7 @@ export default function App() {
             onPrepareOutreach={() => handlePrepareOutreach()}
             onSendAllReady={() => handleSendAllReady('ready')}
             gmailConnected={Boolean(user?.gmail?.connected)}
-          />
-        )}
-        {activeRoute === 'discover' && (
-          <DiscoverView
-            businessInfo={businessInfo}
-            icp={icp}
-            products={products}
-            onAddProspects={handleAddProspects}
-            onAddLog={handleAddLog}
-            onClearLeads={handleClearLeads}
-            prospectCount={prospects.length}
+            onGoWorkspace={() => navigate('company')}
           />
         )}
         {activeRoute === 'outreach' && (
@@ -722,6 +710,7 @@ export default function App() {
             onClearAll={handleClearLeads}
             onSendSelected={handleSendSelected}
             gmailConnected={Boolean(user?.gmail?.connected)}
+            onGoWorkspace={() => navigate('company')}
           />
         )}
         {isSettingsRoute(activeRoute) && (
@@ -734,6 +723,11 @@ export default function App() {
             onSaveBusiness={handleSaveBusiness}
             onSaveProducts={handleSaveProducts}
             onSaveICP={handleSaveICP}
+            onAddProspects={handleAddProspects}
+            onAddLog={handleAddLog}
+            onFindBuyersComplete={(n) => {
+              if (n > 0) navigate('queue');
+            }}
             onRestoredFromSheets={handleRestoredFromSheets}
           />
         )}

@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { BusinessInfo, Product, IdealCustomerProfile, Prospect } from '../types';
+import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog } from '../types';
 import { CheckCircle2, ExternalLink, Loader2, Plus, Trash2, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
+import FindBuyersPanel from './FindBuyersPanel';
 import {
   categoriesFromProducts,
   suggestionsForField,
 } from '../data/taxonomy';
 
 import type { SettingsSection } from '../lib/navigation';
-import ConfigLattice from './brand/ConfigLattice';
 
 async function apiErrorMessage(resp: Response, fallback: string): Promise<string> {
   const text = await resp.text();
@@ -34,6 +34,9 @@ interface Props {
   onSaveBusiness: (info: BusinessInfo) => void;
   onSaveProducts: (products: Product[]) => void;
   onSaveICP: (icp: IdealCustomerProfile) => void;
+  onAddProspects?: (prospects: Prospect[]) => void;
+  onAddLog?: (log: AgentRunLog) => void;
+  onFindBuyersComplete?: (foundCount: number) => void;
   onRestoredFromSheets?: (payload: {
     company?: BusinessInfo;
     products?: Product[];
@@ -51,6 +54,9 @@ export default function SettingsView({
   onSaveBusiness,
   onSaveProducts,
   onSaveICP,
+  onAddProspects,
+  onAddLog,
+  onFindBuyersComplete,
   onRestoredFromSheets,
 }: Props) {
   const stages: { id: SettingsSection; num: string; label: string; title: string; desc: string }[] = [
@@ -59,28 +65,28 @@ export default function SettingsView({
       num: '01',
       label: 'Company',
       title: 'Who you are',
-      desc: 'What this company sells, how it sells, and which markets it wants. Discover uses this for search strategy and business-model fit.',
+      desc: 'Brief the agent like a new salesperson: what you sell, your website, and where you sell.',
     },
     {
       id: 'catalog',
       num: '02',
       label: 'Catalog',
       title: 'What you sell',
-      desc: 'Products or services in this company’s catalog. Offer fit is scored against these names and categories.',
+      desc: 'Pull products from your website (above) or add them manually. The agent matches buyers to this list.',
     },
     {
       id: 'icp',
       num: '03',
       label: 'Buyers',
       title: 'Who should buy',
-      desc: 'Ideal customers — buyer types, countries, size. Fit is scored here. Signal rules are optional timing clues only.',
+      desc: 'Buyer types and size. Geography defaults to your company markets unless you override it.',
     },
     {
       id: 'integrations',
       num: '04',
       label: 'Connect',
       title: 'Connect tools',
-      desc: 'Gmail for sending. Sheets for a private spreadsheet per company.',
+      desc: 'Gmail to send. Sheets for a private spreadsheet per company.',
     },
   ];
 
@@ -90,7 +96,7 @@ export default function SettingsView({
   const readyMeta: Record<SettingsSection, string> = {
     company: companyReady ? 'Ready' : 'Needed',
     catalog: catalogReady ? `${products.length} items` : 'Needed',
-    icp: icpReady ? 'Ready' : 'Optional',
+    icp: icpReady ? 'Ready' : 'Needed',
     integrations: 'Optional',
   };
 
@@ -137,15 +143,12 @@ export default function SettingsView({
   return (
     <div className="setup-desk">
       <header className="setup-desk__hero nr-enter">
-        <p className="setup-desk__kicker">Workspace</p>
-        <h1 className="setup-desk__title">Set up this company</h1>
+        <p className="setup-desk__kicker">Lead generation workspace</p>
+        <h1 className="setup-desk__title">Brief the agent</h1>
         <p className="setup-desk__lede">
-          One page for the selling company, its catalog, and who should buy.
-          Finish the top three, then discover buyers — connect Gmail when you’re ready to send.
+          Enter the minimum that keeps results precise — company, catalog, buyers —
+          then run Find buyers. Leads and Outreach stay where the work continues.
         </p>
-        <div className="mt-4 max-w-md">
-          <ConfigLattice active={activeStage === 'integrations'} />
-        </div>
       </header>
 
       <div className="setup-mobile-jump nr-enter nr-enter-delay-1">
@@ -197,11 +200,15 @@ export default function SettingsView({
                   />
                 )}
                 {s.id === 'catalog' && (
-                  <CatalogSection products={products} onSave={onSaveProducts} />
+                  <CatalogSection
+                    products={products}
+                    onSave={onSaveProducts}
+                    companyWebsite={businessInfo.website}
+                  />
                 )}
                 {s.id === 'icp' && (
                   <ICPSection
-                    key={icp.companySize + icp.targetCountries.join('|')}
+                    key={icp.companySize + (businessInfo.targetMarkets || []).join('|')}
                     icp={icp}
                     businessInfo={businessInfo}
                     products={products}
@@ -217,6 +224,30 @@ export default function SettingsView({
               </div>
             </section>
           ))}
+
+          {onAddProspects && onAddLog && (
+            <section id="setup-find" className="setup-stage">
+              <div className="setup-stage__head">
+                <span className="setup-stage__index" aria-hidden>→</span>
+                <div>
+                  <h2 className="setup-stage__title">Run the agent</h2>
+                  <p className="setup-stage__desc">
+                    This is the product: find qualified buyers from what you entered above.
+                  </p>
+                </div>
+              </div>
+              <div className="setup-stage__body">
+                <FindBuyersPanel
+                  businessInfo={businessInfo}
+                  icp={icp}
+                  products={products}
+                  onAddProspects={onAddProspects}
+                  onAddLog={onAddLog}
+                  onComplete={onFindBuyersComplete}
+                />
+              </div>
+            </section>
+          )}
         </div>
       </div>
     </div>
@@ -326,8 +357,8 @@ function CompanySection({
       <Field label="Business name" value={name} onChange={setName} placeholder="Acme Manufacturing" />
       <Field label="Website" value={website} onChange={setWebsite} placeholder="https://..." />
       <PredictiveField
-        label="Target markets"
-        hint="Start typing a country — matching options appear. Or click a chip."
+        label="Where we sell"
+        hint="Markets the company sells into. Buyers reuse this unless you override."
         value={markets}
         onChange={setMarkets}
         suggestions={marketSuggestions}
@@ -353,11 +384,8 @@ function CompanySection({
       />
 
       <div className="pt-1">
-        <button
-          onClick={handleSave}
-          className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-white text-[13px] font-medium rounded-md transition-colors"
-        >
-          {saved ? 'Saved' : 'Save Changes'}
+        <button onClick={handleSave} className="btn btn-primary">
+          {saved ? 'Saved' : 'Save company'}
         </button>
       </div>
     </div>
@@ -379,14 +407,29 @@ function Field({ label, value, onChange, placeholder }: { label: string; value: 
   );
 }
 
-function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p: Product[]) => void }) {
+function CatalogSection({
+  products,
+  onSave,
+  companyWebsite = '',
+}: {
+  products: Product[];
+  onSave: (p: Product[]) => void;
+  companyWebsite?: string;
+}) {
   const [inputMode, setInputMode] = useState<'url' | 'file' | 'manual'>('url');
-  const [url, setUrl] = useState('');
+  const [url, setUrl] = useState(companyWebsite || '');
+  const [useCompanySite, setUseCompanySite] = useState(Boolean(companyWebsite?.trim()));
   const [scraping, setScraping] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const [manual, setManual] = useState({ name: '', category: '', description: '', price: '' });
+  const [pageSize, setPageSize] = useState(5);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (useCompanySite && companyWebsite?.trim()) setUrl(companyWebsite.trim());
+  }, [companyWebsite, useCompanySite]);
 
   const mergeProducts = (incoming: Product[]) => {
     const byKey = new Map(
@@ -400,7 +443,8 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
   };
 
   const handleScrape = async () => {
-    if (!url.trim()) return;
+    const target = (useCompanySite ? companyWebsite : url).trim();
+    if (!target) return;
     setScraping(true);
     setError('');
     setStatus('Reading the website and looking for products...');
@@ -408,7 +452,7 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
       const resp = await apiFetch('/api/products/extract-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url: target }),
       });
       if (!resp.ok) throw new Error('Extract failed');
       const data = await resp.json();
@@ -462,6 +506,9 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
     onSave(products.filter(p => p.id !== id));
   };
 
+  const visible = expanded ? products.slice(0, pageSize) : products.slice(0, Math.min(5, pageSize));
+  const hiddenCount = Math.max(0, products.length - visible.length);
+
   return (
     <div className="space-y-5 max-w-xl">
       <div>
@@ -476,27 +523,47 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
                 onChange={() => setInputMode(m)}
                 className="accent-accent"
               />
-              <span>{m === 'url' ? 'Website URL' : m === 'file' ? 'Upload file' : 'Manual entry'}</span>
+              <span>{m === 'url' ? 'Website' : m === 'file' ? 'Upload file' : 'Manual entry'}</span>
             </label>
           ))}
         </div>
       </div>
 
       {inputMode === 'url' && (
-        <div className="flex gap-2">
-          <input
-            type="url"
-            value={url}
-            onChange={e => setUrl(e.target.value)}
-            placeholder="https://www.alwasi-ent.com"
-            className="flex-1 border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted"
-          />
+        <div className="space-y-2">
+          {companyWebsite?.trim() ? (
+            <label className="flex items-start gap-2 text-[13px] text-ink-secondary cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-accent"
+                checked={useCompanySite}
+                onChange={e => setUseCompanySite(e.target.checked)}
+              />
+              <span>
+                Use company website{' '}
+                <span className="text-ink-muted">({companyWebsite.trim()})</span>
+              </span>
+            </label>
+          ) : (
+            <p className="text-[12.5px] text-ink-muted">
+              Add a website in Company above, or paste a catalog URL here.
+            </p>
+          )}
+          {!useCompanySite && (
+            <input
+              type="url"
+              value={url}
+              onChange={e => setUrl(e.target.value)}
+              placeholder="https://…"
+              className="w-full border border-border px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted"
+            />
+          )}
           <button
             onClick={handleScrape}
-            disabled={scraping || !url.trim()}
-            className="px-4 py-2 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-[13px] font-medium rounded-md transition-colors shrink-0"
+            disabled={scraping || !(useCompanySite ? companyWebsite : url).trim()}
+            className="btn btn-primary"
           >
-            {scraping ? <Loader2 className="w-4 h-4 animate-spin inline" strokeWidth={1.75} /> : 'Extract'}
+            {scraping ? <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.75} /> : 'Extract products'}
           </button>
         </div>
       )}
@@ -519,7 +586,7 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
             type="button"
             onClick={() => fileRef.current?.click()}
             disabled={scraping}
-            className="w-full border border-dashed border-border rounded-md px-4 py-8 text-center hover:border-ink-muted transition-colors"
+            className="w-full border border-dashed border-border px-4 py-8 text-center hover:border-ink-muted transition-colors"
           >
             {scraping ? (
               <Loader2 className="w-4 h-4 animate-spin inline text-ink-muted" strokeWidth={1.75} />
@@ -534,7 +601,7 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
       )}
 
       {inputMode === 'manual' && (
-        <div className="space-y-3 bg-panel border border-border rounded-lg p-4">
+        <div className="space-y-3 border border-border bg-panel p-4">
           <Field label="Product name" value={manual.name} onChange={v => setManual({ ...manual, name: v })} placeholder="Product name" />
           <Field label="Category" value={manual.category} onChange={v => setManual({ ...manual, category: v })} placeholder="Category" />
           <Field label="Price" value={manual.price} onChange={v => setManual({ ...manual, price: v })} placeholder="$1,850" />
@@ -544,42 +611,46 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
               value={manual.description}
               onChange={e => setManual({ ...manual, description: e.target.value })}
               rows={2}
-              className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary"
+              className="w-full border border-border px-3 py-2 text-[13px] text-ink-secondary"
             />
           </div>
-          <button
-            onClick={handleManualAdd}
-            disabled={!manual.name.trim()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-[13px] font-medium rounded-md"
-          >
+          <button onClick={handleManualAdd} disabled={!manual.name.trim()} className="btn btn-primary">
             <Plus className="w-3.5 h-3.5" strokeWidth={2} />
             Add product
           </button>
         </div>
       )}
 
-      {error && <p className="text-[12px] text-amber-600">{error}</p>}
+      {error && <p className="text-[12px] text-amber-700">{error}</p>}
 
       {products.length > 0 && (
         <div className="pt-2">
-          <p className="section-label mb-3">{products.length} Products in Catalog</p>
-          <div className="bg-panel border border-border rounded-lg divide-y divide-border-subtle">
-            {products.map(product => (
+          <div className="catalog-toolbar">
+            <p className="section-label mb-0">{products.length} products</p>
+            {expanded && (
+              <label className="text-[12px] text-ink-secondary flex items-center gap-2">
+                Show
+                <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
+                  {[5, 20, 50, 100].map(n => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+          <div className="bg-panel border border-border divide-y divide-border-subtle">
+            {visible.map(product => (
               <div key={product.id} className="px-4 py-3 flex items-start gap-3">
-                {/* Thumbnail */}
                 {product.imageUrl ? (
                   <img
                     src={product.imageUrl}
-                    alt={product.name}
-                    className="w-12 h-12 rounded object-cover shrink-0 border border-border bg-canvas"
+                    alt=""
+                    className="w-12 h-12 object-cover shrink-0 border border-border bg-canvas"
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
                   />
                 ) : (
-                  <div className="w-12 h-12 rounded border border-border bg-canvas shrink-0 flex items-center justify-center text-[10px] text-ink-muted">
-                    No img
-                  </div>
+                  <div className="w-12 h-12 border border-border bg-canvas shrink-0 flex items-center justify-center text-[10px] text-ink-muted">—</div>
                 )}
-                {/* Info */}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -587,21 +658,7 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
                       <p className="text-[12px] text-ink-muted mt-0.5">
                         {product.category}
                         {product.price ? ` · ${product.price}` : ''}
-                        {product.moq ? ` · MOQ: ${product.moq}` : ''}
                       </p>
-                      {product.description && (
-                        <p className="text-[11.5px] text-ink-muted mt-0.5 line-clamp-2 leading-relaxed">{product.description}</p>
-                      )}
-                      <div className="flex items-center gap-3 mt-1">
-                        {product.productUrl && (
-                          <a href={product.productUrl} target="_blank" rel="noopener noreferrer"
-                            className="text-[11px] text-accent hover:underline">
-                            View product ↗
-                          </a>
-                        )}
-                        {product.inStock === true && <span className="text-[11px] text-emerald-600">In stock</span>}
-                        {product.inStock === false && <span className="text-[11px] text-amber-600">Out of stock</span>}
-                      </div>
                     </div>
                     <button
                       onClick={() => removeProduct(product.id)}
@@ -615,11 +672,27 @@ function CatalogSection({ products, onSave }: { products: Product[]; onSave: (p:
               </div>
             ))}
           </div>
+          {hiddenCount > 0 && !expanded && (
+            <button type="button" className="btn btn-secondary mt-2" onClick={() => { setExpanded(true); setPageSize(20); }}>
+              View more ({hiddenCount} hidden)
+            </button>
+          )}
+          {expanded && products.length > pageSize && (
+            <p className="text-[12px] text-ink-muted mt-2">
+              Showing {pageSize} of {products.length}. Increase “Show” to see more.
+            </p>
+          )}
+          {expanded && products.length <= pageSize && products.length > 5 && (
+            <button type="button" className="btn btn-ghost mt-2" onClick={() => { setExpanded(false); setPageSize(5); }}>
+              Show less
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
+
 
 function ICPSection({
   icp,
@@ -632,12 +705,23 @@ function ICPSection({
   products: Product[];
   onSave: (i: IdealCustomerProfile) => void;
 }) {
+  const marketList = (businessInfo.targetMarkets ?? []).join(', ');
+  const marketsMatch =
+    (icp.targetCountries ?? []).join(', ').toLowerCase() === marketList.toLowerCase() ||
+    !(icp.targetCountries ?? []).length;
   const [buyerTypes, setBuyerTypes] = useState((icp.targetBuyerTypes ?? []).join(', '));
-  const [countries, setCountries] = useState((icp.targetCountries ?? []).join(', '));
+  const [sameAsMarkets, setSameAsMarkets] = useState(marketsMatch);
+  const [countries, setCountries] = useState(
+    marketsMatch ? marketList : (icp.targetCountries ?? []).join(', '),
+  );
   const [companySize, setCompanySize] = useState(icp.companySize ?? 'Any');
   const [minDealSize, setMinDealSize] = useState(icp.minDealSize || '');
   const [signals] = useState(icp.buyingSignals ?? []);
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (sameAsMarkets) setCountries(marketList);
+  }, [sameAsMarkets, marketList]);
 
   const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
   const context = useMemo(
@@ -661,10 +745,13 @@ function ICPSection({
   );
 
   const handleSave = () => {
+    const resolvedCountries = sameAsMarkets
+      ? (businessInfo.targetMarkets ?? [])
+      : countries.split(',').map(s => s.trim()).filter(Boolean);
     onSave({
       ...icp,
       targetBuyerTypes: buyerTypes.split(',').map(s => s.trim()).filter(Boolean),
-      targetCountries: countries.split(',').map(s => s.trim()).filter(Boolean),
+      targetCountries: resolvedCountries,
       companySize,
       minDealSize: minDealSize || undefined,
       buyingSignals: signals,
@@ -678,7 +765,7 @@ function ICPSection({
       <div className="space-y-4">
         <p className="section-label">Target Buyer Criteria</p>
         <p className="text-[13px] text-ink-muted leading-relaxed">
-          Name the companies you want in the pipeline. A Pakistani factory selling private-label apparel should list brands and importers — not other factories. Geography here is a hard filter when the agent can confirm it.
+          Name who you want in the pipeline. Geography defaults to company markets so you are not asked twice.
         </p>
         <PredictiveField
           label="Buyer types"
@@ -693,25 +780,39 @@ function ICPSection({
             catalogCategories: catalogCats.length ? catalogCats : businessInfo.primaryCategories,
           }}
         />
-        <PredictiveField
-          label="Target countries"
-          hint="Start typing a country name — matching markets appear."
-          value={countries}
-          onChange={setCountries}
-          suggestions={countrySuggestions}
-          placeholder="United Arab Emirates, Germany"
-          aiContext={{
-            field: 'markets',
-            description: businessInfo.description,
-            catalogCategories: catalogCats,
-          }}
-        />
+        <label className="flex items-start gap-2 text-[13px] text-ink-secondary cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5 accent-accent"
+            checked={sameAsMarkets}
+            onChange={e => setSameAsMarkets(e.target.checked)}
+          />
+          <span>
+            Same markets as company
+            {marketList ? <span className="text-ink-muted"> ({marketList})</span> : <span className="text-ink-muted"> — set markets in Company first</span>}
+          </span>
+        </label>
+        {!sameAsMarkets && (
+          <PredictiveField
+            label="Where we look for buyers"
+            hint="Only if different from company markets."
+            value={countries}
+            onChange={setCountries}
+            suggestions={countrySuggestions}
+            placeholder="United Arab Emirates, Germany"
+            aiContext={{
+              field: 'markets',
+              description: businessInfo.description,
+              catalogCategories: catalogCats,
+            }}
+          />
+        )}
         <div>
           <label className="block text-[12px] font-medium text-ink-secondary mb-1">Company size</label>
           <select
             value={companySize}
             onChange={e => setCompanySize(e.target.value as IdealCustomerProfile['companySize'])}
-            className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary bg-panel"
+            className="w-full border border-border px-3 py-2 text-[13px] text-ink-secondary bg-panel"
           >
             {['Any', 'Small', 'Medium', 'Enterprise'].map(size => (
               <option key={size} value={size}>{size}</option>
@@ -720,11 +821,8 @@ function ICPSection({
         </div>
         <Field label="Minimum deal size" value={minDealSize} onChange={setMinDealSize} placeholder="$15,000" />
         <div className="pt-2">
-          <button
-            onClick={handleSave}
-            className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-white text-[13px] font-medium rounded-md transition-colors"
-          >
-            {saved ? 'Saved' : 'Save Changes'}
+          <button onClick={handleSave} className="btn btn-primary">
+            {saved ? 'Saved' : 'Save buyers'}
           </button>
         </div>
       </div>
