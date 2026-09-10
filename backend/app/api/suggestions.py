@@ -98,11 +98,12 @@ async def _ai_expand(provider, field: str, context: str, catalog: List[str]) -> 
 async def _ai_buyers_via_fallback(_fallback: FallbackProvider, context: str) -> List[str]:
     text = context.lower()
     pairs = [
+        (["gift", "greeting", "stationery", "mug", "notebook"], ["Gift retailers", "Corporate buyers", "E-commerce sellers", "Wholesalers"]),
         (["gym", "fitness", "sport"], ["Gyms & fitness clubs", "Sports retailers", "Fitness brands"]),
         (["food", "restaurant", "beverage"], ["Restaurants & cafes", "Grocery chains", "Food distributors"]),
         (["saas", "software", "cloud"], ["Mid-market companies", "Enterprises", "IT teams"]),
         (["medical", "hospital", "clinic"], ["Hospitals", "Clinics", "Medical distributors"]),
-        (["industrial", "manufactur", "oem"], ["Manufacturers", "OEMs", "Engineering firms"]),
+        (["industrial", "oem", "machinery", "valve"], ["Manufacturers", "OEMs", "Engineering firms"]),
         (["beauty", "cosmetic", "salon"], ["Salons & spas", "Retailers", "Beauty distributors"]),
         (["construction", "building"], ["Contractors", "Developers", "Facility managers"]),
         (["logistic", "freight", "warehouse"], ["Importers & exporters", "E-commerce brands", "Manufacturers"]),
@@ -117,6 +118,26 @@ def _local_suggestions(field: str, context: str) -> List[str]:
     text = (context or "").lower()
     packs = [
         (
+            ["gift", "gifting", "greeting", "stationery", "mug", "notebook", "souvenir", "personalized", "personalised", "gift basket", "corporate gift"],
+            {
+                "categories": [
+                    "Greeting Cards",
+                    "Personalized Gifts",
+                    "Gift Baskets",
+                    "Mugs & Drinkware",
+                    "Wall Art & Frames",
+                    "Stationery",
+                    "Corporate Gifts",
+                ],
+                "buyers": ["Gift retailers", "Corporate buyers", "E-commerce sellers", "Wholesalers"],
+                "markets": ["Pakistan", "United Kingdom", "United Arab Emirates", "United States", "India"],
+                "discover": [
+                    "Find gift retailers expanding personalized product lines",
+                    "Find corporate buyers sourcing greeting cards and gift baskets",
+                ],
+            },
+        ),
+        (
             ["gym", "fitness", "sport", "glove", "hoodie"],
             {
                 "categories": ["Sportswear", "Fitness & Bodybuilding", "Gloves", "Teamwear"],
@@ -129,7 +150,8 @@ def _local_suggestions(field: str, context: str) -> List[str]:
             },
         ),
         (
-            ["industrial", "valve", "manufactur", "oem", "machinery"],
+            # Require clear industrial signals — not bare "manufacture" (hits gift makers)
+            ["industrial", "valve", "oem", "machinery", "cnc", "hydraulic", "factory"],
             {
                 "categories": ["Industrial Equipment", "OEM Components", "Machinery Parts"],
                 "buyers": ["Manufacturers", "OEMs", "Engineering firms", "Distributors"],
@@ -161,6 +183,18 @@ def _local_suggestions(field: str, context: str) -> List[str]:
                 "discover": [
                     "Find mid-market companies needing workflow automation",
                     "Find agencies looking for white-label SaaS tools",
+                ],
+            },
+        ),
+        (
+            ["beauty", "cosmetic", "skincare", "salon"],
+            {
+                "categories": ["Skincare", "Cosmetics", "Personal Care", "Salon Products"],
+                "buyers": ["Salons & spas", "Retailers", "Beauty distributors"],
+                "markets": ["United Arab Emirates", "United Kingdom", "United States", "France"],
+                "discover": [
+                    "Find salon chains seeking product suppliers",
+                    "Find beauty retailers expanding private-label lines",
                 ],
             },
         ),

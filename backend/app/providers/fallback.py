@@ -48,6 +48,8 @@ class FallbackProvider(AIProvider):
         )
         if cat_match:
             categories = [c.strip() for c in re.split(r",|/| and ", cat_match.group(1)) if c.strip()][:6]
+        if not categories:
+            categories = _infer_categories_from_text(lowered)
 
         return {
             "name": name,
@@ -258,11 +260,50 @@ def _guess_category(name: str) -> str:
         ("shirt", "Sportswear"),
         ("suit", "Sportswear"),
         ("bag", "Sports Goods"),
+        ("card", "Greeting Cards"),
+        ("mug", "Mugs & Drinkware"),
+        ("notebook", "Stationery"),
+        ("gift", "Personalized Gifts"),
+        ("frame", "Wall Art & Frames"),
     )
     for token, category in mapping:
         if token in lowered:
             return category
     return "Uncategorized"
+
+
+def _infer_categories_from_text(lowered: str) -> List[str]:
+    """Keyword categories from a free-text business description."""
+    packs = [
+        (
+            ["gift", "greeting", "stationery", "mug", "notebook", "souvenir", "personalized", "personalised", "gift basket"],
+            ["Greeting Cards", "Personalized Gifts", "Gift Baskets", "Mugs & Drinkware", "Stationery", "Corporate Gifts"],
+        ),
+        (
+            ["gym", "fitness", "sportswear", "hoodie", "glove", "bodybuilding"],
+            ["Sportswear", "Fitness & Bodybuilding", "Gloves", "Teamwear"],
+        ),
+        (
+            ["industrial", "valve", "oem", "machinery", "cnc", "hydraulic"],
+            ["Industrial Equipment", "OEM Components", "Machinery Parts"],
+        ),
+        (
+            ["food", "beverage", "restaurant", "fmcg", "snack"],
+            ["Food Ingredients", "Packaged Foods", "Beverages"],
+        ),
+        (
+            ["beauty", "cosmetic", "skincare", "salon"],
+            ["Skincare", "Cosmetics", "Personal Care"],
+        ),
+        (
+            ["saas", "software", "cloud", "crm"],
+            ["SaaS", "B2B Software", "Automation"],
+        ),
+    ]
+    for keys, cats in packs:
+        if any(k in lowered for k in keys):
+            return cats[:6]
+    return []
 
 
 def _excerpt_around(text: str, keywords: List[str], window: int = 140) -> str:

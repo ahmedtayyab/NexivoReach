@@ -180,14 +180,16 @@ function CompanySection({
   const [error, setError] = useState('');
 
   const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
-  const context = `${description} ${categories} ${catalogCats.join(' ')}`;
+  // Drive pack matching from description/name/catalog — not the category field itself
+  // (stale wrong chips were self-reinforcing industrial suggestions).
+  const suggestionContext = `${name} ${description} ${catalogCats.join(' ')}`;
   const marketSuggestions = useMemo(
-    () => suggestionsForField('markets', context, catalogCats),
-    [context, catalogCats],
+    () => suggestionsForField('markets', suggestionContext, catalogCats),
+    [suggestionContext, catalogCats],
   );
   const categorySuggestions = useMemo(
-    () => suggestionsForField('categories', context, catalogCats),
-    [context, catalogCats],
+    () => suggestionsForField('categories', suggestionContext, catalogCats),
+    [suggestionContext, catalogCats],
   );
 
   const handleExtract = async () => {
@@ -276,7 +278,7 @@ function CompanySection({
       />
       <PredictiveField
         label="Product categories"
-        hint="Type a word like “gym” or “industrial” — related categories appear instantly."
+        hint="Suggested from your description — click chips or Suggest for me. Type to filter."
         value={categories}
         onChange={setCategories}
         suggestions={categorySuggestions}

@@ -51,7 +51,11 @@ export const INDUSTRY_PACKS: IndustryPack[] = [
   {
     id: 'industrial',
     name: 'Industrial & Manufacturing',
-    triggers: ['industrial', 'manufacturing', 'valve', 'machinery', 'factory', 'oem', 'parts', 'equipment', 'steel', 'metal'],
+    // Avoid bare "manufacture" / "parts" / "equipment" — they false-hit gift & consumer copy
+    triggers: [
+      'industrial', 'manufacturing', 'manufacturer', 'valve', 'machinery',
+      'factory', 'oem', 'steel', 'metal', 'cnc', 'hydraulic', 'pneumatic',
+    ],
     categories: ['Industrial Equipment', 'Machinery Parts', 'OEM Components', 'Safety Equipment', 'Tools', 'Raw Materials'],
     buyers: ['Manufacturers', 'Engineering firms', 'Distributors', 'Procurement teams', 'Plant operators', 'OEMs'],
     markets: ['Germany', 'United States', 'United Kingdom', 'Netherlands', 'India', 'United Arab Emirates'],
@@ -111,6 +115,41 @@ export const INDUSTRY_PACKS: IndustryPack[] = [
       'Find salon chains opening new locations seeking product suppliers',
       'Find beauty retailers expanding private-label lines',
       'Find spa hotels looking for premium skincare partners',
+    ],
+  },
+  {
+    id: 'gifts',
+    name: 'Gifts & Stationery',
+    triggers: [
+      'gift', 'gifts', 'gifting', 'greeting', 'greeting card', 'greeting cards',
+      'stationery', 'mug', 'mugs', 'notebook', 'notebooks', 'bookmark', 'bookmarks',
+      'personalized', 'personalised', 'souvenir', 'occasion', 'occasions',
+      'gift basket', 'gift baskets', 'photo frame', 'wall art', 'corporate gift',
+      'corporate gifts', 'cards',
+    ],
+    categories: [
+      'Greeting Cards',
+      'Personalized Gifts',
+      'Gift Baskets',
+      'Mugs & Drinkware',
+      'Wall Art & Frames',
+      'Stationery',
+      'Corporate Gifts',
+      'Home Décor Gifts',
+    ],
+    buyers: [
+      'Gift retailers',
+      'Corporate buyers',
+      'E-commerce sellers',
+      'Stationery stores',
+      'Wholesalers',
+      'Event planners',
+    ],
+    markets: ['Pakistan', 'United Kingdom', 'United Arab Emirates', 'United States', 'India', 'Saudi Arabia'],
+    discoverQueries: [
+      'Find gift retailers expanding personalized product lines',
+      'Find corporate buyers sourcing greeting cards and gift baskets',
+      'Find e-commerce gift shops looking for wholesale stationery partners',
     ],
   },
   {
@@ -180,14 +219,26 @@ export function activeToken(value: string): string {
   return (parts[parts.length - 1] || '').trim();
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Word-aware trigger match — avoids "manufacture gifts" → industrial via "manufacturing". */
+function triggerHit(text: string, trigger: string): boolean {
+  const t = trigger.toLowerCase().trim();
+  if (!t) return false;
+  if (t.includes(' ')) return text.includes(t);
+  return new RegExp(`(?<![a-z0-9])${escapeRegExp(t)}(?![a-z0-9])`, 'i').test(text);
+}
+
 function packScore(pack: IndustryPack, haystack: string): number {
   const text = haystack.toLowerCase();
   let score = 0;
   for (const trigger of pack.triggers) {
-    if (text.includes(trigger.toLowerCase())) score += trigger.length > 4 ? 3 : 2;
+    if (triggerHit(text, trigger)) score += trigger.length > 4 ? 3 : 2;
   }
   for (const cat of pack.categories) {
-    if (text.includes(cat.toLowerCase())) score += 2;
+    if (text.includes(cat.toLowerCase())) score += 1; // weaker than triggers — avoid sticky wrong chips
   }
   return score;
 }
@@ -225,9 +276,13 @@ export function suggestionsForField(
     return uniquePreserve([...fromPacks, ...MARKET_SUGGESTIONS]).slice(0, 16);
   }
   if (field === 'categories') {
+    // Prefer matched pack categories over stale catalog labels when packs fire
     const fromPacks = packs.flatMap(p => p.categories);
     const fromCatalog = catalogCategories.filter(Boolean);
-    return uniquePreserve([...fromCatalog, ...fromPacks, ...GENERIC_CATEGORIES]).slice(0, 16);
+    if (fromPacks.length) {
+      return uniquePreserve([...fromPacks, ...fromCatalog, ...GENERIC_CATEGORIES]).slice(0, 16);
+    }
+    return uniquePreserve([...fromCatalog, ...GENERIC_CATEGORIES]).slice(0, 16);
   }
   if (field === 'buyers') {
     const fromPacks = packs.flatMap(p => p.buyers);

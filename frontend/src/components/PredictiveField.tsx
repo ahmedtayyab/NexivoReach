@@ -98,6 +98,9 @@ export default function PredictiveField({
       }
       if (single) {
         onChange(items[0]);
+      } else if (aiContext.field === 'categories' && (aiContext.description || '').trim()) {
+        // Replace stale chips — description is the source of truth for category suggest
+        onChange(items.slice(0, 6).join(', '));
       } else {
         let next = value;
         for (const item of items.slice(0, 6)) {
