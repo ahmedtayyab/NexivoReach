@@ -32,7 +32,11 @@ class GeminiProvider(AIProvider):
                 f"primary_categories (array) from: {text}"
             )
             parsed = parse_json_payload(self._generate(prompt))
-            if isinstance(parsed, dict) and parsed.get("name"):
+            if isinstance(parsed, dict) and (
+                parsed.get("name")
+                or parsed.get("primary_categories")
+                or parsed.get("primaryCategories")
+            ):
                 parsed["extracted_by_ai"] = True
                 return parsed
         except Exception:

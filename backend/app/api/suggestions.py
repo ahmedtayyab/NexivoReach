@@ -1,14 +1,19 @@
 """
-Light AI / taxonomy suggestion expansion.
+Light AI suggestion expansion.
+
+Categories/buyers are inferred from the seller's free-text description via the
+active LLM — not from a fixed industry dictionary. Local taxonomy is only a
+thin fallback when the model is unavailable.
 """
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 
 from app.api.deps import AuthUser, get_current_user
 from app.providers.factory import get_ai_provider
 from app.providers.fallback import FallbackProvider
+from app.providers.json_util import parse_json_payload
 
 router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
 
@@ -23,75 +28,128 @@ class ExpandRequest(BaseModel):
 @router.post("/expand")
 async def expand_suggestions(req: ExpandRequest, _user: AuthUser = Depends(get_current_user)):
     field = (req.field or "categories").strip().lower()
-    context = " ".join(
-        part for part in [req.query, req.description, ", ".join(req.catalogCategories)] if part
-    ).strip()
+    description = (req.description or "").strip()
+    query = (req.query or "").strip()
+    catalog = [c.strip() for c in (req.catalogCategories or []) if str(c).strip()]
+    context = " ".join(part for part in [description, query, ", ".join(catalog)] if part).strip()
 
-    # Fast local path when the user typed almost nothing
     local = _local_suggestions(field, context)
     if not context or len(context) < 3:
-        return {"suggestions": local, "source": "taxonomy"}
+        return {"suggestions": local[:8], "source": "taxonomy"}
 
     provider = get_ai_provider()
     try:
-        suggestions = await _ai_expand(provider, field, context, req.catalogCategories)
+        suggestions = await _ai_expand(provider, field, description, query, catalog)
         if suggestions:
-            # Prefer AI, then fill remaining slots from taxonomy
-            merged = _unique(suggestions + local)[:8]
+            # AI is source of truth for open-ended fields — don't dilute with wrong packs
+            if field in {"categories", "buyers"}:
+                merged = _unique(suggestions + catalog)[:8]
+            else:
+                merged = _unique(suggestions + local)[:8]
             return {"suggestions": merged, "source": "ai"}
     except Exception:
         pass
 
+    # Heuristic / catalog fallback
+    if field == "categories" and catalog:
+        return {"suggestions": _unique(catalog + local)[:8], "source": "catalog"}
     return {"suggestions": local[:8], "source": "taxonomy"}
 
 
-async def _ai_expand(provider, field: str, context: str, catalog: List[str]) -> List[str]:
-    """Ask the active AI provider for short suggestion labels; fall back gracefully."""
-    fallback = FallbackProvider()
-    prompt_field = {
-        "categories": "product categories the seller offers",
-        "buyers": "ideal buyer / customer types",
-        "markets": "target countries or regions",
-        "discover": "full discovery search queries (one sentence each)",
-    }.get(field, "suggestions")
+async def _ai_expand(
+    provider,
+    field: str,
+    description: str,
+    query: str,
+    catalog: List[str],
+) -> List[str]:
+    """Ask the active model for free-form labels inferred from the seller brief."""
+    context = " ".join(part for part in [description, query] if part).strip()
+    if not context:
+        return []
 
-    # Prefer provider-specific freeform if available via extract_business_profile style
-    # Use a tiny dedicated prompt through the same JSON helpers where possible.
-    if hasattr(provider, "_chat_json"):
-        system = (
-            "You help B2B sellers fill targeting fields. "
-            "Return ONLY a JSON object {\"suggestions\": [\"...\"]} with 5-8 short phrases. "
-            "No gym bias — infer industry from the user context."
+    if field == "categories":
+        prompt = (
+            "You help a B2B seller describe what they sell.\n"
+            "From the business brief below, invent 5-8 short product CATEGORY labels "
+            "a salesperson would use (not SKU names).\n"
+            "Rules:\n"
+            "- Infer freely from the text — do NOT limit yourself to any fixed industry list.\n"
+            "- Prefer concrete retail/wholesale categories (e.g. Greeting Cards, Hydraulic Valves).\n"
+            "- If they sell gifts/cards, say so — never invent industrial/OEM categories.\n"
+            "- If a website catalog hint is given, stay consistent with it.\n"
+            "- Return ONLY JSON: {\"suggestions\": [\"...\"]}\n\n"
+            f"Brief:\n{context[:2500]}\n"
+            f"Catalog hints: {', '.join(catalog) or 'none'}"
         )
-        user = (
-            f"Field: {prompt_field}\n"
-            f"Context: {context}\n"
-            f"Catalog categories already known: {', '.join(catalog) or 'none'}\n"
-            "Return industry-appropriate suggestions only."
-        )
-        data = await provider._chat_json(system, user)  # type: ignore[attr-defined]
-        if isinstance(data, dict) and isinstance(data.get("suggestions"), list):
-            return [str(s).strip() for s in data["suggestions"] if str(s).strip()][:8]
+        parsed = _llm_json(provider, prompt)
+        if parsed:
+            return parsed
 
-    # Generic path: reuse business profile extraction for categories/markets
-    if field in {"categories", "markets", "buyers"}:
+    if field == "buyers":
+        prompt = (
+            "You help a B2B seller name who buys from them.\n"
+            "From the brief, return 5-8 short buyer-type labels "
+            "(e.g. Gift retailers, Corporate HR buyers, Hospital groups).\n"
+            "Infer freely — no fixed industry list. Return ONLY JSON "
+            "{\"suggestions\": [\"...\"]}\n\n"
+            f"Brief:\n{context[:2500]}"
+        )
+        parsed = _llm_json(provider, prompt)
+        if parsed:
+            return parsed
+
+    if field == "markets":
+        prompt = (
+            "From the brief, return 5-8 target countries or regions the seller sells into.\n"
+            "Use common country names. Return ONLY JSON {\"suggestions\": [\"...\"]}\n\n"
+            f"Brief:\n{context[:2500]}"
+        )
+        parsed = _llm_json(provider, prompt)
+        if parsed:
+            return parsed
+
+    if field == "discover":
+        prompt = (
+            "Write 4-6 one-sentence B2B lead-hunt queries tailored to this seller.\n"
+            "Return ONLY JSON {\"suggestions\": [\"...\"]}\n\n"
+            f"Brief:\n{context[:2500]}\n"
+            f"Catalog: {', '.join(catalog) or 'their products'}"
+        )
+        parsed = _llm_json(provider, prompt)
+        if parsed:
+            return parsed
+
+    # Legacy path: profile extraction (often weak if name missing)
+    if field in {"categories", "markets"}:
         profile = await provider.extract_business_profile(context)
         if field == "categories":
             return list(profile.get("primary_categories") or profile.get("primaryCategories") or [])[:8]
-        if field == "markets":
-            return list(profile.get("target_markets") or profile.get("targetMarkets") or [])[:8]
-        if field == "buyers":
-            # Fallback provider won't have buyers; use taxonomy-ish from description
-            return await _ai_buyers_via_fallback(fallback, context)
+        return list(profile.get("target_markets") or profile.get("targetMarkets") or [])[:8]
 
-    if field == "discover":
-        cats = ", ".join(catalog) if catalog else "their products"
-        return [
-            f"Find distributors expanding in markets that buy {cats}",
-            f"Find retailers launching private-label lines related to {cats}",
-            f"Find companies hiring buyers or expanding facilities that need {cats}",
-        ]
+    if field == "buyers":
+        return await _ai_buyers_via_fallback(FallbackProvider(), context)
 
+    return []
+
+
+def _llm_json(provider, prompt: str) -> List[str]:
+    raw = ""
+    try:
+        if hasattr(provider, "_complete") and getattr(provider, "available", False):
+            raw = provider._complete(prompt)
+        elif hasattr(provider, "_generate") and getattr(provider, "available", False):
+            raw = provider._generate(prompt)
+        elif hasattr(provider, "_chat_json"):
+            # rare path
+            return []
+    except Exception:
+        return []
+    data = parse_json_payload(raw)
+    if isinstance(data, dict) and isinstance(data.get("suggestions"), list):
+        return [str(s).strip() for s in data["suggestions"] if str(s).strip()][:8]
+    if isinstance(data, list):
+        return [str(s).strip() for s in data if str(s).strip()][:8]
     return []
 
 
@@ -150,7 +208,6 @@ def _local_suggestions(field: str, context: str) -> List[str]:
             },
         ),
         (
-            # Require clear industrial signals — not bare "manufacture" (hits gift makers)
             ["industrial", "valve", "oem", "machinery", "cnc", "hydraulic", "factory"],
             {
                 "categories": ["Industrial Equipment", "OEM Components", "Machinery Parts"],

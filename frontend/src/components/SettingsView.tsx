@@ -178,19 +178,64 @@ function CompanySection({
   const [extracting, setExtracting] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [liveCategorySuggestions, setLiveCategorySuggestions] = useState<string[]>([]);
+  const [categorySuggesting, setCategorySuggesting] = useState(false);
 
   const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
-  // Drive pack matching from description/name/catalog — not the category field itself
-  // (stale wrong chips were self-reinforcing industrial suggestions).
+  // Taxonomy is a soft fallback only — live AI chips come from the description.
   const suggestionContext = `${name} ${description} ${catalogCats.join(' ')}`;
   const marketSuggestions = useMemo(
     () => suggestionsForField('markets', suggestionContext, catalogCats),
     [suggestionContext, catalogCats],
   );
-  const categorySuggestions = useMemo(
-    () => suggestionsForField('categories', suggestionContext, catalogCats),
-    [suggestionContext, catalogCats],
-  );
+  const categorySuggestions = useMemo(() => {
+    const local = suggestionsForField('categories', suggestionContext, catalogCats);
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const item of [...liveCategorySuggestions, ...catalogCats, ...local]) {
+      const key = item.trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(item.trim());
+      if (out.length >= 16) break;
+    }
+    return out;
+  }, [liveCategorySuggestions, catalogCats, suggestionContext]);
+
+  useEffect(() => {
+    const brief = `${name} ${description}`.trim();
+    if (brief.length < 16) {
+      setLiveCategorySuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setCategorySuggesting(true);
+      try {
+        const resp = await apiFetch('/api/suggestions/expand', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            field: 'categories',
+            description: brief,
+            catalogCategories: catalogCats,
+          }),
+        });
+        if (!resp.ok || cancelled) return;
+        const data = await resp.json();
+        const items: string[] = Array.isArray(data.suggestions) ? data.suggestions : [];
+        if (!cancelled) setLiveCategorySuggestions(items.filter(Boolean).slice(0, 10));
+      } catch {
+        if (!cancelled) setLiveCategorySuggestions([]);
+      } finally {
+        if (!cancelled) setCategorySuggesting(false);
+      }
+    }, 700);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [name, description, catalogCats]);
 
   const handleExtract = async () => {
     if (!description.trim()) return;
@@ -207,7 +252,11 @@ function CompanySection({
       if (data.name) setName(data.name);
       if (data.website) setWebsite(data.website);
       if (Array.isArray(data.targetMarkets)) setMarkets(data.targetMarkets.join(', '));
-      if (Array.isArray(data.primaryCategories)) setCategories(data.primaryCategories.join(', '));
+      if (Array.isArray(data.primaryCategories) && data.primaryCategories.length) {
+        setCategories(data.primaryCategories.join(', '));
+      } else if (liveCategorySuggestions.length) {
+        setCategories(liveCategorySuggestions.slice(0, 6).join(', '));
+      }
     } catch (e) {
       console.warn(e);
       setError('Could not extract profile. Fill the fields manually.');
@@ -278,7 +327,11 @@ function CompanySection({
       />
       <PredictiveField
         label="Product categories"
-        hint="Suggested from your description — click chips or Suggest for me. Type to filter."
+        hint={
+          categorySuggesting
+            ? 'Inferring categories from your description…'
+            : 'Inferred from your description (and catalog when available). Click chips or Suggest for me — type any custom category.'
+        }
         value={categories}
         onChange={setCategories}
         suggestions={categorySuggestions}
