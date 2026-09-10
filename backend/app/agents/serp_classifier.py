@@ -167,11 +167,6 @@ def _foreign_geo_conflict(blob: str, places: List[str]) -> bool:
     return False
 
 
-# Remove old _geo_mentioned — replaced by places_mentioned
-def _geo_mentioned(blob: str, places: List[str]) -> bool | None:
-    return places_mentioned(blob, places)
-
-
 def summarize_classifications(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     n = len(rows) or 1
     junk_types = {"directory", "jobs", "news", "article", "marketplace", "skip_domain"}

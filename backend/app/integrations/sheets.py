@@ -13,7 +13,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from sqlmodel import Session
 
@@ -476,15 +476,6 @@ def _get_or_create_sheet(spreadsheet, title: str, headers: list[str]):
         ws.clear()
         ws.append_row(headers, value_input_option="USER_ENTERED")
     return ws
-
-
-def _find_row_by_key(ws, col_index: int, key: str) -> int | None:
-    """Return 1-based row index where column col_index equals key, or None."""
-    col_values = ws.col_values(col_index)
-    for i, val in enumerate(col_values[1:], start=2):  # skip header
-        if val == key:
-            return i
-    return None
 
 
 def _sanitize_tab_label(name: str) -> str:
