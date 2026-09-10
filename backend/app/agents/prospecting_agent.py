@@ -24,12 +24,14 @@ from app.tools.contact_finder import discover_contacts, contacts_from_text
 from app.providers.factory import get_ai_provider
 
 
-FETCH_CAP = 40
-SAVE_CAP = 40
-WAVE1_RESULT_CAP = 70
-WAVE2_RESULT_CAP = 35
-ENRICH_CAP = 12  # AI drafts for top fits
-CONTACT_CAP = 40  # emails scraped automatically for (almost) every saved lead
+FETCH_CAP = 80
+SAVE_CAP = 80
+WAVE1_RESULT_CAP = 140
+WAVE2_RESULT_CAP = 80
+ENRICH_CAP = 16  # AI drafts for top fits
+CONTACT_CAP = 80  # emails scraped automatically for (almost) every saved lead
+MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 35
+DEFAULT_HUNT_LIMIT = 80
 
 
 def _domain(url: str) -> str:
@@ -58,7 +60,7 @@ class ProspectingAgent:
         icp: Dict[str, Any],
         business: Optional[Dict[str, Any]] = None,
         exclude_websites: Optional[List[str]] = None,
-        limit: int = 40,
+        limit: int = 80,
     ) -> Dict[str, Any]:
         start_time = time.time()
         decisions_log: List[Dict[str, Any]] = []
@@ -142,8 +144,10 @@ class ProspectingAgent:
         })
 
         wave2 = plan_wave2(profile, stats, stats.get("learned_terms"))
-        # Skip wave 2 when we already have enough in-geo hits (speed)
-        need_wave2 = bool(wave2) and stats["relevant_count"] < (12 if profile.strict_geo else 18)
+        # Always deepen when the first wave is thin — volume matters for usable hunts
+        need_wave2 = bool(wave2) and stats["relevant_count"] < (
+            MIN_CANDIDATES_BEFORE_SKIP_WAVE2 if profile.strict_geo else 45
+        )
         if need_wave2:
             more = await self.web_search.hunt_leads(
                 wave2,

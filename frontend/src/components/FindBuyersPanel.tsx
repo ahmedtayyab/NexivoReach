@@ -92,8 +92,8 @@ export default function FindBuyersPanel({
       setLastFound(found.length);
       setStatusText(
         found.length
-          ? `Added ${found.length} qualified lead${found.length === 1 ? '' : 's'}.`
-          : 'No qualified accounts this round — try a clearer buyer type or market.',
+          ? `Added ${found.length} lead${found.length === 1 ? '' : 's'} — review Fit/Intent on Leads.`
+          : 'No accounts this round — try a clearer product, buyer type, or location in the focus field.',
       );
       onComplete?.(found.length);
     } catch (err: unknown) {

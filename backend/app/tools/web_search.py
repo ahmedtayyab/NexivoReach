@@ -233,7 +233,7 @@ class WebSearchTool:
             res = client.post(
                 "https://google.serper.dev/maps",
                 headers={"X-API-KEY": settings.SERPER_API_KEY, "Content-Type": "application/json"},
-                json={"q": query},
+                json={"q": query, "num": 20},
             )
             res.raise_for_status()
             data = res.json()
@@ -244,7 +244,7 @@ class WebSearchTool:
         queries: List[Any],
         target_location: str = "",
         exclude_domains: Optional[set] = None,
-        limit: int = 40,
+        limit: int = 140,
         use_maps: bool = False,
     ) -> List[Dict[str, Any]]:
         """Run a wave of web searches (Maps only when the plan says so)."""
@@ -253,7 +253,7 @@ class WebSearchTool:
         seen: set = set(exclude_domains)
 
         specs: List[Dict[str, Any]] = []
-        for q in queries[:8]:
+        for q in queries[:16]:
             if isinstance(q, str):
                 specs.append({"query": q, "use_maps": use_maps, "pool": "", "family": ""})
             elif isinstance(q, dict):
@@ -328,7 +328,7 @@ class WebSearchTool:
             res = client.post(
                 "https://google.serper.dev/search",
                 headers={"X-API-KEY": settings.SERPER_API_KEY, "Content-Type": "application/json"},
-                json={"q": query, "num": 15},
+                json={"q": query, "num": 20},
             )
             res.raise_for_status()
             organic = res.json().get("organic") or []
@@ -344,7 +344,7 @@ class WebSearchTool:
             res = client.get(
                 "https://api.search.brave.com/res/v1/web/search",
                 headers={"X-Subscription-Token": settings.BRAVE_SEARCH_API_KEY, "Accept": "application/json"},
-                params={"q": query, "count": 10},
+                params={"q": query, "count": 20},
             )
             res.raise_for_status()
             web = ((res.json().get("web") or {}).get("results")) or []
@@ -359,7 +359,7 @@ class WebSearchTool:
         with httpx.Client(timeout=20.0) as client:
             res = client.post(
                 "https://api.tavily.com/search",
-                json={"api_key": settings.TAVILY_API_KEY, "query": query, "max_results": 10},
+                json={"api_key": settings.TAVILY_API_KEY, "query": query, "max_results": 15},
             )
             res.raise_for_status()
             return [
@@ -371,7 +371,7 @@ class WebSearchTool:
         try:
             from ddgs import DDGS
             with DDGS() as ddgs:
-                rows = list(ddgs.text(query, max_results=8))
+                rows = list(ddgs.text(query, max_results=15))
                 return [
                     {"title": r.get("title", ""), "href": r.get("href", ""), "body": r.get("body", "")}
                     for r in rows
@@ -381,7 +381,7 @@ class WebSearchTool:
         try:
             from duckduckgo_search import DDGS
             with DDGS() as ddgs:
-                rows = list(ddgs.text(query, max_results=8))
+                rows = list(ddgs.text(query, max_results=15))
                 return [
                     {"title": r.get("title", ""), "href": r.get("href", ""), "body": r.get("body", "")}
                     for r in rows

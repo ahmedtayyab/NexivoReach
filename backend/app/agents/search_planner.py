@@ -338,11 +338,19 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
                 f"{cat} {role} {place}",
                 f"{cat} importer {place}" if "import" in (buyer or "").lower() else f"{buyer} {cat} {place}",
                 f'"{cat}" {place} wholesale',
+                f"{cat} distributor {place}",
+                f"{cat} wholesaler {place}",
+                f"{buyer} {cat} {place} directory OR list OR companies",
             ]
             for q in add_early:
                 qn = re.sub(r"\s+", " ", q).strip()
                 if qn and not any(x.query.lower() == qn.lower() for x in queries):
                     queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
+        # Second category from prompt/catalog
+        if cat2 and cat2.lower() != cat.lower() and place:
+            qn = f"{cat2} {role} {place}"
+            if not any(x.query.lower() == qn.lower() for x in queries):
+                queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
 
     def add(q: str, family: str, pool: str, maps: bool = False) -> None:
         q = re.sub(r"\s+", " ", q).strip()
@@ -410,26 +418,28 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
             "intent_overlay",
         )
 
-    # Cap wave 1: diverse families, not clones. User-prompt paraphrases get more room.
+    # Cap wave 1: allow a wider net — Google-scale hunts need more query diversity
     out: List[PlannedQuery] = []
     seen_family: Dict[str, int] = {}
     for item in queries:
         if item.family == "user":
-            fam_cap = 4
+            fam_cap = 8
         elif item.family == "intent_overlay":
-            fam_cap = 3
+            fam_cap = 4
         elif item.family == "channel":
-            fam_cap = 3
+            fam_cap = 4
+        elif item.family == "maps_local":
+            fam_cap = 4
         else:
-            fam_cap = 2
+            fam_cap = 3
         n = seen_family.get(item.family, 0)
         if n >= fam_cap:
             continue
         seen_family[item.family] = n + 1
         out.append(item)
-        if len(out) >= 10:
+        if len(out) >= 16:
             break
-    return out or queries[:10]
+    return out or queries[:16]
 
 
 def plan_wave2(
@@ -492,7 +502,7 @@ def plan_wave2(
         ))
 
     # Niche / over-filtered wave 1: broaden product + channel in the requested place
-    if relevant == 0 and place:
+    if relevant < 20 and place:
         short = " ".join(cat.split()[:2]) if cat else cat
         role = (profile.buyers[0] or "importer").rstrip("s")
         queries.append(PlannedQuery(
@@ -503,7 +513,15 @@ def plan_wave2(
             f"{short} wholesale distributor {place} {neg}".strip(),
             "broaden_niche", "importer_distributor", False, 2,
         ))
-        for extra in profile.categories[1:3]:
+        queries.append(PlannedQuery(
+            f"{short} supplier {place} -jobs".strip(),
+            "broaden_niche", "direct_icp", False, 2,
+        ))
+        queries.append(PlannedQuery(
+            f'"{place}" {short} (importer OR distributor OR wholesaler)'.strip(),
+            "broaden_niche", "direct_icp", False, 2,
+        ))
+        for extra in profile.categories[1:4]:
             queries.append(PlannedQuery(
                 f"{extra} {role} {place} {neg}".strip(),
                 "broaden_niche", "direct_icp", False, 2,
@@ -525,7 +543,7 @@ def plan_wave2(
             continue
         seen.add(key)
         out.append(q)
-        if len(out) >= 8:
+        if len(out) >= 12:
             break
     return out
 

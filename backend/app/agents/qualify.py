@@ -142,10 +142,14 @@ def qualify_account(
         priority = "nurture"
     elif fit_summary == "medium" and intent == "high":
         priority = "review"
-    elif fit_summary == "medium" and source_type == "homepage":
-        # Confirmed geo + named buyer role → keep as review (more usable clients)
-        if location and _primary_buyer_hit(text, profile):
-            priority = "review"
+    elif fit_summary == "medium":
+        # Prefer volume of geo-plausible accounts over rejecting everything thin
+        geo_ok_loc = bool(location and location.strip())
+        if geo_ok_loc or source_type == "homepage" or (row.get("source") or "") == "maps":
+            if source_type == "homepage" and _primary_buyer_hit(text, profile):
+                priority = "review"
+            else:
+                priority = "review" if geo_ok_loc or (row.get("source") or "") == "maps" else "low"
         else:
             priority = "low"
     else:
@@ -164,8 +168,19 @@ def qualify_account(
     persist = (
         priority != "reject"
         and fit_summary != "low"
-        and not (source_type == "serp" and icp == "unknown" and motion == "unknown")
+        and not (source_type == "serp" and icp == "unknown" and motion == "unknown" and offer == "unknown")
     )
+    # SERP-only medium fits with a location string still usable for review queues
+    if (
+        not persist
+        and fit_summary == "medium"
+        and priority in ("review", "low", "nurture")
+        and (location or "").strip()
+        and icp != "low"
+    ):
+        persist = True
+        if priority == "reject":
+            priority = "review"
     if (
         not persist
         and (row.get("source") == "maps")
