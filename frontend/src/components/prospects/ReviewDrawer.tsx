@@ -1,6 +1,6 @@
 import type { Prospect } from '../../types';
-import { X, ArrowLeft, ExternalLink, CheckCircle, Edit3, Mail, Phone } from 'lucide-react';
-import { useState } from 'react';
+import { X, ArrowLeft, ExternalLink, CheckCircle, Mail, Phone } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { recipientEmail } from '../../lib/leadTone';
 
 interface Props {
@@ -31,10 +31,33 @@ export default function ReviewDrawer({
   onPrepareFollowUp,
   gmailConnected = false,
 }: Props) {
-  const [editingDraft, setEditingDraft] = useState(false);
   const [draftBody, setDraftBody] = useState('');
   const [draftSubject, setDraftSubject] = useState('');
+  const [draftTo, setDraftTo] = useState('');
   const [replyNote, setReplyNote] = useState('');
+  const [draftDirty, setDraftDirty] = useState(false);
+
+  useEffect(() => {
+    if (!prospect?.outreachDraft) {
+      setDraftBody('');
+      setDraftSubject('');
+      setDraftTo('');
+      setDraftDirty(false);
+      return;
+    }
+    const d = prospect.outreachDraft;
+    setDraftSubject(d.subject || '');
+    setDraftBody(d.body || '');
+    setDraftTo(d.toEmail || recipientEmail(prospect) || '');
+    setDraftDirty(false);
+    setReplyNote('');
+  }, [
+    prospect?.id,
+    prospect?.outreachDraft?.subject,
+    prospect?.outreachDraft?.body,
+    prospect?.outreachDraft?.toEmail,
+    prospect?.email,
+  ]);
 
   if (!prospect) return null;
 
@@ -45,17 +68,23 @@ export default function ReviewDrawer({
     prospect.fitScore >= 90 ? 'score-high'
     : prospect.fitScore >= 80 ? 'score-mid'
     : 'score-low';
-  const toEmail = recipientEmail(prospect);
   const contacts = prospect.contacts || [];
+
+  const persistDraft = () => {
+    if (!draft) return;
+    onSaveDraft(prospect.id, draftSubject, draftBody, draftTo);
+    setDraftDirty(false);
+  };
 
   const openMailto = () => {
     if (!draft) return;
     const params = new URLSearchParams();
-    if (draft.subject) params.set('subject', draft.subject);
-    if (draft.body) params.set('body', draft.body);
+    if (draftSubject || draft.subject) params.set('subject', draftSubject || draft.subject);
+    if (draftBody || draft.body) params.set('body', draftBody || draft.body);
     const qs = params.toString();
-    const href = toEmail
-      ? `mailto:${encodeURIComponent(toEmail)}?${qs}`
+    const to = draftTo.trim() || recipientEmail(prospect);
+    const href = to
+      ? `mailto:${encodeURIComponent(to)}?${qs}`
       : `mailto:?${qs}`;
     window.open(href, '_blank');
   };
@@ -88,8 +117,14 @@ export default function ReviewDrawer({
               <button
                 type="button"
                 onClick={() => {
-                  if (onSendViaEmail) onSendViaEmail(prospect.id);
-                  else {
+                  if (draftDirty) persistDraft();
+                  if (onSendViaEmail) {
+                    onSendViaEmail(prospect.id, {
+                      subject: draftSubject,
+                      body: draftBody,
+                      toEmail: draftTo,
+                    });
+                  } else {
                     openMailto();
                     onUpdateStatus(prospect.id, 'Sent');
                   }
@@ -124,7 +159,7 @@ export default function ReviewDrawer({
           </div>
         </div>
 
-        <div className="px-5 pt-5 pb-4 border-b border-border-subtle">
+        <div className="px-5 pt-5 pb-5 border-b border-border-subtle">
           <div className="flex items-start justify-between gap-4">
             <div>
               <h1 className="text-[15px] font-semibold text-ink">{prospect.companyName}</h1>
@@ -150,18 +185,18 @@ export default function ReviewDrawer({
           )}
         </div>
 
-        <div className="px-5 py-5 space-y-6 flex-1">
+        <div className="px-5 py-6 space-y-9 flex-1">
           <section>
-            <h2 className="section-label mb-2">Location</h2>
-            <div className="h-px bg-muted mb-3" />
+            <h2 className="section-label mb-2.5">Location</h2>
+            <div className="h-px bg-muted mb-4" />
             <p className="text-[13.5px] text-ink-secondary leading-relaxed">
               {prospect.location?.trim() || 'Not confirmed from public pages yet — verify before outreach.'}
             </p>
           </section>
 
           <section>
-            <h2 className="section-label mb-2">Contacts</h2>
-            <div className="h-px bg-muted mb-3" />
+            <h2 className="section-label mb-2.5">Contacts</h2>
+            <div className="h-px bg-muted mb-4" />
             {(() => {
               const seen = new Set<string>();
               const emails: string[] = [];
@@ -197,7 +232,7 @@ export default function ReviewDrawer({
                 );
               }
               return (
-                <div className="space-y-2 text-[13px]">
+                <div className="space-y-2.5 text-[13px]">
                   {emails.map(e => (
                     <a key={e} href={`mailto:${e}`} className="flex items-center gap-2 text-accent hover:underline">
                       <Mail className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} />
@@ -225,7 +260,7 @@ export default function ReviewDrawer({
                 </div>
               );
             })()}
-            <label className="mt-3 flex items-center gap-2 text-[13px] text-ink-secondary">
+            <label className="mt-4 flex items-center gap-2 text-[13px] text-ink-secondary">
               <input
                 type="checkbox"
                 checked={prospect.contactAgain !== false}
@@ -237,22 +272,22 @@ export default function ReviewDrawer({
           </section>
 
           <section>
-            <h2 className="section-label mb-2">Qualification</h2>
-            <div className="h-px bg-muted mb-3" />
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[13px]">
+            <h2 className="section-label mb-2.5">Qualification</h2>
+            <div className="h-px bg-muted mb-4" />
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-[13px]">
               <LevelRow label="ICP fit" value={prospect.icpFit || breakdown?.icpFit} />
               <LevelRow label="Offer fit" value={prospect.offerFit || breakdown?.offerFit} />
               <LevelRow label="Motion fit" value={prospect.motionFit || breakdown?.motionFit} />
               <LevelRow label="Intent" value={prospect.intent || breakdown?.intent || 'none'} />
             </div>
             {prospect.priority && (
-              <p className="text-[12px] text-ink-muted mt-2">Priority: {prospect.priority}</p>
+              <p className="text-[12px] text-ink-muted mt-3">Priority: {prospect.priority}</p>
             )}
           </section>
 
           <section>
-            <h2 className="section-label mb-2">Why this prospect?</h2>
-            <div className="h-px bg-muted mb-3" />
+            <h2 className="section-label mb-2.5">Why this prospect?</h2>
+            <div className="h-px bg-muted mb-4" />
             <p className="text-[13.5px] text-ink-secondary leading-relaxed">
               {prospect.whyThisProspect}
             </p>
@@ -260,33 +295,33 @@ export default function ReviewDrawer({
               .filter(e => e.claim !== 'intent')
               .slice(0, 4)
               .map((e, i) => (
-                <p key={i} className="source-quote mt-2">{e.quote || e.statement}</p>
+                <p key={i} className="source-quote mt-3">{e.quote || e.statement}</p>
               ))}
           </section>
 
           <section>
-            <h2 className="section-label mb-2">Why now?</h2>
-            <div className="h-px bg-muted mb-3" />
+            <h2 className="section-label mb-2.5">Why now?</h2>
+            <div className="h-px bg-muted mb-4" />
             <p className="text-[13.5px] text-ink-secondary leading-relaxed">
               {prospect.whyNow || breakdown?.whyNow || 'No timing evidence.'}
             </p>
             {(prospect.buyingSignals || []).map((sig, i) => (
-              <div key={i} className="mt-3">
+              <div key={i} className="mt-4">
                 <p className="text-[13px] font-medium text-ink-secondary">{sig.signal}</p>
-                <p className="source-quote mt-1">{sig.sourceExcerpt || sig.whyItMatters}</p>
+                <p className="source-quote mt-1.5">{sig.sourceExcerpt || sig.whyItMatters}</p>
               </div>
             ))}
           </section>
 
           <section>
-            <h2 className="section-label mb-2">Product Match</h2>
-            <div className="h-px bg-muted mb-3" />
-            <div className="space-y-2">
+            <h2 className="section-label mb-2.5">Product Match</h2>
+            <div className="h-px bg-muted mb-4" />
+            <div className="space-y-4">
               {(prospect.productFit || []).map((item, i) => (
                 <div key={i} className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[13.5px] font-medium text-ink-secondary">{i + 1}. {item.productName}</p>
-                    <p className="text-[12px] text-ink-muted mt-0.5">{item.reasoning}</p>
+                    <p className="text-[12px] text-ink-muted mt-1">{item.reasoning}</p>
                   </div>
                   <span className={`text-[12px] font-semibold shrink-0 mt-0.5 ${
                     item.fitLevel === 'High' ? 'text-green-700' : 'text-ink-muted'
@@ -300,111 +335,115 @@ export default function ReviewDrawer({
 
           {draft && (
             <section>
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between mb-2.5 gap-3">
                 <h2 className="section-label">Draft Outreach</h2>
-                {!alreadySent && (
+                {!alreadySent && draftDirty && (
                   <button
-                    onClick={() => {
-                      setDraftSubject(draft.subject);
-                      setDraftBody(draft.body);
-                      setEditingDraft(!editingDraft);
-                    }}
-                    className="flex items-center space-x-1 text-[12px] text-ink-muted hover:text-ink-secondary transition-colors"
+                    type="button"
+                    onClick={persistDraft}
+                    className="px-2.5 py-1 text-[12px] bg-ink text-white rounded-md nr-btn-press"
                   >
-                    <Edit3 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                    <span>Edit Draft</span>
+                    Save changes
                   </button>
                 )}
               </div>
-              <div className="h-px bg-muted mb-3" />
+              <div className="h-px bg-muted mb-4" />
 
-              {editingDraft ? (
-                <div className="space-y-2">
+              <div className="space-y-4">
+                <div>
+                  <label className="field-label" htmlFor={`review-to-${prospect.id}`}>To</label>
                   <input
+                    id={`review-to-${prospect.id}`}
+                    type="email"
+                    value={draftTo}
+                    disabled={alreadySent}
+                    onChange={e => {
+                      setDraftTo(e.target.value);
+                      setDraftDirty(true);
+                    }}
+                    onBlur={() => {
+                      if (draftDirty && !alreadySent) persistDraft();
+                    }}
+                    placeholder="buyer@company.com"
+                    className="w-full border border-border rounded-md px-3 py-2.5 text-[13px] text-ink-secondary bg-panel disabled:opacity-60"
+                  />
+                </div>
+                <div>
+                  <label className="field-label" htmlFor={`review-subject-${prospect.id}`}>Subject</label>
+                  <input
+                    id={`review-subject-${prospect.id}`}
                     value={draftSubject}
-                    onChange={e => setDraftSubject(e.target.value)}
-                    className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary"
-                    placeholder="Subject line..."
+                    disabled={alreadySent}
+                    onChange={e => {
+                      setDraftSubject(e.target.value);
+                      setDraftDirty(true);
+                    }}
+                    onBlur={() => {
+                      if (draftDirty && !alreadySent) persistDraft();
+                    }}
+                    placeholder="Subject line…"
+                    className="w-full border border-border rounded-md px-3 py-2.5 text-[13px] text-ink-secondary bg-panel disabled:opacity-60"
                   />
+                </div>
+                <div>
+                  <label className="field-label" htmlFor={`review-body-${prospect.id}`}>Body</label>
                   <textarea
+                    id={`review-body-${prospect.id}`}
                     value={draftBody}
-                    onChange={e => setDraftBody(e.target.value)}
-                    rows={8}
-                    className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary resize-none"
+                    disabled={alreadySent}
+                    onChange={e => {
+                      setDraftBody(e.target.value);
+                      setDraftDirty(true);
+                    }}
+                    onBlur={() => {
+                      if (draftDirty && !alreadySent) persistDraft();
+                    }}
+                    rows={10}
+                    className="w-full border border-border rounded-md px-3 py-2.5 text-[13px] text-ink-secondary resize-y min-h-[12rem] bg-panel disabled:opacity-60 leading-relaxed"
                   />
-                  <div className="flex justify-end space-x-2">
-                    <button
-                      onClick={() => setEditingDraft(false)}
-                      className="px-3 py-1.5 text-[13px] text-ink-secondary hover:text-ink"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={() => {
-                        onSaveDraft(prospect.id, draftSubject, draftBody);
-                        setEditingDraft(false);
-                      }}
-                      className="px-3 py-1.5 bg-ink hover:bg-ink-secondary text-white text-[13px] rounded-md transition-colors"
-                    >
-                      Save
-                    </button>
+                </div>
+
+                {draft.outreachRationale ? (
+                  <div className="text-[12px] text-ink-muted border-t border-border-subtle pt-4 space-y-1.5">
+                    <p className="font-medium text-ink-secondary">Outreach rationale</p>
+                    {draft.outreachRationale.primary_signal && (
+                      <p><span className="text-ink-muted">Signal:</span> {draft.outreachRationale.primary_signal}</p>
+                    )}
+                    {draft.outreachRationale.pain_hypothesis && (
+                      <p><span className="text-ink-muted">Pain hypothesis:</span> {draft.outreachRationale.pain_hypothesis}</p>
+                    )}
+                    {draft.outreachRationale.matched_product && (
+                      <p><span className="text-ink-muted">Matched product:</span> {draft.outreachRationale.matched_product}</p>
+                    )}
+                    <p>
+                      {draft.outreachRationale.angle && (
+                        <><span className="text-ink-muted">Approach:</span> {draft.outreachRationale.angle}</>
+                      )}
+                      {draft.outreachRationale.signal_confidence && (
+                        <>
+                          {draft.outreachRationale.angle ? ' · ' : null}
+                          <span className="text-ink-muted">Confidence:</span> {draft.outreachRationale.signal_confidence}
+                        </>
+                      )}
+                    </p>
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {toEmail && (
-                    <p className="text-[12px] text-ink-muted">
-                      To: <span className="text-ink-secondary font-medium">{toEmail}</span>
-                    </p>
-                  )}
-                  <p className="text-[12px] text-ink-muted">
-                    Subject: <span className="text-ink-secondary font-medium">{draft.subject}</span>
+                ) : draft.personalizedReason ? (
+                  <p className="text-[12px] text-ink-muted border-t border-border-subtle pt-4">
+                    Personalized using: {draft.personalizedReason}
                   </p>
-                  <p className="text-[13.5px] text-ink-secondary whitespace-pre-line leading-relaxed border-t border-border-subtle pt-3">
-                    {draft.body}
-                  </p>
-                  {draft.outreachRationale ? (
-                    <div className="text-[12px] text-ink-muted border-t border-border-subtle pt-2 space-y-1">
-                      <p className="font-medium text-ink-secondary">Outreach rationale</p>
-                      {draft.outreachRationale.primary_signal && (
-                        <p><span className="text-ink-muted">Signal:</span> {draft.outreachRationale.primary_signal}</p>
-                      )}
-                      {draft.outreachRationale.pain_hypothesis && (
-                        <p><span className="text-ink-muted">Pain hypothesis:</span> {draft.outreachRationale.pain_hypothesis}</p>
-                      )}
-                      {draft.outreachRationale.matched_product && (
-                        <p><span className="text-ink-muted">Matched product:</span> {draft.outreachRationale.matched_product}</p>
-                      )}
-                      <p>
-                        {draft.outreachRationale.angle && (
-                          <><span className="text-ink-muted">Approach:</span> {draft.outreachRationale.angle}</>
-                        )}
-                        {draft.outreachRationale.signal_confidence && (
-                          <>
-                            {draft.outreachRationale.angle ? ' · ' : null}
-                            <span className="text-ink-muted">Confidence:</span> {draft.outreachRationale.signal_confidence}
-                          </>
-                        )}
-                      </p>
-                    </div>
-                  ) : draft.personalizedReason ? (
-                    <p className="text-[12px] text-ink-muted border-t border-border-subtle pt-2">
-                      Personalized using: {draft.personalizedReason}
-                    </p>
-                  ) : null}
-                </div>
-              )}
+                ) : null}
+              </div>
             </section>
           )}
 
           <section>
-            <h2 className="section-label mb-2">Reply / follow-up</h2>
-            <div className="h-px bg-muted mb-3" />
+            <h2 className="section-label mb-2.5">Reply / follow-up</h2>
+            <div className="h-px bg-muted mb-4" />
             {prospect.replySummary && (
-              <p className="text-[13px] text-ink-secondary mb-2">{prospect.replySummary}</p>
+              <p className="text-[13px] text-ink-secondary mb-3">{prospect.replySummary}</p>
             )}
             {prospect.lastReplyAt && (
-              <p className="text-[12px] text-ink-muted mb-2">Logged {prospect.lastReplyAt}</p>
+              <p className="text-[12px] text-ink-muted mb-3">Logged {prospect.lastReplyAt}</p>
             )}
             <textarea
               value={replyNote}
@@ -413,7 +452,7 @@ export default function ReviewDrawer({
               placeholder="Paste or summarize their reply…"
               className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary resize-none"
             />
-            <div className="mt-2 flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
                 disabled={!replyNote.trim() || !onSaveReply}
