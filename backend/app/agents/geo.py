@@ -5,6 +5,16 @@ from __future__ import annotations
 import re
 from typing import List, Optional, Tuple
 
+# 2-letter codes that are also English words / common tokens — never match as bare "in"/"or"/…
+# Use postal-style context only: ", IN" or "IN 46201".
+AMBIGUOUS_STATE_ABBREVS = frozenset({
+    "in", "or", "me", "hi", "ok", "id", "la", "ma", "md", "mt", "ne", "pa",
+    "co", "de", "al", "ar", "ga", "ia", "ms", "mo", "wa", "va", "oh", "mi",
+    "nh", "ri", "ut", "wy", "ak", "as", "ca", "fl", "ny", "tx", "nc", "sc",
+    "nd", "sd", "ct", "vt", "ky", "tn", "ks", "mn", "wi", "il", "az", "nm",
+    "nv", "nj", "wv", "dc",
+})
+
 # Full name → aliases (abbrev + major cities) for US states commonly used in B2B hunts.
 US_STATE_ALIASES: dict[str, tuple[str, ...]] = {
     "alabama": ("al",),
@@ -75,8 +85,35 @@ def _word_hit(blob: str, term: str) -> bool:
         return False
     if " " in term or len(term) > 3:
         return term in blob
-    # short abbrev like nv, ca — word boundary
+    # short abbrev like nv, ca — word boundary (ambiguous codes use _abbrev_hit)
     return bool(re.search(rf"(?<![a-z]){re.escape(term)}(?![a-z])", blob))
+
+
+def _abbrev_hit(blob: str, abbrev: str) -> bool:
+    """
+    Match US state postal codes without treating English words as places.
+    'importers in New Jersey' must NOT match Indiana via the preposition 'in'.
+    """
+    a = (abbrev or "").strip().lower()
+    if not a or len(a) != 2:
+        return False
+    low = (blob or "").lower()
+    # Postal / list style: ", nj" / ", nj " / "nj 07001"
+    if re.search(rf",\s*{re.escape(a)}\b", low):
+        return True
+    if re.search(rf"\b{re.escape(a)}\s+\d{{5}}\b", low):
+        return True
+    if a in AMBIGUOUS_STATE_ABBREVS:
+        # Require explicit "in XX" / "near XX" where XX is the code — but NOT when
+        # the code itself is the English word forming the preposition (Indiana "in").
+        if a == "in":
+            # Only ", in" / "in 46xxx" already covered; bare "in" is never enough
+            return False
+        # "in or" / "near or" still too noisy for Oregon — require comma or zip only
+        if a in ("or", "me", "hi", "ok", "id", "la", "ma", "md", "mt", "ne", "pa", "co", "de"):
+            return False
+        return bool(re.search(rf"(?:in|near)\s+{re.escape(a)}\b", low))
+    return bool(re.search(rf"(?:in|near|,|\s){re.escape(a)}\b", low))
 
 
 def place_aliases(place: str) -> List[str]:
@@ -112,7 +149,14 @@ def places_mentioned(blob: str, places: List[str]) -> Optional[bool]:
     low = (blob or "").lower()
     for place in places:
         for alias in place_aliases(place):
-            if _word_hit(low, alias):
+            a = (alias or "").strip().lower()
+            if not a:
+                continue
+            if len(a) == 2 and a.isalpha():
+                if _abbrev_hit(low, a):
+                    return True
+                continue
+            if _word_hit(low, a):
                 return True
     return False
 
@@ -132,14 +176,12 @@ def extract_places_from_prompt(prompt: str) -> Tuple[List[str], bool]:
     # Multi-word states first
     for state in sorted(US_STATE_ALIASES.keys(), key=len, reverse=True):
         if _word_hit(low, state):
-            found.append(state.title() if " " not in state else state.title())
-            # normalize title case for multi-word
-            found[-1] = " ".join(w.capitalize() for w in state.split())
+            found.append(" ".join(w.capitalize() for w in state.split()))
             strict = True
             continue
-        # abbrev only with clear context (in NV, , NV, Nevada)
+        # abbrev only with postal-safe context (never bare "in" → Indiana)
         abbrev = US_STATE_ALIASES[state][0] if US_STATE_ALIASES[state] else ""
-        if abbrev and re.search(rf"(?:in|near|,|\s){abbrev}\b", low):
+        if abbrev and _abbrev_hit(low, abbrev):
             found.append(" ".join(w.capitalize() for w in state.split()))
             strict = True
 
@@ -186,6 +228,51 @@ BUYER_ROLE_FORMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("restaurants", ("restaurants", "restaurant", "cafes", "cafe")),
     ("salons", ("salons", "salon", "spas", "spa")),
 )
+
+_PROMPT_FILLER = frozenset({
+    "find", "looking", "search", "hunt", "need", "needs", "want", "wants",
+    "get", "for", "the", "a", "an", "and", "or", "of", "to", "with", "that",
+    "who", "may", "might", "could", "please", "help", "me", "us", "our",
+    "in", "from", "within", "across", "into", "onto",
+    "companies", "company", "businesses", "business", "firms", "firm",
+    "prospects", "leads", "buyers", "buyer", "customers", "customer",
+    "near", "around", "based", "located", "area", "region", "state",
+})
+
+
+def extract_offer_terms_from_prompt(prompt: str) -> List[str]:
+    """
+    Product / offer nouns left after stripping buyer roles and places.
+    'fleece hood importers in New jersey' → ['fleece hood']
+    """
+    text = (prompt or "").strip()
+    if not text:
+        return []
+    low = text.lower()
+
+    # Drop known places (longest first)
+    for state in sorted(US_STATE_ALIASES.keys(), key=len, reverse=True):
+        low = re.sub(rf"\b{re.escape(state)}\b", " ", low)
+        for alias in US_STATE_ALIASES[state]:
+            if len(alias) <= 2:
+                continue
+            low = re.sub(rf"\b{re.escape(alias)}\b", " ", low)
+    for country, aliases in COUNTRY_ALIASES.items():
+        low = re.sub(rf"\b{re.escape(country)}\b", " ", low)
+        for a in aliases:
+            if len(a) > 2:
+                low = re.sub(rf"\b{re.escape(a)}\b", " ", low)
+
+    for _label, forms in BUYER_ROLE_FORMS:
+        for f in sorted(forms, key=len, reverse=True):
+            low = re.sub(rf"\b{re.escape(f)}\b", " ", low)
+
+    tokens = [t for t in re.findall(r"[a-z0-9]+(?:'[a-z]+)?", low) if t not in _PROMPT_FILLER and len(t) > 1]
+    if not tokens:
+        return []
+    # Keep as one phrase (up to 4 tokens) — drives SERP better than splitting
+    phrase = " ".join(tokens[:4]).strip()
+    return [phrase] if phrase else []
 
 
 def extract_buyers_from_prompt(prompt: str) -> List[str]:
@@ -240,7 +327,7 @@ def format_location_display(text: str, prefer_places: Optional[List[str]] = None
                 pass
             return state_label[:80]
         abbrev = US_STATE_ALIASES[state][0]
-        if abbrev and re.search(rf"(?:in|near|,|\s){re.escape(abbrev)}\b", low):
+        if abbrev and _abbrev_hit(low, abbrev):
             return state_label[:80]
 
     # Countries / major hubs from COUNTRY_ALIASES

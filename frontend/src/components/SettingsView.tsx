@@ -75,11 +75,12 @@ export default function SettingsView({
   const blurb: Record<SettingsSection, string> = {
     company: 'What you sell and where — used to plan searches and judge fit.',
     catalog: 'Products the agent matches against buyer sites.',
-    icp: 'Who should buy. Markets default to company unless you override.',
+    icp: 'Who should buy — then run Find buyers below. Markets default to company unless you override.',
     integrations: 'Gmail for sending. Sheets for a private spreadsheet.',
   };
 
-  const showFind = Boolean(onAddProspects && onAddLog && section !== 'integrations');
+  // Find buyers once — on Buyers tab only (not Company/Catalog too).
+  const showFind = Boolean(onAddProspects && onAddLog && section === 'icp');
 
   return (
     <div className="setup-desk">

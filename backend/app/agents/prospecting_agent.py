@@ -9,6 +9,7 @@ from uuid import uuid4
 from urllib.parse import urlparse
 
 from app.agents.search_planner import (
+    apply_prompt_focus,
     apply_prompt_geo,
     apply_prompt_roles,
     infer_seller_profile,
@@ -62,8 +63,11 @@ class ProspectingAgent:
         start_time = time.time()
         decisions_log: List[Dict[str, Any]] = []
         business = business or {}
-        profile = apply_prompt_roles(
-            apply_prompt_geo(infer_seller_profile(products, icp, business), user_prompt),
+        profile = apply_prompt_focus(
+            apply_prompt_roles(
+                apply_prompt_geo(infer_seller_profile(products, icp, business), user_prompt),
+                user_prompt,
+            ),
             user_prompt,
         )
         wave1 = plan_wave1(profile, user_prompt)

@@ -85,8 +85,9 @@ def apply_prompt_geo(profile: SellerProfile, user_prompt: str) -> SellerProfile:
     prompt_places, strict = extract_places_from_prompt(user_prompt)
     if not prompt_places:
         return profile
-    # Prompt geo leads; keep ICP countries as secondary
-    merged = _uniq([*prompt_places, *profile.places], 5)
+    # When the user named a specific place, that place IS the hunt — do not dilute
+    # with ICP countries (UAE/Germany would otherwise pass strict_geo via aliases).
+    merged = _uniq(prompt_places if strict else [*prompt_places, *profile.places], 5)
     use_maps = profile.use_maps or strict
     geo_mode = "local" if strict else profile.geo_mode
     return SellerProfile(
@@ -154,6 +155,33 @@ def apply_prompt_roles(profile: SellerProfile, user_prompt: str) -> SellerProfil
         pools=pools,
         exclude_terms=profile.exclude_terms,
         intent_examples=intent_examples,
+        strict_geo=profile.strict_geo,
+    )
+
+
+def apply_prompt_focus(profile: SellerProfile, user_prompt: str) -> SellerProfile:
+    """
+    Put product/offer terms from the free-text hunt first so SERP queries follow
+    what the user asked for (e.g. 'fleece hood') instead of a broad catalog category.
+    """
+    from app.agents.geo import extract_offer_terms_from_prompt
+
+    terms = extract_offer_terms_from_prompt(user_prompt)
+    if not terms:
+        return profile
+    cats = _uniq([*terms, *profile.categories], 6)
+    return SellerProfile(
+        offer_class=profile.offer_class,
+        sales_motion=profile.sales_motion,
+        hunting_buyers=profile.hunting_buyers,
+        geo_mode=profile.geo_mode,
+        categories=cats,
+        buyers=profile.buyers,
+        places=profile.places,
+        use_maps=profile.use_maps,
+        pools=profile.pools,
+        exclude_terms=profile.exclude_terms,
+        intent_examples=profile.intent_examples,
         strict_geo=profile.strict_geo,
     )
 
@@ -299,9 +327,22 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
     place = _place(profile)
     buyer = profile.buyers[0]
     neg = _neg(profile)
+    prompt = (user_prompt or "").strip()
 
-    if user_prompt.strip():
-        queries.append(PlannedQuery(user_prompt.strip(), "user", "direct_icp", False, 1))
+    if prompt:
+        queries.append(PlannedQuery(prompt, "user", "direct_icp", False, 1))
+        # Extra paraphrases anchored on the hunt focus (product + role + place)
+        role = (buyer or "buyer").rstrip("s")
+        if place:
+            add_early = [
+                f"{cat} {role} {place}",
+                f"{cat} importer {place}" if "import" in (buyer or "").lower() else f"{buyer} {cat} {place}",
+                f'"{cat}" {place} wholesale',
+            ]
+            for q in add_early:
+                qn = re.sub(r"\s+", " ", q).strip()
+                if qn and not any(x.query.lower() == qn.lower() for x in queries):
+                    queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
 
     def add(q: str, family: str, pool: str, maps: bool = False) -> None:
         q = re.sub(r"\s+", " ", q).strip()
@@ -369,26 +410,26 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
             "intent_overlay",
         )
 
-    # Cap wave 1: diverse families, not clones
+    # Cap wave 1: diverse families, not clones. User-prompt paraphrases get more room.
     out: List[PlannedQuery] = []
     seen_family: Dict[str, int] = {}
     for item in queries:
-        # Allow more channel queries when hunting a named role (importers…);
-        # intent overlays stay at 3; other families capped at 2
-        if item.family == "intent_overlay":
+        if item.family == "user":
+            fam_cap = 4
+        elif item.family == "intent_overlay":
             fam_cap = 3
         elif item.family == "channel":
             fam_cap = 3
         else:
             fam_cap = 2
         n = seen_family.get(item.family, 0)
-        if n >= fam_cap and item.family != "user":
+        if n >= fam_cap:
             continue
         seen_family[item.family] = n + 1
         out.append(item)
-        if len(out) >= 9:
+        if len(out) >= 10:
             break
-    return out or queries[:9]
+    return out or queries[:10]
 
 
 def plan_wave2(
