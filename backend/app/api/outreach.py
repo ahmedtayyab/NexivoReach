@@ -402,6 +402,21 @@ async def _send_one_gmail(
     if not subj or not body_text:
         raise HTTPException(status_code=400, detail=f"Incomplete draft for {row.company_name}")
 
+    from app.agents.outreach_strategy import format_outreach_body
+
+    seller = ""
+    try:
+        from app.models.schemas import Business
+        biz = session.get(Business, row.business_id) if row.business_id else None
+        seller = (getattr(biz, "name", None) or "").strip() if biz else ""
+    except Exception:
+        seller = ""
+    body_text = format_outreach_body(
+        body_text,
+        company_name=row.company_name or "",
+        seller_name=seller,
+    )
+
     sent = await gmail_mod.send_email(
         session,
         db_user,

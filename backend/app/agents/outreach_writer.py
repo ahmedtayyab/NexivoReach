@@ -9,6 +9,7 @@ from app.agents.outreach_strategy import (
     build_follow_up_prompt,
     build_generation_prompt,
     build_outreach_brief,
+    format_outreach_body,
     heuristic_quality_check,
     render_fallback_email,
 )
@@ -21,6 +22,11 @@ log = logging.getLogger(__name__)
 def _normalize_draft(parsed: Dict[str, Any], brief: Dict[str, Any]) -> Dict[str, Any]:
     subject = (parsed.get("subject") or "").strip()
     body = (parsed.get("body") or "").strip()
+    body = format_outreach_body(
+        body,
+        company_name=str(brief.get("company_name") or ""),
+        seller_name=str(brief.get("seller_name") or ""),
+    )
     reason = (parsed.get("personalizedReason") or "").strip() or brief_to_personalized_reason(brief)
     candidates = parsed.get("subjectCandidates") or []
     if isinstance(candidates, list):
@@ -153,7 +159,11 @@ async def compose_follow_up_outreach(
     if isinstance(parsed, dict) and parsed.get("subject") and parsed.get("body"):
         return {
             "subject": str(parsed["subject"])[:140],
-            "body": str(parsed["body"]).strip(),
+            "body": format_outreach_body(
+                str(parsed["body"]).strip(),
+                company_name=company_name,
+                seller_name=seller_name,
+            ),
             "personalizedReason": (
                 str(parsed.get("personalizedReason") or "").strip()
                 or (

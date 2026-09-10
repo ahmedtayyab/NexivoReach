@@ -1,10 +1,45 @@
 import pytest
 from app.agents.outreach_strategy import (
     build_outreach_brief,
+    format_outreach_body,
     heuristic_quality_check,
     render_fallback_email,
 )
 from app.providers.fallback import FallbackProvider
+
+
+def test_format_outreach_body_breaks_wall_of_text():
+    raw = (
+        "Hello,\n\n"
+        "I see Dallas General Wholesale operates from 11341 Indian Trail, focusing on wholesale "
+        "and distribution in Dallas. As new sites come online, keeping product and equipment "
+        "sourcing consistent across locations can become harder than expected. Alwasi Enterprises "
+        "offers a broad range of category-fit options that can simplify procurement and help "
+        "maintain uniform quality throughout your network. For categories such as track suits, "
+        "a single reliable source can reduce lead times and simplify inventory management. Our "
+        "experience with wholesale distributors in Texas shows that a consistent supplier can "
+        "lower administrative overhead. We've connected with other wholesale distributors who "
+        "value a reliable, category-aligned supply partner. A brief review takes only a few "
+        "minutes. Would you be open to a quick look at the range that seems most relevant?\n\n"
+        "Best regards,\nAlwasi Enterprises"
+    )
+    out = format_outreach_body(
+        raw,
+        company_name="Dallas General Wholesale",
+        seller_name="Alwasi Enterprises",
+    )
+    assert out.startswith("Hi Dallas General Wholesale team,")
+    assert "Would you be open" in out
+    assert out.count("\n\n") >= 4
+    assert "Best regards,\nAlwasi Enterprises" in out
+    # No single mid-block longer than ~380 after reflow
+    chunks = [c for c in out.split("\n\n") if c.strip()]
+    mid = [
+        c for c in chunks
+        if not c.startswith("Hi ") and not c.startswith("Best regards")
+    ]
+    assert all(len(c) < 420 for c in mid)
+    assert len(mid) >= 3
 
 
 def test_brief_prefers_expansion_signal_over_weak_copy():

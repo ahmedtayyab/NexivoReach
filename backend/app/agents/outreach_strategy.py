@@ -52,6 +52,119 @@ AI_CLICHES = (
     "unlock", "transform your", "robust solution",
 )
 
+_SIGN_OFF_RE = re.compile(
+    r"(?is)^(.*?)(?:\n+)((?:best regards|kind regards|regards|best|thanks|thank you|sincerely|"
+    r"warm regards|cheers)[,!]?\s*\n+.+)\s*$"
+)
+_GREETING_RE = re.compile(
+    r"(?is)^(hi|hello|dear)\b[^\n]{0,100},?\s*(?:\n+|$)"
+)
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'])")
+
+
+def format_outreach_body(
+    body: str,
+    *,
+    company_name: str = "",
+    seller_name: str = "",
+) -> str:
+    """
+    Ensure plain-text cold emails have scannable paragraph spacing.
+    Models often return greeting + one dense wall + sign-off; split the wall.
+    """
+    text = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return text
+
+    # Normalize literal escaped newlines from some JSON payloads
+    if "\\n" in text and text.count("\n") < 2:
+        text = text.replace("\\n", "\n")
+
+    greeting = ""
+    sign_off = ""
+    mid = text
+
+    g = _GREETING_RE.match(text)
+    if g:
+        greeting = re.sub(r",?\s*$", ",", g.group(0).split("\n")[0].strip())
+        # Prefer "Hi Company team," over bare "Hello," when we know the company
+        if re.match(r"(?i)^hello,?$", greeting.rstrip(",")) and company_name:
+            greeting = f"Hi {company_name.strip()} team,"
+        mid = text[g.end():].strip()
+    elif company_name:
+        greeting = f"Hi {company_name.strip()} team,"
+
+    sm = _SIGN_OFF_RE.match(mid)
+    if sm:
+        mid = (sm.group(1) or "").strip()
+        sign_block = (sm.group(2) or "").strip()
+        lines = [ln.strip() for ln in sign_block.split("\n") if ln.strip()]
+        if lines:
+            closer_raw = lines[0].rstrip(",!").strip().lower()
+            if closer_raw in ("best", "thanks", "thank you", "cheers") or "regard" in closer_raw:
+                closer = "Best regards"
+            else:
+                closer = lines[0].rstrip(",!")
+            name = lines[1] if len(lines) > 1 else (seller_name or "")
+            sign_off = f"{closer},\n{name}".strip() if name else f"{closer},"
+    elif seller_name:
+        sign_off = f"Best regards,\n{seller_name}"
+
+    mid = re.sub(r"[ \t]+", " ", mid)
+    mid = re.sub(r"\n{3,}", "\n\n", mid).strip()
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", mid) if p.strip()]
+    # Single newlines inside a "paragraph" → treat as soft wraps, join
+    paragraphs = [re.sub(r"\s*\n\s*", " ", p).strip() for p in paragraphs]
+
+    needs_reflow = (
+        len(paragraphs) <= 1
+        or (len(paragraphs) == 2 and sum(len(p) for p in paragraphs) > 420)
+        or any(len(p) > 380 for p in paragraphs)
+    )
+    if needs_reflow:
+        flat = " ".join(paragraphs)
+        sentences = [s.strip() for s in _SENTENCE_RE.split(flat) if s.strip()]
+        if len(sentences) <= 1 and flat:
+            sentences = [flat]
+        paragraphs = _group_sentences_into_paragraphs(sentences)
+
+    parts: List[str] = []
+    if greeting:
+        parts.append(greeting)
+    parts.extend(paragraphs)
+    if sign_off:
+        parts.append(sign_off)
+    return "\n\n".join(p for p in parts if p).strip() + "\n"
+
+
+def _group_sentences_into_paragraphs(sentences: List[str]) -> List[str]:
+    """1–2 sentences per paragraph; keep CTA question as its own block when possible."""
+    if not sentences:
+        return []
+    out: List[str] = []
+    buf: List[str] = []
+
+    def flush() -> None:
+        nonlocal buf
+        if buf:
+            out.append(" ".join(buf))
+            buf = []
+
+    for i, s in enumerate(sentences):
+        is_cta = "?" in s and i >= max(0, len(sentences) - 2)
+        starts_value = bool(re.match(r"^(For |Our |We('|’)ve |As |A brief )", s))
+        if is_cta and buf:
+            flush()
+            out.append(s)
+            continue
+        if starts_value and buf:
+            flush()
+        buf.append(s)
+        if len(buf) >= 2 or (len(buf) == 1 and len(s) > 180):
+            flush()
+    flush()
+    return out
+
 
 def _blob(*parts: Any) -> str:
     bits: List[str] = []
@@ -398,6 +511,24 @@ STRUCTURE
 5) Credibility: at most one concise line, only from allowed facts. Skip if nothing solid.
 6) CTA: exactly ONE low-friction question (prefer the suggested CTA). No calendar link, no multi-ask, no hard 30-min meeting ask.
 
+FORMATTING (plain text — critical for readability in Gmail)
+- Separate every section with a blank line (two newlines). Never pack the whole pitch into one dense paragraph.
+- Exact layout:
+  Hi {company} team,
+  <blank line>
+  Opening paragraph (1–2 sentences)
+  <blank line>
+  Relevance / problem bridge (1–2 sentences)
+  <blank line>
+  Value paragraph (1–2 sentences; optional credibility here)
+  <blank line>
+  CTA question alone
+  <blank line>
+  Best regards,
+  {seller}
+- Prefer "Hi {company} team," over bare "Hello," when no contact first name is known.
+- Do not use Markdown, bullets, or HTML.
+
 HARD RULES
 - Do not dump a list of scraped facts.
 - Do not use Tier-4 fluff (founded year, "leading company") as the main hook.
@@ -430,6 +561,8 @@ Context: {(why_prospect or "")[:400]}
 Rules:
 - Subject should be Re: if not already.
 - 80–140 words. One clear CTA.
+- Use blank lines between greeting, each short paragraph, CTA, and sign-off — never one dense block.
+- Prefer "Hi {company_name} team," over bare "Hello,".
 - If they replied, address their point first; do not re-pitch blindly.
 - If silence, briefly restate relevance without guilt or pressure.
 - No AI clichés. Sign as {seller_name}.
@@ -466,6 +599,16 @@ def heuristic_quality_check(draft: Dict[str, Any], brief: Dict[str, Any]) -> Tup
     if body.count("?") > 2:
         issues.append("multiple_ctas")
 
+    # Wall of text: greeting/sign-off aside, still one long block
+    chunks = [c.strip() for c in re.split(r"\n\s*\n", body) if c.strip()]
+    mid_chunks = [
+        c for c in chunks
+        if not re.match(r"(?i)^(hi|hello|dear)\b", c)
+        and not re.match(r"(?i)^(best regards|kind regards|regards|best|thanks|sincerely)\b", c)
+    ]
+    if len(mid_chunks) <= 1 and len(mid_chunks[0] if mid_chunks else "") > 320:
+        issues.append("wall_of_text")
+
     # Hallucination-ish: claims expansion when brief has no why_now / weak signal
     if brief.get("signal_confidence") == "low":
         if re.search(r"\b(you recently|your recent expansion|new locations? you're opening)\b", low):
@@ -479,7 +622,7 @@ def heuristic_quality_check(draft: Dict[str, Any], brief: Dict[str, Any]) -> Tup
 
     major = {
         "missing_subject", "missing_body", "banned_opener", "fabricated_timing",
-        "too_short", "multiple_ctas",
+        "too_short", "multiple_ctas", "wall_of_text",
     }
     failed_major = any(
         i in major or i.startswith("banned_opener") or i.startswith("fabricated")
@@ -545,6 +688,7 @@ def render_fallback_email(brief: Dict[str, Any]) -> Dict[str, Any]:
         f"{cta}\n\n"
         f"Best regards,\n{seller}"
     )
+    body = format_outreach_body(body, company_name=company, seller_name=seller)
 
     # Subject candidates
     subjects = []
