@@ -4,7 +4,8 @@ Google Sheets integration for NexivoReach.
 Preferred: each user connects Google Sheets via OAuth (their Drive).
 Legacy fallback: platform service-account JSON (optional).
 
-Each company (Business) stores its own spreadsheet ID — never shared across tenants.
+Each company (Business) stores a spreadsheet ID. Companies under the same user
+typically share one workbook, with separate '<Company> - Products/Leads' tabs.
 """
 
 from __future__ import annotations
@@ -476,6 +477,42 @@ def _get_or_create_sheet(spreadsheet, title: str, headers: list[str]):
         ws.clear()
         ws.append_row(headers, value_input_option="USER_ENTERED")
     return ws
+
+
+def ensure_company_tabs(
+    company_name: str,
+    spreadsheet_id: str = "",
+    *,
+    session: Session | None = None,
+    user: User | None = None,
+) -> dict:
+    """
+    Create empty '<Company> - Products' and '<Company> - Leads' tabs in the linked workbook
+    if they do not already exist. Used when adding/renaming a company identity.
+    """
+    client = _get_client(session, user)
+    if client is None:
+        return {"ok": False, "error": "Sheets not configured"}
+    sheet_id = resolve_spreadsheet_id(spreadsheet_id)
+    if not sheet_id:
+        return {"ok": False, "error": "No spreadsheet linked for this company"}
+    label = _sanitize_tab_label(company_name or "Company")
+    try:
+        sh = client.open_by_key(sheet_id)
+        products_tab = f"{label} - Products"
+        leads_tab = f"{label} - Leads"
+        _get_or_create_sheet(sh, products_tab, PRODUCT_HEADERS)
+        _get_or_create_sheet(sh, leads_tab, LEAD_HEADERS)
+        return {
+            "ok": True,
+            "productsTab": products_tab,
+            "leadsTab": leads_tab,
+            "spreadsheetId": sheet_id,
+            "url": f"https://docs.google.com/spreadsheets/d/{sheet_id}",
+        }
+    except Exception as exc:
+        log.warning("ensure_company_tabs failed: %s", exc)
+        return {"ok": False, "error": str(exc)}
 
 
 def _sanitize_tab_label(name: str) -> str:

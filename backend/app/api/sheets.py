@@ -1,8 +1,8 @@
 """
 /api/sheets  — Google Sheets integration endpoints.
 
-Users connect Google Sheets via OAuth (their Drive). Each company links its own
-spreadsheet ID — never shared across users/companies.
+Users connect Google Sheets via OAuth (their Drive). Each user owns their workbook;
+companies under the same account share that spreadsheet and get separate tabs.
 """
 
 from datetime import datetime, timezone
@@ -41,6 +41,22 @@ def _active_business(session: Session, request: Request, user: AuthUser) -> Busi
     return biz
 
 
+def _inherit_sibling_spreadsheet(session: Session, biz: Business, user_id: str) -> bool:
+    """If this company has no sheet link, copy one from another company owned by the user."""
+    if (biz.sheets_spreadsheet_id or "").strip():
+        return False
+    siblings = session.exec(select(Business).where(Business.user_id == user_id)).all()
+    for sibling in siblings:
+        if sibling.id == biz.id:
+            continue
+        sid = (sibling.sheets_spreadsheet_id or "").strip()
+        if sid:
+            biz.sheets_spreadsheet_id = sid
+            biz.sheets_spreadsheet_title = sibling.sheets_spreadsheet_title
+            return True
+    return False
+
+
 def _db_user(session: Session, user: AuthUser) -> User:
     row = session.get(User, user.id)
     if not row:
@@ -69,6 +85,26 @@ def get_status(request: Request, user: AuthUser = Depends(get_current_user)) -> 
         db_user = session.get(User, user.id)
         try:
             biz = _active_business(session, request, user)
+            just_inherited = _inherit_sibling_spreadsheet(session, biz, user.id)
+            if just_inherited:
+                biz.updated_at = _now()
+                session.add(biz)
+                session.commit()
+                session.refresh(biz)
+                if (
+                    db_user
+                    and biz.sheets_spreadsheet_id
+                    and not sheets_mod.is_placeholder_company_name(biz.name)
+                ):
+                    tab_label = sheets_mod.resolve_company_tab_name(
+                        biz, fallback=biz.name or "Company"
+                    )
+                    sheets_mod.ensure_company_tabs(
+                        tab_label,
+                        spreadsheet_id=biz.sheets_spreadsheet_id,
+                        session=session,
+                        user=db_user,
+                    )
             sid = sheets_mod.business_spreadsheet_id(biz)
             title = (biz.sheets_spreadsheet_title or "").strip()
             company_name = biz.name or ""
@@ -110,6 +146,17 @@ def connect_spreadsheet(
         biz.updated_at = _now()
         session.add(biz)
         session.commit()
+        session.refresh(biz)
+
+        tab_label = sheets_mod.resolve_company_tab_name(biz, fallback=biz.name or "Company")
+        if not sheets_mod.is_placeholder_company_name(tab_label):
+            sheets_mod.ensure_company_tabs(
+                tab_label,
+                spreadsheet_id=biz.sheets_spreadsheet_id,
+                session=session,
+                user=db_user,
+            )
+
         return {
             "ok": True,
             "connected": True,
@@ -123,11 +170,39 @@ def connect_spreadsheet(
 
 @router.post("/create")
 def create_spreadsheet(request: Request, user: AuthUser = Depends(get_current_user)):
-    """Create a spreadsheet in the user's Google Drive for the active company."""
+    """Create a spreadsheet in the user's Google Drive for the active company.
+
+    If another company already has a workbook, reuse it and only add this company's tabs.
+    """
     with Session(engine) as session:
         db_user = _db_user(session, user)
         _require_sheets_oauth(db_user)
         biz = _active_business(session, request, user)
+
+        # Prefer the same workbook other companies already use.
+        if _inherit_sibling_spreadsheet(session, biz, user.id):
+            tab_label = sheets_mod.resolve_company_tab_name(biz, fallback=biz.name or "Company")
+            if not sheets_mod.is_placeholder_company_name(tab_label):
+                sheets_mod.ensure_company_tabs(
+                    tab_label,
+                    spreadsheet_id=biz.sheets_spreadsheet_id or "",
+                    session=session,
+                    user=db_user,
+                )
+            biz.updated_at = _now()
+            session.add(biz)
+            session.commit()
+            return {
+                "ok": True,
+                "connected": True,
+                "spreadsheetId": biz.sheets_spreadsheet_id,
+                "spreadsheet_title": biz.sheets_spreadsheet_title,
+                "url": f"https://docs.google.com/spreadsheets/d/{biz.sheets_spreadsheet_id}",
+                "companyId": biz.id,
+                "companyName": biz.name,
+                "reused": True,
+            }
+
         title = sheets_mod.resolve_company_tab_name(biz, fallback=biz.name or "Company")
         created = sheets_mod.create_business_spreadsheet(
             title,

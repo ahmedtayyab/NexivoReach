@@ -1015,9 +1015,11 @@ function IntegrationsSection({
       if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Create failed'));
       const data = await resp.json();
       setConnectMsg(
-        data.sharedWith
-          ? `Created and shared with ${data.sharedWith}.`
-          : 'Spreadsheet created for this company.',
+        data.reused
+          ? 'Linked to your existing workbook and added tabs for this company.'
+          : data.sharedWith
+            ? `Created and shared with ${data.sharedWith}.`
+            : 'Spreadsheet created for this company.',
       );
       await load();
     } catch (e) {
@@ -1098,7 +1100,7 @@ function IntegrationsSection({
           <div>
             <h3 className="font-display text-[15px] font-semibold text-ink">Google Sheets</h3>
             <p className="text-[12.5px] text-ink-secondary mt-0.5">
-              Connect your Google account once, then each company uses a spreadsheet in your Drive — nobody else can see it.
+              Connect your Google account once. Companies share one workbook in your Drive; each gets its own Products and Leads tabs.
             </p>
           </div>
           {loading ? (
@@ -1145,7 +1147,7 @@ function IntegrationsSection({
         {userOauth && !status?.connected && !loading && (
           <div className="space-y-3 pt-1">
             <p className="text-[12.5px] text-ink-secondary leading-relaxed">
-              Create a spreadsheet in your Drive for this company, or paste a sheet you already own.
+              Create a spreadsheet (or paste one you already own). Later companies will reuse this workbook and add new tabs.
             </p>
             <div className="flex flex-wrap gap-2 items-center">
               <button

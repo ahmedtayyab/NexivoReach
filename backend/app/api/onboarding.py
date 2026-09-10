@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
@@ -8,6 +9,9 @@ from app.database.session import engine
 from app.models.schemas import Business, User
 from app.api.serializers import business_to_frontend
 from app.api.deps import AuthUser, get_current_user, resolve_business_id
+from app.integrations import sheets as sheets_mod
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 
@@ -83,4 +87,26 @@ def save_business_profile(
             session.add(db_user)
         session.commit()
         session.refresh(biz)
+
+        # When the company gets a real name and already shares a workbook, provision tabs.
+        sheet_id = (biz.sheets_spreadsheet_id or "").strip()
+        if (
+            sheet_id
+            and db_user
+            and not sheets_mod.is_placeholder_company_name(biz.name)
+        ):
+            tab_label = sheets_mod.resolve_company_tab_name(biz, fallback=biz.name or "Company")
+            ensured = sheets_mod.ensure_company_tabs(
+                tab_label,
+                spreadsheet_id=sheet_id,
+                session=session,
+                user=db_user,
+            )
+            if not ensured.get("ok"):
+                log.warning(
+                    "Profile save for %s: tabs not created: %s",
+                    biz.id,
+                    ensured.get("error"),
+                )
+
         return business_to_frontend(biz)
