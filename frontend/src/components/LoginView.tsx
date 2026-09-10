@@ -6,41 +6,43 @@ interface Props {
 
 export default function LoginView({ error }: Props) {
   return (
-    <div className="min-h-dvh flex items-center justify-center px-4 sm:px-6 relative overflow-hidden bg-canvas">
+    <div className="min-h-dvh flex items-center justify-center px-4 sm:px-6 relative overflow-hidden">
       <img
         src="/brand/login-atmosphere.jpg"
         alt=""
         className="absolute inset-0 w-full h-full object-cover"
       />
-      <div className="absolute inset-0 bg-canvas/40" aria-hidden />
+      <div className="absolute inset-0 bg-canvas/55" aria-hidden />
 
-      <div className="relative w-full max-w-sm nr-enter">
-        <div className="mb-8 flex justify-center nr-enter nr-enter-delay-1">
-          <BrandLockup size="md" />
+      <div className="relative w-full max-w-md nr-enter">
+        <div className="mb-10 flex justify-center nr-enter nr-enter-delay-1">
+          <BrandLockup size="lg" className="scale-110 origin-center" />
         </div>
 
-        <div className="bg-panel-elevated border border-border p-5 sm:p-6 nr-enter nr-enter-delay-2">
-          <h1 className="font-display text-[1.35rem] font-bold text-ink leading-tight">Sign in to continue</h1>
-          <p className="text-[13.5px] text-ink-secondary mt-2 mb-6 leading-relaxed">
-            Use your Google account to save companies, catalogs, and prospect queues — and pick up where you left off.
+        <div className="nr-enter nr-enter-delay-2">
+          <h1 className="font-display text-[1.75rem] sm:text-[2rem] font-bold text-ink leading-tight tracking-tight">
+            Sign in
+          </h1>
+          <p className="text-[14px] text-ink-secondary mt-2 mb-7 leading-relaxed max-w-sm">
+            Continue with Google to save companies, catalogs, and prospect queues.
           </p>
 
           {error && (
-            <p className="text-[13px] text-red-800 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-4">
+            <p className="ui-banner ui-banner--warn mb-4" role="alert">
               Sign-in failed. Check your Google OAuth settings and try again.
             </p>
           )}
 
           <a
             href="/api/auth/google"
-            className="flex items-center justify-center gap-2.5 w-full px-4 py-2.5 bg-panel border border-border hover:border-ink-muted hover:bg-muted rounded-md text-[13.5px] font-medium text-ink transition-colors"
+            className="btn btn-primary w-full max-w-sm py-3 text-[14px]"
           >
             <GoogleIcon />
             Continue with Google
           </a>
         </div>
 
-        <p className="text-[12px] text-ink-muted text-center mt-6 px-2">
+        <p className="text-[12px] text-ink-muted mt-10">
           Turn products into qualified buyers.
         </p>
       </div>

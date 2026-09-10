@@ -1,8 +1,7 @@
-import { Plus, LogOut, ChevronDown, X } from 'lucide-react';
+import { Plus, LogOut, ChevronDown, X, Settings, LayoutList, Activity, Mail } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { AuthUser, BusinessInfo } from '../../types';
 import type { AppRoute } from '../../lib/navigation';
-import { Settings, LayoutList, Activity, Mail } from 'lucide-react';
 import BrandLockup from '../brand/BrandLockup';
 import ConnectionStatus from '../ConnectionStatus';
 
@@ -59,15 +58,10 @@ export default function Sidebar({
     return () => document.removeEventListener('keydown', onKey);
   }, [mobileOpen, onMobileClose]);
 
-  // Workspace first — the main input surface for the agent
-  const primary = [
-    { id: 'settings', label: 'Workspace', icon: Settings, emphasize: true },
-    { id: 'queue', label: 'Leads', icon: LayoutList, emphasize: false },
-    { id: 'outreach', label: 'Outreach', icon: Mail, emphasize: false },
-  ];
-
-  const secondary = [
-    { id: 'activity', label: 'Activity', icon: Activity },
+  const work = [
+    { id: 'settings', label: 'Workspace', icon: Settings },
+    { id: 'queue', label: 'Leads', icon: LayoutList },
+    { id: 'outreach', label: 'Outreach', icon: Mail },
   ];
 
   const go = (id: string) => {
@@ -84,22 +78,18 @@ export default function Sidebar({
   return (
     <>
       {mobileOpen && (
-        <div
-          className="md:hidden fixed inset-0 z-40 bg-ink/35"
-          onClick={onMobileClose}
-          aria-hidden
-        />
+        <div className="md:hidden fixed inset-0 z-40 bg-ink/30" onClick={onMobileClose} aria-hidden />
       )}
 
       <aside
         className={[
-          'w-56 max-w-[85vw] bg-surface border-r border-border flex flex-col h-dvh select-none shrink-0',
+          'nr-sidebar max-w-[85vw] flex flex-col h-dvh select-none shrink-0',
           'fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-out',
           'md:sticky md:top-0 md:z-auto md:translate-x-0 md:h-screen',
           mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
         ].join(' ')}
       >
-        <div className="px-4 h-12 flex items-center justify-between border-b border-border">
+        <div className="nr-sidebar__brand justify-between">
           <BrandLockup size="sm" />
           <button
             type="button"
@@ -111,15 +101,15 @@ export default function Sidebar({
           </button>
         </div>
 
-        <div className="px-2 pt-3 pb-1" ref={menuRef}>
+        <div className="px-2 pt-3" ref={menuRef}>
           <button
             type="button"
             onClick={() => setOpen(v => !v)}
-            className="w-full flex items-center justify-between gap-1 px-2.5 py-2 border border-border bg-panel hover:border-ink-muted transition-colors"
+            className="w-full flex items-center justify-between gap-1 px-2 py-1.5 border border-border bg-panel hover:border-ink-muted"
           >
             <div className="min-w-0 text-left">
               <p className="text-[10px] uppercase tracking-[0.12em] text-ink-muted leading-none mb-1">Company</p>
-              <p className="text-[13px] font-medium text-ink truncate leading-tight">{label}</p>
+              <p className="text-[12.5px] font-medium text-ink truncate leading-tight">{label}</p>
             </div>
             <ChevronDown className={`w-3.5 h-3.5 text-ink-muted shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
           </button>
@@ -136,9 +126,7 @@ export default function Sidebar({
                       onMobileClose?.();
                     }}
                     className={`w-full text-left px-3 py-2 text-[12.5px] truncate ${
-                      c.id === activeCompanyId
-                        ? 'bg-muted text-ink font-medium'
-                        : 'text-ink-secondary hover:bg-canvas'
+                      c.id === activeCompanyId ? 'bg-muted text-ink font-medium' : 'text-ink-secondary hover:bg-canvas'
                     }`}
                   >
                     {c.name?.trim() || 'Untitled company'}
@@ -161,38 +149,21 @@ export default function Sidebar({
           )}
         </div>
 
-        <nav className="flex-1 px-2 pt-3 pb-2 space-y-1 overflow-y-auto">
-          {primary.map(({ id, label: itemLabel, icon: Icon, emphasize }) => {
+        <p className="nr-nav-section">Work</p>
+        <nav className="flex-1 px-2 pb-2 space-y-0.5 overflow-y-auto">
+          {work.map(({ id, label: itemLabel, icon: Icon }) => {
             const isActive = id === 'settings' ? settingsActive : activeTab === id;
             return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => go(id)}
-                className={[
-                  'nav-item-primary w-full flex items-center justify-between pl-2.5 pr-2 py-2 text-[13px] transition-colors',
-                  emphasize ? 'is-workspace' : '',
-                  isActive && !emphasize
-                    ? 'bg-muted text-ink font-medium'
-                    : !emphasize
-                      ? 'text-ink-muted hover:text-ink hover:bg-panel/70'
-                      : isActive
-                        ? ''
-                        : 'opacity-95',
-                ].join(' ')}
-              >
-                <div className="flex items-center gap-2.5">
-                  <Icon
-                    className={`w-[15px] h-[15px] shrink-0 ${isActive || emphasize ? 'text-accent' : 'text-ink-muted'}`}
-                    strokeWidth={isActive || emphasize ? 2 : 1.75}
-                  />
-                  <span>{itemLabel}</span>
-                </div>
+              <button key={id} type="button" onClick={() => go(id)} className={`nr-nav-link ${isActive ? 'is-active' : ''}`}>
+                <span className="nr-nav-link__left">
+                  <Icon className="w-4 h-4 shrink-0" strokeWidth={isActive ? 2 : 1.75} />
+                  {itemLabel}
+                </span>
                 {id === 'queue' && pendingCount > 0 && (
-                  <span className="text-[11.5px] tabular-nums font-medium text-ink-secondary">{pendingCount}</span>
+                  <span className="text-[11px] tabular-nums text-ink-muted">{pendingCount}</span>
                 )}
                 {id === 'outreach' && draftCount > 0 && (
-                  <span className="text-[11.5px] tabular-nums font-medium text-ink-secondary">{draftCount}</span>
+                  <span className="text-[11px] tabular-nums text-ink-muted">{draftCount}</span>
                 )}
               </button>
             );
@@ -208,32 +179,20 @@ export default function Sidebar({
         </div>
 
         <div className="mx-2 border-t border-border-subtle" />
-
-        <div className="px-2 py-2 space-y-px">
-          {secondary.map(({ id, label: itemLabel, icon: Icon }) => {
-            const isActive = activeTab === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => go(id)}
-                className={`w-full flex items-center gap-2.5 pl-2.5 pr-2 py-[7px] text-[13px] transition-colors ${
-                  isActive
-                    ? 'bg-muted text-ink font-medium'
-                    : 'text-ink-muted hover:text-ink hover:bg-panel/60'
-                }`}
-              >
-                <Icon
-                  className={`w-[15px] h-[15px] shrink-0 ${isActive ? 'text-ink-secondary' : 'text-ink-muted'}`}
-                  strokeWidth={isActive ? 2 : 1.75}
-                />
-                <span>{itemLabel}</span>
-              </button>
-            );
-          })}
+        <div className="px-2 py-2">
+          <button
+            type="button"
+            onClick={() => go('activity')}
+            className={`nr-nav-link ${activeTab === 'activity' ? 'is-active' : ''}`}
+          >
+            <span className="nr-nav-link__left">
+              <Activity className="w-4 h-4 shrink-0" strokeWidth={1.75} />
+              Activity
+            </span>
+          </button>
         </div>
 
-        <div className="px-3 py-3 border-t border-border-subtle space-y-2">
+        <div className="px-3 py-3 border-t border-border-subtle space-y-2 mt-auto">
           {user && (
             <div className="flex items-center gap-2 min-w-0">
               {user.picture ? (

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Prospect } from '../types';
 import { ChevronDown, ChevronUp, Mail, X } from 'lucide-react';
-import MailFlow from './brand/MailFlow';
 import { leadRowToneClass, recipientEmail } from '../lib/leadTone';
 
 interface Props {
@@ -211,78 +210,60 @@ export default function OutreachInboxView({
 
   return (
     <div className="max-w-5xl w-full">
-      <div className="mb-5 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 nr-enter">
-        <div>
-          <h1 className="text-[15px] font-semibold text-ink tracking-tight">Outreach</h1>
-          <p className="text-[13px] text-ink-secondary mt-1">
-            {bestFitCount} best-fit ready · Sorted by Fit + Intent ·{' '}
-            {gmailConnected
-              ? 'Send to any To: address via Gmail'
-              : 'Connect Gmail to send in-app (any recipient)'}
-            {' · '}J/K · Enter send
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {gmailConnected && onSendAllReady && sendableCount > 0 && (
-            <button
-              type="button"
-              onClick={() => onSendAllReady()}
-              className="nr-chip px-3 py-1 rounded-full text-[12px] border border-accent bg-accent text-white font-medium"
-            >
-              Send all ready ({sendableCount})
-            </button>
-          )}
-          {gmailConnected && onPrepareAndSend && (
-            <button
-              type="button"
-              onClick={() => onPrepareAndSend()}
-              className="nr-chip px-2.5 py-1 rounded-full text-[12px] border border-border bg-panel text-ink-secondary hover:border-ink-muted"
-            >
-              Prepare & send
-            </button>
-          )}
-          {gmailConnected && onSendSelected && selectedIds.length > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                const count = selectedIds.length;
-                if (!window.confirm(`Send ${count} selected outreach email(s) via Gmail?`)) return;
-                void Promise.resolve(onSendSelected(selectedIds)).then(() => setSelectedIds([])).catch(err => {
-                  console.error(err);
-                });
-              }}
-              className="nr-chip px-2.5 py-1 rounded-full text-[12px] border border-accent bg-accent text-white font-medium"
-            >
-              Send selected ({selectedIds.length})
-            </button>
-          )}
-          {selectedIds.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setSelectedIds([])}
-              className="nr-chip px-2.5 py-1 rounded-full text-[12px] border border-border bg-panel text-ink-secondary hover:border-ink-muted"
-            >
-              Clear selection
-            </button>
-          )}
-          {onSyncReplies && (
-            <button
-              type="button"
-              onClick={() => onSyncReplies()}
-              className="nr-chip px-2.5 py-1 rounded-full text-[12px] border border-border bg-panel text-ink-secondary"
-            >
-              Sync replies
-            </button>
-          )}
-          {onClearAll && (
-            <button
-              type="button"
-              onClick={() => onClearAll()}
-              className="nr-chip px-2.5 py-1 rounded-full text-[12px] border border-border bg-panel text-ink-secondary hover:border-ink-muted"
-            >
-              Clear all
-            </button>
-          )}
+      <div className="page-header nr-enter">
+        <h1 className="page-header__title">Outreach</h1>
+        <p className="page-header__desc">
+          {bestFitCount} best-fit ready · Sorted by Fit + Intent ·{' '}
+          {gmailConnected
+            ? 'Send to any To: address via Gmail'
+            : 'Connect Gmail to send in-app (any recipient)'}
+          {' · '}J/K · Enter send
+        </p>
+      </div>
+
+      <div className="toolbar nr-enter nr-enter-delay-1">
+        {gmailConnected && onSendAllReady && sendableCount > 0 && (
+          <button type="button" onClick={() => onSendAllReady()} className="btn btn-primary">
+            Send all ready ({sendableCount})
+          </button>
+        )}
+        {gmailConnected && onPrepareAndSend && (
+          <button type="button" onClick={() => onPrepareAndSend()} className="btn btn-secondary">
+            Prepare & send
+          </button>
+        )}
+        {gmailConnected && onSendSelected && selectedIds.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              const count = selectedIds.length;
+              if (!window.confirm(`Send ${count} selected outreach email(s) via Gmail?`)) return;
+              void Promise.resolve(onSendSelected(selectedIds)).then(() => setSelectedIds([])).catch(err => {
+                console.error(err);
+              });
+            }}
+            className="btn btn-primary"
+          >
+            Send selected ({selectedIds.length})
+          </button>
+        )}
+        {selectedIds.length > 0 && (
+          <button type="button" onClick={() => setSelectedIds([])} className="btn btn-ghost">
+            Clear selection
+          </button>
+        )}
+        {onSyncReplies && (
+          <button type="button" onClick={() => onSyncReplies()} className="btn btn-ghost">
+            Sync replies
+          </button>
+        )}
+        {onClearAll && (
+          <button type="button" onClick={() => onClearAll()} className="btn btn-ghost">
+            Clear all
+          </button>
+        )}
+        <span className="toolbar-spacer" />
+        <div className="seg" role="group" aria-label="Outreach filter">
           {(
             [
               ['best_fit', 'Best fit'],
@@ -295,11 +276,7 @@ export default function OutreachInboxView({
               key={id}
               type="button"
               onClick={() => setFilter(id)}
-              className={`nr-chip px-2.5 py-1 rounded-full text-[12px] border ${
-                filter === id
-                  ? 'bg-ink text-panel-elevated border-ink'
-                  : 'bg-panel border-border text-ink-secondary'
-              }`}
+              className={filter === id ? 'is-active' : undefined}
             >
               {label}
             </button>
@@ -307,12 +284,8 @@ export default function OutreachInboxView({
         </div>
       </div>
 
-      <div className="mb-5 nr-enter nr-enter-delay-1">
-        <MailFlow active={bestFitCount > 0} />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4 nr-enter nr-enter-delay-2">
-        <div className="bg-panel border border-border rounded-lg overflow-hidden max-h-[70vh] overflow-y-auto nr-panel">
+      <div className="outreach-layout nr-enter nr-enter-delay-2">
+        <div className="outreach-list">
           {filtered.length === 0 ? (
             <p className="p-4 text-[13px] text-ink-muted">
               {filter === 'best_fit'
@@ -328,9 +301,7 @@ export default function OutreachInboxView({
                 return (
                   <div
                     key={p.id}
-                    className={`border-b border-border-subtle transition-colors lead-row-tone ${leadRowToneClass(p)} ${
-                      active ? 'ring-1 ring-inset ring-border' : ''
-                    }`}
+                    className={`border-b border-border-subtle transition-colors lead-row-tone ${leadRowToneClass(p)}`}
                   >
                     <div className="flex items-start gap-2">
                       {onSendSelected && (
@@ -338,14 +309,14 @@ export default function OutreachInboxView({
                           type="checkbox"
                           checked={selectedIds.includes(p.id)}
                           onChange={() => toggleSelected(p.id)}
-                          className="mt-3 h-4 w-4 accent-accent"
+                          className="mt-3 ml-2 h-4 w-4 accent-accent"
                           aria-label={`Select ${p.companyName}`}
                         />
                       )}
                       <button
                         type="button"
                         onClick={() => setIndex(i)}
-                        className="flex-1 min-w-0 text-left px-3 py-2.5"
+                        className={`item flex-1 min-w-0 ${active ? 'is-active' : ''}`}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <p className="text-[13px] font-medium text-ink truncate">{p.companyName}</p>
@@ -364,7 +335,7 @@ export default function OutreachInboxView({
                           aria-label={`Remove ${p.companyName}`}
                           title="Remove lead"
                           onClick={() => onRemoveProspect(p.id)}
-                          className="mt-2 mr-2 p-1.5 rounded-md text-ink-muted hover:text-ink hover:bg-panel-elevated"
+                          className="mt-2 mr-2 p-1.5 text-ink-muted hover:text-ink hover:bg-muted"
                         >
                           <X className="w-4 h-4" />
                         </button>
@@ -378,8 +349,8 @@ export default function OutreachInboxView({
         </div>
 
         {current && draft ? (
-          <div key={current.id} className="bg-panel border border-border rounded-lg p-4 sm:p-5 flex flex-col min-h-[420px] nr-panel nr-pop">
-            <div className="flex items-start justify-between gap-3 mb-4">
+          <div key={current.id} className="outreach-editor nr-pop">
+            <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="text-[15px] font-semibold text-ink truncate">{current.companyName}</h2>
                 <p className="text-[12px] text-ink-muted mt-0.5">
@@ -396,7 +367,7 @@ export default function OutreachInboxView({
                   aria-label="Previous"
                   disabled={index <= 0}
                   onClick={() => setIndex(i => Math.max(0, i - 1))}
-                  className="p-1.5 rounded-md border border-border disabled:opacity-30"
+                  className="p-1.5 border border-border disabled:opacity-30"
                 >
                   <ChevronUp className="w-4 h-4" />
                 </button>
@@ -405,51 +376,57 @@ export default function OutreachInboxView({
                   aria-label="Next"
                   disabled={index >= filtered.length - 1}
                   onClick={() => setIndex(i => Math.min(filtered.length - 1, i + 1))}
-                  className="p-1.5 rounded-md border border-border disabled:opacity-30"
+                  className="p-1.5 border border-border disabled:opacity-30"
                 >
                   <ChevronDown className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            <label className="text-[11px] font-medium text-ink-muted uppercase tracking-wide">Buyer email (To)</label>
-            <div className="mt-1 mb-3 flex gap-2">
-              <input
-                type="email"
-                value={toEmail}
-                onChange={e => setToEmail(e.target.value)}
-                onBlur={persistDraftFields}
-                placeholder="Will fill from contact page…"
-                className="flex-1 border border-border rounded-md px-3 py-2 text-[13px] bg-panel-elevated"
-              />
-              {!toEmail.includes('@') && onBackfillRecipients && (
-                <button
-                  type="button"
-                  onClick={() => void onBackfillRecipients()}
-                  className="shrink-0 px-3 py-2 text-[12px] border border-border rounded-md text-ink-secondary hover:border-ink-muted"
-                >
-                  Find on site
-                </button>
-              )}
+            <div>
+              <label className="field-label">Buyer email (To)</label>
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  value={toEmail}
+                  onChange={e => setToEmail(e.target.value)}
+                  onBlur={persistDraftFields}
+                  placeholder="Will fill from contact page…"
+                  className="flex-1 border border-border px-3 py-2 text-[13px] bg-panel"
+                />
+                {!toEmail.includes('@') && onBackfillRecipients && (
+                  <button
+                    type="button"
+                    onClick={() => void onBackfillRecipients()}
+                    className="btn btn-secondary shrink-0"
+                  >
+                    Find on site
+                  </button>
+                )}
+              </div>
             </div>
-            <label className="text-[11px] font-medium text-ink-muted uppercase tracking-wide">Subject</label>
-            <input
-              value={subject}
-              onChange={e => setSubject(e.target.value)}
-              onBlur={persistDraftFields}
-              className="mt-1 mb-3 w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel-elevated"
-            />
-            <label className="text-[11px] font-medium text-ink-muted uppercase tracking-wide">Body</label>
-            <textarea
-              value={body}
-              onChange={e => setBody(e.target.value)}
-              onBlur={persistDraftFields}
-              rows={12}
-              className="mt-1 flex-1 w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel-elevated resize-y min-h-[220px]"
-            />
+            <div>
+              <label className="field-label">Subject</label>
+              <input
+                value={subject}
+                onChange={e => setSubject(e.target.value)}
+                onBlur={persistDraftFields}
+                className="w-full border border-border px-3 py-2 text-[13px] bg-panel"
+              />
+            </div>
+            <div className="flex flex-col flex-1 min-h-0">
+              <label className="field-label">Body</label>
+              <textarea
+                value={body}
+                onChange={e => setBody(e.target.value)}
+                onBlur={persistDraftFields}
+                rows={14}
+                className="min-h-[16rem]"
+              />
+            </div>
             {draft.outreachRationale && (
-              <div className="mt-3 rounded-md border border-border-subtle bg-panel-elevated/60 px-3 py-2.5 space-y-1.5">
-                <p className="text-[11px] font-medium text-ink-muted uppercase tracking-wide">Outreach rationale</p>
+              <div className="border border-border-subtle bg-muted px-3 py-2.5 space-y-1.5">
+                <p className="field-label mb-0">Outreach rationale</p>
                 {draft.outreachRationale.primary_signal && (
                   <p className="text-[12px] text-ink-secondary">
                     <span className="text-ink-muted">Signal:</span> {draft.outreachRationale.primary_signal}
@@ -479,10 +456,10 @@ export default function OutreachInboxView({
               </div>
             )}
             {!draft.outreachRationale && draft.personalizedReason && (
-              <p className="text-[12px] text-ink-muted mt-2">{draft.personalizedReason}</p>
+              <p className="text-[12px] text-ink-muted">{draft.personalizedReason}</p>
             )}
 
-            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border-subtle pt-4">
+            <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle pt-3 mt-auto">
               {(draft.status === 'Draft' || draft.status === 'Approved') && (
                 <button
                   type="button"
@@ -491,7 +468,7 @@ export default function OutreachInboxView({
                     onSendViaEmail(current.id, { subject, body, toEmail });
                     setIndex(i => Math.min(i + 1, Math.max(filtered.length - 1, 0)));
                   }}
-                  className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-[13px] font-medium rounded-md nr-btn-press"
+                  className="btn btn-primary"
                 >
                   {gmailConnected ? 'Approve & send via Gmail' : 'Approve & open email'}
                 </button>
@@ -500,7 +477,7 @@ export default function OutreachInboxView({
                 <button
                   type="button"
                   onClick={() => onPrepareFollowUp(current.id)}
-                  className="px-3 py-2 text-[13px] border border-border rounded-md text-ink-secondary hover:border-ink-muted nr-btn-press"
+                  className="btn btn-secondary"
                 >
                   Draft follow-up
                 </button>
@@ -512,7 +489,7 @@ export default function OutreachInboxView({
                     onSkip(current.id);
                     setIndex(i => Math.min(i + 1, Math.max(filtered.length - 1, 0)));
                   }}
-                  className="px-3 py-2 text-[13px] border border-border rounded-md text-ink-secondary hover:border-ink-muted nr-btn-press"
+                  className="btn btn-ghost"
                 >
                   Skip for now
                 </button>
@@ -529,7 +506,7 @@ export default function OutreachInboxView({
             </div>
           </div>
         ) : (
-          <div className="bg-panel border border-border rounded-lg p-8 text-center text-[13px] text-ink-muted">
+          <div className="outreach-editor items-center justify-center text-center text-[13px] text-ink-muted">
             Select a draft from the list.
           </div>
         )}

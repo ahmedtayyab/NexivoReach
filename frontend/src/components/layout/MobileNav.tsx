@@ -10,7 +10,7 @@ interface Props {
 }
 
 const items = [
-  { id: 'settings', label: 'Setup', icon: Settings },
+  { id: 'settings', label: 'Workspace', icon: Settings },
   { id: 'queue', label: 'Leads', icon: LayoutList },
   { id: 'outreach', label: 'Outreach', icon: Mail },
   { id: 'activity', label: 'Activity', icon: Activity },

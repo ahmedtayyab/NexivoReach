@@ -59,200 +59,106 @@ export default function SettingsView({
   onFindBuyersComplete,
   onRestoredFromSheets,
 }: Props) {
-  const stages: { id: SettingsSection; num: string; label: string; title: string; desc: string }[] = [
-    {
-      id: 'company',
-      num: '01',
-      label: 'Company',
-      title: 'Who you are',
-      desc: 'Brief the agent like a new salesperson: what you sell, your website, and where you sell.',
-    },
-    {
-      id: 'catalog',
-      num: '02',
-      label: 'Catalog',
-      title: 'What you sell',
-      desc: 'Pull products from your website (above) or add them manually. The agent matches buyers to this list.',
-    },
-    {
-      id: 'icp',
-      num: '03',
-      label: 'Buyers',
-      title: 'Who should buy',
-      desc: 'Buyer types and size. Geography defaults to your company markets unless you override it.',
-    },
-    {
-      id: 'integrations',
-      num: '04',
-      label: 'Connect',
-      title: 'Connect tools',
-      desc: 'Gmail to send. Sheets for a private spreadsheet per company.',
-    },
+  const tabs: { id: SettingsSection; label: string }[] = [
+    { id: 'company', label: 'Company' },
+    { id: 'catalog', label: 'Catalog' },
+    { id: 'icp', label: 'Buyers' },
+    { id: 'integrations', label: 'Connect' },
   ];
 
-  const companyReady = Boolean(businessInfo.name?.trim() && businessInfo.description?.trim());
-  const catalogReady = products.length > 0;
-  const icpReady = (icp.targetBuyerTypes?.length ?? 0) > 0;
-  const readyMeta: Record<SettingsSection, string> = {
-    company: companyReady ? 'Ready' : 'Needed',
-    catalog: catalogReady ? `${products.length} items` : 'Needed',
-    icp: icpReady ? 'Ready' : 'Needed',
-    integrations: 'Optional',
+  const titles: Record<SettingsSection, string> = {
+    company: 'Company',
+    catalog: 'Catalog',
+    icp: 'Buyers',
+    integrations: 'Connect',
+  };
+  const blurb: Record<SettingsSection, string> = {
+    company: 'What you sell and where — used to plan searches and judge fit.',
+    catalog: 'Products the agent matches against buyer sites.',
+    icp: 'Who should buy. Markets default to company unless you override.',
+    integrations: 'Gmail for sending. Sheets for a private spreadsheet.',
   };
 
-  const [activeStage, setActiveStage] = useState<SettingsSection>(section);
-
-  const jump = (id: SettingsSection) => {
-    setActiveStage(id);
-    onSectionChange(id);
-    requestAnimationFrame(() => {
-      document.getElementById(`setup-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  };
-
-  useEffect(() => {
-    setActiveStage(section);
-    const el = document.getElementById(`setup-${section}`);
-    if (!el) return;
-    const t = window.setTimeout(() => {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 40);
-    return () => window.clearTimeout(t);
-  }, [section]);
-
-  useEffect(() => {
-    const nodes = stages
-      .map(s => document.getElementById(`setup-${s.id}`))
-      .filter(Boolean) as HTMLElement[];
-    if (!nodes.length) return;
-    const observer = new IntersectionObserver(
-      entries => {
-        const visible = entries
-          .filter(e => e.isIntersecting)
-          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-        if (!visible?.target?.id) return;
-        const id = visible.target.id.replace('setup-', '') as SettingsSection;
-        setActiveStage(id);
-      },
-      { rootMargin: '-18% 0px -55% 0px', threshold: [0.12, 0.35, 0.55] },
-    );
-    nodes.forEach(n => observer.observe(n));
-    return () => observer.disconnect();
-  }, []);
+  const showFind = Boolean(onAddProspects && onAddLog && section !== 'integrations');
 
   return (
     <div className="setup-desk">
-      <header className="setup-desk__hero nr-enter">
-        <p className="setup-desk__kicker">Lead generation workspace</p>
-        <h1 className="setup-desk__title">Brief the agent</h1>
+      <header className="setup-desk__hero">
+        <h1 className="setup-desk__title">Workspace</h1>
         <p className="setup-desk__lede">
-          Enter the minimum that keeps results precise — company, catalog, buyers —
-          then run Find buyers. Leads and Outreach stay where the work continues.
+          Brief the agent, then find buyers. Leads and Outreach handle what comes next.
         </p>
       </header>
 
-      <div className="setup-mobile-jump nr-enter nr-enter-delay-1">
-        {stages.map(s => (
+      <div className="ws-tabs" role="tablist" aria-label="Workspace sections">
+        {tabs.map(t => (
           <button
-            key={s.id}
+            key={t.id}
             type="button"
-            className={activeStage === s.id ? 'is-active' : ''}
-            onClick={() => jump(s.id)}
+            role="tab"
+            aria-selected={section === t.id}
+            className={section === t.id ? 'is-active' : ''}
+            onClick={() => onSectionChange(t.id)}
           >
-            {s.num} {s.label}
+            {t.label}
           </button>
         ))}
       </div>
 
-      <div className="setup-desk__layout">
-        <nav className="setup-rail nr-enter nr-enter-delay-1" aria-label="Setup stages">
-          {stages.map(s => (
-            <button
-              key={s.id}
-              type="button"
-              className={`setup-rail__item ${activeStage === s.id ? 'is-active' : ''}`}
-              onClick={() => jump(s.id)}
-            >
-              <span className="setup-rail__num">{s.num}</span>
-              <span className="setup-rail__label">{s.label}</span>
-              <span className="setup-rail__meta">{readyMeta[s.id]}</span>
-            </button>
-          ))}
-        </nav>
-
-        <div>
-          {stages.map(s => (
-            <section key={s.id} id={`setup-${s.id}`} className="setup-stage">
-              <div className="setup-stage__head">
-                <span className="setup-stage__index" aria-hidden>{s.num}</span>
-                <div>
-                  <h2 className="setup-stage__title">{s.title}</h2>
-                  <p className="setup-stage__desc">{s.desc}</p>
-                </div>
-              </div>
-              <div className="setup-stage__body">
-                {s.id === 'company' && (
-                  <CompanySection
-                    key={businessInfo.id ?? 'company'}
-                    businessInfo={businessInfo}
-                    products={products}
-                    onSave={onSaveBusiness}
-                  />
-                )}
-                {s.id === 'catalog' && (
-                  <CatalogSection
-                    products={products}
-                    onSave={onSaveProducts}
-                    companyWebsite={businessInfo.website}
-                  />
-                )}
-                {s.id === 'icp' && (
-                  <ICPSection
-                    key={icp.companySize + (businessInfo.targetMarkets || []).join('|')}
-                    icp={icp}
-                    businessInfo={businessInfo}
-                    products={products}
-                    onSave={onSaveICP}
-                  />
-                )}
-                {s.id === 'integrations' && (
-                  <IntegrationsSection
-                    companyId={businessInfo.id}
-                    onRestoredFromSheets={onRestoredFromSheets}
-                  />
-                )}
-              </div>
-            </section>
-          ))}
-
-          {onAddProspects && onAddLog && (
-            <section id="setup-find" className="setup-stage">
-              <div className="setup-stage__head">
-                <span className="setup-stage__index" aria-hidden>→</span>
-                <div>
-                  <h2 className="setup-stage__title">Run the agent</h2>
-                  <p className="setup-stage__desc">
-                    This is the product: find qualified buyers from what you entered above.
-                  </p>
-                </div>
-              </div>
-              <div className="setup-stage__body">
-                <FindBuyersPanel
-                  businessInfo={businessInfo}
-                  icp={icp}
-                  products={products}
-                  onAddProspects={onAddProspects}
-                  onAddLog={onAddLog}
-                  onComplete={onFindBuyersComplete}
-                />
-              </div>
-            </section>
-          )}
+      <div className={section === 'integrations' || section === 'icp' ? 'ws-panel ws-panel--wide' : 'ws-panel'}>
+        <div className="mb-4">
+          <h2 className="text-[15px] font-semibold text-ink m-0">{titles[section]}</h2>
+          <p className="text-[12.5px] text-ink-muted mt-1 mb-0 leading-snug">{blurb[section]}</p>
         </div>
+
+        {section === 'company' && (
+          <CompanySection
+            key={businessInfo.id ?? 'company'}
+            businessInfo={businessInfo}
+            products={products}
+            onSave={onSaveBusiness}
+          />
+        )}
+        {section === 'catalog' && (
+          <CatalogSection
+            products={products}
+            onSave={onSaveProducts}
+            companyWebsite={businessInfo.website}
+          />
+        )}
+        {section === 'icp' && (
+          <ICPSection
+            key={icp.companySize + (businessInfo.targetMarkets || []).join('|')}
+            icp={icp}
+            businessInfo={businessInfo}
+            products={products}
+            onSave={onSaveICP}
+          />
+        )}
+        {section === 'integrations' && (
+          <IntegrationsSection
+            companyId={businessInfo.id}
+            onRestoredFromSheets={onRestoredFromSheets}
+          />
+        )}
       </div>
+
+      {showFind && (
+        <div className="ws-find">
+          <FindBuyersPanel
+            businessInfo={businessInfo}
+            icp={icp}
+            products={products}
+            onAddProspects={onAddProspects!}
+            onAddLog={onAddLog!}
+            onComplete={onFindBuyersComplete}
+          />
+        </div>
+      )}
     </div>
   );
 }
+
 
 function CompanySection({
   businessInfo,
@@ -322,9 +228,7 @@ function CompanySection({
 
   return (
     <div className="space-y-5 max-w-lg">
-      <p className="text-[13px] text-ink-muted leading-relaxed">
-        Write the description the way you would brief a new salesperson: product, manufacturing vs brand, export vs local, and who you refuse to sell to if that matters.
-      </p>
+      <p className="text-[13px] text-ink-muted">Brief your company like you would a new salesperson.</p>
       <div>
         <label className="block text-[12px] font-medium text-ink-secondary mb-1">
           Business description <span className="text-ink-muted font-normal">(auto-fill from this)</span>
