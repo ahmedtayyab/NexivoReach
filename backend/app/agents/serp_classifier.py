@@ -32,7 +32,11 @@ SKIP_HOSTS = (
 )
 
 JUNK_TITLE = re.compile(
-    r"\b(top\s+\d+|best \d+|complete guide|how to|what is|directory|list of)\b",
+    r"\b("
+    r"top\s+\d+|best \d+|complete guide|how to|what is|directory|list of|"
+    r"buyers?\s*&\s*importers?|importers?\s*&\s*buyers?|"
+    r"buyers?\s+and\s+importers?|importers?\s+and\s+buyers?"
+    r")\b",
     re.I,
 )
 MFR_RE = re.compile(
@@ -104,12 +108,18 @@ def classify_serp_row(
     if any(h in path for h in ("/blog", "/wiki", "/guide")) and not reject:
         reject, entity, reason = True, "article", "Article URL"
 
-    geo_ok = places_mentioned(blob, target_places) if target_places else None
+    geo_source = (location or "").strip() or blob
+    geo_ok = places_mentioned(geo_source, target_places) if target_places else None
     if target_places and not reject:
-        if geo_ok is False and _foreign_geo_conflict(blob, target_places):
+        from app.agents.geo import location_conflicts_with_targets
+
+        # Prefer the address field: Maps often returns nearby states (NY/NJ for MA).
+        if location.strip() and location_conflicts_with_targets(location, target_places):
+            reject, entity, reason = True, "wrong_geo", "Address is outside the requested location"
+        elif geo_ok is False and _foreign_geo_conflict(geo_source, target_places):
             reject, entity, reason = True, "wrong_geo", "Geography conflicts with target markets"
-        elif strict_geo and geo_ok is not True and (row.get("source") or "") != "maps":
-            # Require explicit state/city evidence on SERP (Maps rows already geo-biased)
+        elif strict_geo and geo_ok is not True:
+            # No Maps exemption — Serper local results regularly spill into abutting states
             reject, entity, reason = True, "wrong_geo", "No evidence this company is in the requested location"
 
     competitor_seed = entity == "manufacturer" and hunting_buyers
@@ -139,8 +149,10 @@ def _foreign_geo_conflict(blob: str, places: List[str]) -> bool:
     for c in countries:
         if c in low and c not in targets:
             return True
-    # Other US states when hunting a specific state
-    from app.agents.geo import US_STATE_ALIASES, place_aliases
+    # Other US states when hunting a specific state (full name + postal abbrev)
+    from app.agents.geo import US_STATE_ALIASES, location_conflicts_with_targets, place_aliases
+    if location_conflicts_with_targets(blob, places):
+        return True
     target_aliases = set()
     for p in places:
         target_aliases.update(place_aliases(p))

@@ -161,6 +161,34 @@ def places_mentioned(blob: str, places: List[str]) -> Optional[bool]:
     return False
 
 
+def location_conflicts_with_targets(location: str, places: List[str]) -> bool:
+    """
+    True when an address/location string names a different US state than the hunt.
+    'Edison, NJ' conflicts with Massachusetts; 'ships to Boston' alone is not a location.
+    """
+    loc = (location or "").strip()
+    if not loc or not places:
+        return False
+    if places_mentioned(loc, places) is True:
+        return False
+    low = loc.lower()
+    target_keys = {p.lower() for p in places}
+    for p in places:
+        target_keys.update(a.lower() for a in place_aliases(p))
+    for state, aliases in US_STATE_ALIASES.items():
+        if state in target_keys:
+            continue
+        if _word_hit(low, state):
+            return True
+        abbrev = aliases[0] if aliases else ""
+        if abbrev and _abbrev_hit(low, abbrev):
+            return True
+        for city in aliases[1:]:
+            if _word_hit(low, city):
+                return True
+    return False
+
+
 def extract_places_from_prompt(prompt: str) -> Tuple[List[str], bool]:
     """
     Pull state/city/country from Discover text.
@@ -244,6 +272,8 @@ def extract_offer_terms_from_prompt(prompt: str) -> List[str]:
     """
     Product / offer nouns left after stripping buyer roles and places.
     'fleece hood importers in New jersey' → ['fleece hood']
+    'elastic wrist straps and ankle strap importers in Massachusetts'
+      → ['elastic wrist straps', 'ankle strap']
     """
     text = (prompt or "").strip()
     if not text:
@@ -267,12 +297,22 @@ def extract_offer_terms_from_prompt(prompt: str) -> List[str]:
         for f in sorted(forms, key=len, reverse=True):
             low = re.sub(rf"\b{re.escape(f)}\b", " ", low)
 
-    tokens = [t for t in re.findall(r"[a-z0-9]+(?:'[a-z]+)?", low) if t not in _PROMPT_FILLER and len(t) > 1]
-    if not tokens:
-        return []
-    # Keep as one phrase (up to 4 tokens) — drives SERP better than splitting
-    phrase = " ".join(tokens[:4]).strip()
-    return [phrase] if phrase else []
+    # Keep multi-product prompts as separate categories ("X and Y")
+    chunks = re.split(r"\s+and\s+|," , low)
+    phrases: List[str] = []
+    seen = set()
+    for chunk in chunks:
+        tokens = [
+            t for t in re.findall(r"[a-z0-9]+(?:'[a-z]+)?", chunk)
+            if t not in _PROMPT_FILLER and len(t) > 1
+        ]
+        if not tokens:
+            continue
+        phrase = " ".join(tokens[:4]).strip()
+        if phrase and phrase not in seen:
+            seen.add(phrase)
+            phrases.append(phrase)
+    return phrases[:3]
 
 
 def extract_buyers_from_prompt(prompt: str) -> List[str]:

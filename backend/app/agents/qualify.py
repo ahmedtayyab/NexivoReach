@@ -181,17 +181,37 @@ def qualify_account(
         if not why_this:
             why_this = f"{name} is a local Maps listing matching the ICP buyer type; website evidence is still thin."
 
-    # Strict geo from Discover prompt (e.g. "in Nevada") — must verify location
+    # Strict geo from Discover prompt (e.g. "in Massachusetts") — address wins.
+    # Do not treat "ships to Boston" on a NJ site as operating in Massachusetts.
     if getattr(profile, "strict_geo", False) and profile.places:
-        geo_blob = f"{location}\n{snippet}\n{site_text or ''}"
-        geo_hit = _geo_ok(geo_blob, profile.places)
-        if geo_hit is not True:
+        from app.agents.geo import location_conflicts_with_targets, places_mentioned
+
+        loc = (location or "").strip()
+        if loc and location_conflicts_with_targets(loc, profile.places):
             persist = False
             priority = "reject"
             why_this = (
-                f"{name}: skipped — no clear evidence they operate in "
+                f"{name}: skipped — address is outside "
                 f"{', '.join(profile.places[:2])}."
             )
+        elif loc:
+            if places_mentioned(loc, profile.places) is not True:
+                persist = False
+                priority = "reject"
+                why_this = (
+                    f"{name}: skipped — no clear evidence they operate in "
+                    f"{', '.join(profile.places[:2])}."
+                )
+        else:
+            # No address: require target place in snippet/title only (not full site body)
+            geo_hit = _geo_ok(f"{snippet}\n{row.get('title') or ''}", profile.places)
+            if geo_hit is not True:
+                persist = False
+                priority = "reject"
+                why_this = (
+                    f"{name}: skipped — no clear evidence they operate in "
+                    f"{', '.join(profile.places[:2])}."
+                )
 
     return {
         "icpFit": icp,
@@ -396,16 +416,23 @@ def _geo_ok(blob: str, places: List[str]) -> Optional[bool]:
 
 def _resolve_location(row: Dict[str, Any], site_text: str, profile: SellerProfile) -> str:
     """Prefer Maps/SERP location; else pull city/state from homepage copy."""
-    from app.agents.geo import format_location_display
+    from app.agents.geo import format_location_display, location_conflicts_with_targets
 
     existing = (row.get("location") or "").strip()
     if existing and len(existing) >= 3:
+        # Never rewrite an out-of-state Maps address toward the hunt state via site copy
+        if getattr(profile, "strict_geo", False) and profile.places:
+            if location_conflicts_with_targets(existing, profile.places):
+                return existing[:80]
         # Enrich bare "Nevada" with city from site when possible
         site_loc = format_location_display(
             f"{existing}\n{site_text or ''}",
             prefer_places=profile.places,
         )
         if site_loc and len(site_loc) > len(existing):
+            if getattr(profile, "strict_geo", False) and profile.places:
+                if location_conflicts_with_targets(site_loc, profile.places):
+                    return existing[:80]
             return site_loc[:80]
         return existing[:80]
     blob = f"{row.get('title') or ''}\n{row.get('snippet') or ''}\n{site_text or ''}"

@@ -491,6 +491,24 @@ def plan_wave2(
             "expand_relevant", "direct_icp", False, 2,
         ))
 
+    # Niche / over-filtered wave 1: broaden product + channel in the requested place
+    if relevant == 0 and place:
+        short = " ".join(cat.split()[:2]) if cat else cat
+        role = (profile.buyers[0] or "importer").rstrip("s")
+        queries.append(PlannedQuery(
+            f"{short} {role} {place} {neg}".strip(),
+            "broaden_niche", "direct_icp", False, 2,
+        ))
+        queries.append(PlannedQuery(
+            f"{short} wholesale distributor {place} {neg}".strip(),
+            "broaden_niche", "importer_distributor", False, 2,
+        ))
+        for extra in profile.categories[1:3]:
+            queries.append(PlannedQuery(
+                f"{extra} {role} {place} {neg}".strip(),
+                "broaden_niche", "direct_icp", False, 2,
+            ))
+
     # Always sample intent overlays in wave 2 when we have motion-specific phrases
     for ex in (profile.intent_examples or [])[:2]:
         queries.append(PlannedQuery(
@@ -507,7 +525,7 @@ def plan_wave2(
             continue
         seen.add(key)
         out.append(q)
-        if len(out) >= 6:
+        if len(out) >= 8:
             break
     return out
 

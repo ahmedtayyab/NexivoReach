@@ -152,3 +152,95 @@ def test_strict_geo_rejects_uae_when_hunting_nj():
     )
     assert row["reject"] is True
     assert row["entity_type"] == "wrong_geo"
+
+
+def test_maps_nj_rejected_when_hunting_massachusetts():
+    row = classify_serp_row(
+        {
+            "company_name": "WOLDORF USA, INC",
+            "website": "https://woldorf.example/",
+            "location": "68 Mayfield Ave, Edison, NJ 08837",
+            "snippet": "Wholesale supplies near Massachusetts",
+            "source": "maps",
+        },
+        hunting_buyers=True,
+        target_places=["Massachusetts"],
+        strict_geo=True,
+    )
+    assert row["reject"] is True
+    assert row["entity_type"] == "wrong_geo"
+
+
+def test_maps_ma_kept_when_hunting_massachusetts():
+    row = classify_serp_row(
+        {
+            "company_name": "Newbury Supply",
+            "website": "https://newbury.example/",
+            "location": "390 Main St, Woburn, MA 01801",
+            "snippet": "Industrial supply",
+            "source": "maps",
+        },
+        hunting_buyers=True,
+        target_places=["Massachusetts"],
+        strict_geo=True,
+    )
+    assert row["reject"] is False
+    assert row["geo_mentioned"] is True
+
+
+def test_directory_buyers_importers_title_rejected():
+    row = classify_serp_row(
+        {
+            "company_name": "Martial Arts Belts Buyers & Importers",
+            "website": "https://somedir.example/martial",
+            "snippet": "Find buyers in Massachusetts",
+            "source": "web",
+        },
+        hunting_buyers=True,
+        target_places=["Massachusetts"],
+        strict_geo=True,
+    )
+    assert row["reject"] is True
+    assert row["entity_type"] == "directory"
+
+
+def test_multi_product_offer_terms():
+    terms = extract_offer_terms_from_prompt(
+        "elastic wrist straps and ankle strap importers in Massachusetts"
+    )
+    assert len(terms) >= 2
+    assert "wrist" in terms[0]
+    assert "ankle" in terms[1]
+
+
+def test_qualify_rejects_nj_address_despite_boston_on_site():
+    from app.agents.qualify import qualify_account
+    from app.agents.search_planner import SellerProfile
+
+    profile = SellerProfile(
+        offer_class="goods",
+        sales_motion="wholesale",
+        hunting_buyers=True,
+        geo_mode="local",
+        categories=["elastic wrist straps"],
+        buyers=["importers"],
+        places=["Massachusetts"],
+        use_maps=True,
+        pools={"direct_icp": "primary"},
+        strict_geo=True,
+    )
+    q = qualify_account(
+        row={
+            "company_name": "WOLDORF USA",
+            "website": "https://woldorf.example/",
+            "location": "Edison, NJ 08837",
+            "snippet": "Importer",
+            "source": "maps",
+            "phone": "555-0100",
+        },
+        site_text="We ship nationwide including Boston and New York.",
+        profile=profile,
+        products=[{"name": "Wrist straps", "category": "Gear"}],
+        page_url="https://woldorf.example/",
+    )
+    assert q["shouldPersist"] is False
