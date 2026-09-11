@@ -27,7 +27,7 @@ export const APP_ROUTES: AppRoute[] = [
   'notifications',
 ];
 
-export const SETTINGS_SECTIONS: SettingsSection[] = ['company', 'catalog', 'icp', 'integrations'];
+export const SETTINGS_SECTIONS: SettingsSection[] = ['company', 'integrations', 'catalog', 'icp'];
 
 const ROUTE_ALIASES: Record<string, AppRoute> = {
   settings: 'company',

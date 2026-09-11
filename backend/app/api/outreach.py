@@ -539,8 +539,11 @@ async def send_ready(
 ):
     """
     Full one-click: resolve emails → prepare drafts → send via Gmail.
+    Optional `ids` limits the run to selected leads (skips best-fit gate).
     """
-    limit = min(25, max(1, int(payload.get("limit") or 15)))
+    ids = payload.get("ids") or []
+    id_set = set(ids) if ids else None
+    limit = min(40, max(1, int(payload.get("limit") or (len(ids) if ids else 15))))
     with Session(engine) as session:
         business_id = resolve_business_id(request, user, session)
         db_user = session.get(User, user.id)
@@ -556,10 +559,13 @@ async def send_ready(
 
         prepared = 0
         resolved = 0
-        for row in sorted(rows, key=lambda r: int(r.fit_score or 0), reverse=True):
+        candidates = sorted(rows, key=lambda r: int(r.fit_score or 0), reverse=True)
+        for row in candidates:
             if prepared >= limit:
                 break
-            if not _is_outreach_ready(row):
+            if id_set is not None and row.id not in id_set:
+                continue
+            if id_set is None and not _is_outreach_ready(row):
                 continue
             if row.outreach_draft and (row.outreach_draft or {}).get("status") in ("Sent", "Replied"):
                 continue
@@ -581,19 +587,29 @@ async def send_ready(
         rows = session.exec(
             select(ProspectRecord).where(ProspectRecord.business_id == business_id)
         ).all()
-        targets = [
-            r for r in rows
-            if _draft_sendable_after_resolve(r) and _is_outreach_ready(r)
-        ]
+        targets = []
+        for r in rows:
+            if id_set is not None and r.id not in id_set:
+                continue
+            if not _draft_sendable_after_resolve(r):
+                continue
+            if id_set is None and not _is_outreach_ready(r):
+                continue
+            targets.append(r)
         targets.sort(key=lambda r: int(r.fit_score or 0), reverse=True)
         targets = targets[:limit]
 
+        if targets:
+            access_mod.consume_usage(session, db_user, "send", amount=len(targets))
+
         sent_rows: List[ProspectRecord] = []
         errors: List[Dict[str, str]] = []
+        skipped_no_email = 0
         for row in targets:
             try:
                 recipient = await _ensure_recipient(session, row)
                 if not recipient:
+                    skipped_no_email += 1
                     errors.append({
                         "id": row.id or "",
                         "company": row.company_name or "",
@@ -620,6 +636,7 @@ async def send_ready(
             "resolvedEmails": resolved,
             "sent": len(sent_rows),
             "failed": len(errors),
+            "skippedNoEmail": skipped_no_email,
             "errors": errors[:20],
             "prospects": [prospect_to_frontend(r) for r in sent_rows],
         }

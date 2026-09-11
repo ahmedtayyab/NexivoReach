@@ -32,6 +32,8 @@
     --accent: #1A4332;
     --accent-hover: #123226;
     --accent-soft: rgba(26, 67, 50, 0.09);
+    --panel: #FFFFFF;
+    --panel-elevated: #FFFFFF;
     --green: #1A4332;
     --amber: #8A5A00;
     --danger: #8B2E2E;
@@ -918,7 +920,7 @@ input:focus, textarea:focus, select:focus {
 }
 .data-table__head {
   display: grid;
-  grid-template-columns: 1.4fr 0.7fr 0.55fr 0.45fr 0.9fr;
+  grid-template-columns: 1.75rem 1.4fr 0.7fr 0.55fr 0.45fr 0.9fr;
   gap: 0.5rem;
   padding: 0.45rem 0.85rem;
   border-bottom: 1px solid var(--border-subtle);
@@ -931,7 +933,7 @@ input:focus, textarea:focus, select:focus {
 }
 .data-table__row {
   display: grid;
-  grid-template-columns: 1.4fr 0.7fr 0.55fr 0.45fr 0.9fr;
+  grid-template-columns: 1.75rem 1.4fr 0.7fr 0.55fr 0.45fr 0.9fr;
   gap: 0.5rem;
   align-items: center;
   padding: 0.55rem 0.85rem;
@@ -1476,7 +1478,7 @@ input:focus, textarea:focus, select:focus {
 .notif-sheet__backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(28, 27, 25, 0.35);
+  background: rgba(28, 27, 25, 0.45);
   border: 0;
 }
 .notif-sheet__panel {
@@ -1484,9 +1486,24 @@ input:focus, textarea:focus, select:focus {
   z-index: 1;
   width: min(22rem, 92vw);
   height: 100%;
-  background: var(--panel-elevated);
+  background: #ffffff;
+  background: var(--panel-elevated, #ffffff);
   border-left: 1px solid var(--border);
-  box-shadow: -8px 0 32px rgba(20, 24, 28, 0.12);
+  box-shadow: -8px 0 32px rgba(20, 24, 28, 0.18);
+  opacity: 1;
+}
+.notif-sheet__panel .notif-rail__inner {
+  background: #ffffff;
+  background: var(--panel-elevated, #ffffff);
+}
+.notif-sheet__panel .notif-usage {
+  background: #f5f5f2;
+}
+.notif-sheet__panel .notif-item {
+  background: #ffffff;
+}
+.notif-sheet__panel .notif-item.is-unread {
+  background: color-mix(in srgb, var(--accent) 8%, #ffffff);
 }
 
 /* Support */

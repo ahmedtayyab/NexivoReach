@@ -66,11 +66,12 @@ export default function SettingsView({
   onRestoredFromSheets,
 }: Props) {
   const [connectReady, setConnectReady] = useState(false);
+  const [sheetsConnected, setSheetsConnected] = useState(false);
   const tabs: { id: SettingsSection; label: string }[] = [
     { id: 'company', label: 'Company' },
+    { id: 'integrations', label: 'Connect' },
     { id: 'catalog', label: 'Catalog' },
     { id: 'icp', label: 'Buyers' },
-    { id: 'integrations', label: 'Connect' },
   ];
 
   const titles: Record<SettingsSection, string> = {
@@ -81,9 +82,9 @@ export default function SettingsView({
   };
   const blurb: Record<SettingsSection, string> = {
     company: 'What you sell and where — used to plan searches and judge fit.',
-    catalog: 'Products the agent matches against buyer sites.',
+    catalog: 'Products the agent matches against buyer sites. Requires Google Sheets connected first.',
     icp: 'Who should buy — then run Find buyers below. Markets default to company unless you override.',
-    integrations: 'Gmail for sending. Sheets for a private spreadsheet.',
+    integrations: 'Connect Google Sheets before importing a catalog. Gmail is for sending outreach.',
   };
 
   const steps = useMemo(
@@ -101,20 +102,16 @@ export default function SettingsView({
     let cancelled = false;
     (async () => {
       try {
-        const [gmailResp, sheetsResp] = await Promise.all([
-          apiFetch('/api/auth/gmail/status'),
-          apiFetch('/api/sheets/status'),
-        ]);
-        let ready = false;
-        if (gmailResp.ok) {
-          const data = await gmailResp.json();
-          if (data?.connected) ready = true;
-        }
+        const sheetsResp = await apiFetch('/api/sheets/status');
+        let sheetsOk = false;
         if (sheetsResp.ok) {
           const data = await sheetsResp.json();
-          if (data?.connected) ready = true;
+          sheetsOk = Boolean(data?.userOauthConnected || data?.oauth?.connected);
         }
-        if (!cancelled) setConnectReady(ready);
+        if (!cancelled) {
+          setSheetsConnected(sheetsOk);
+          setConnectReady(sheetsOk);
+        }
       } catch {
         // ignore — progress still works for required steps
       }
@@ -122,11 +119,15 @@ export default function SettingsView({
     return () => {
       cancelled = true;
     };
-  }, [businessInfo.id]);
+  }, [businessInfo.id, section]);
 
   const advanceAfter = (from: SettingsSection, complete: boolean, nextBusiness?: BusinessInfo) => {
     if (!complete) return;
     if (from === 'company') {
+      onSectionChange('integrations');
+      return;
+    }
+    if (from === 'integrations') {
       const biz = nextBusiness ?? businessInfo;
       onSectionChange(isCatalogSetupComplete(products, biz) ? 'icp' : 'catalog');
       return;
@@ -235,6 +236,8 @@ export default function SettingsView({
         {section === 'catalog' && (
           <CatalogSection
             products={products}
+            sheetsConnected={sheetsConnected}
+            onGoConnect={() => onSectionChange('integrations')}
             onSave={nextProducts => {
               const wasComplete = isCatalogSetupComplete(products, businessInfo);
               onSaveProducts(nextProducts);
@@ -257,7 +260,11 @@ export default function SettingsView({
           <IntegrationsSection
             companyId={businessInfo.id}
             onRestoredFromSheets={onRestoredFromSheets}
-            onConnectReadyChange={setConnectReady}
+            onConnectReadyChange={ready => {
+              setConnectReady(ready);
+              setSheetsConnected(ready);
+              if (ready) advanceAfter('integrations', true);
+            }}
           />
         )}
       </div>
@@ -489,10 +496,14 @@ function CatalogSection({
   products,
   onSave,
   companyWebsite = '',
+  sheetsConnected = false,
+  onGoConnect,
 }: {
   products: Product[];
   onSave: (p: Product[]) => void;
   companyWebsite?: string;
+  sheetsConnected?: boolean;
+  onGoConnect?: () => void;
 }) {
   const [inputMode, setInputMode] = useState<'url' | 'file' | 'manual'>('url');
   const [url, setUrl] = useState(companyWebsite || '');
@@ -521,6 +532,10 @@ function CatalogSection({
   };
 
   const handleScrape = async () => {
+    if (!sheetsConnected) {
+      setError('Connect Google Sheets first (Workspace → Connect), then extract products.');
+      return;
+    }
     const target = (useCompanySite ? companyWebsite : url).trim();
     if (!target) return;
     setScraping(true);
@@ -532,7 +547,17 @@ function CatalogSection({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: target }),
       });
-      if (!resp.ok) throw new Error('Extract failed');
+      if (!resp.ok) {
+        const text = await resp.text();
+        let detail = 'Extract failed';
+        try {
+          const body = JSON.parse(text) as { detail?: string };
+          if (typeof body.detail === 'string') detail = body.detail;
+        } catch {
+          // plain
+        }
+        throw new Error(detail);
+      }
       const data = await resp.json();
       const found = (data.products || []) as Product[];
       mergeProducts(found);
@@ -544,25 +569,43 @@ function CatalogSection({
     } catch (e) {
       console.warn(e);
       setStatus('');
-      setError('Could not extract products from that URL. Try a product or catalog page, or add items manually.');
+      setError(
+        e instanceof Error && e.message
+          ? e.message
+          : 'Could not extract products from that URL. Try a product or catalog page, or add items manually.',
+      );
     } finally {
       setScraping(false);
     }
   };
 
   const handleFile = async (file: File) => {
+    if (!sheetsConnected) {
+      setError('Connect Google Sheets first (Workspace → Connect), then upload a catalog.');
+      return;
+    }
     setScraping(true);
     setError('');
     try {
       const body = new FormData();
       body.append('file', file);
       const resp = await apiFetch('/api/products/upload-file', { method: 'POST', body });
-      if (!resp.ok) throw new Error('Upload failed');
+      if (!resp.ok) {
+        const text = await resp.text();
+        let detail = 'Upload failed';
+        try {
+          const bodyJson = JSON.parse(text) as { detail?: string };
+          if (typeof bodyJson.detail === 'string') detail = bodyJson.detail;
+        } catch {
+          // plain
+        }
+        throw new Error(detail);
+      }
       const data = await resp.json();
       mergeProducts((data.products || []) as Product[]);
     } catch (e) {
       console.warn(e);
-      setError('Could not parse that file.');
+      setError(e instanceof Error ? e.message : 'Could not parse that file.');
     } finally {
       setScraping(false);
     }
@@ -589,6 +632,19 @@ function CatalogSection({
 
   return (
     <div className="space-y-5 max-w-xl">
+      {!sheetsConnected && (
+        <div className="ui-banner ui-banner--warn" role="status">
+          <p className="m-0 text-[13px]">
+            Connect your Google Sheets account before fetching or uploading a catalog — products sync into your workbook.
+          </p>
+          {onGoConnect && (
+            <button type="button" className="btn btn-secondary mt-2" onClick={onGoConnect}>
+              Open Connect
+            </button>
+          )}
+        </div>
+      )}
+
       <div>
         <label className="block text-[12px] font-medium text-ink-secondary mb-2">Import source</label>
         <div className="flex space-x-5">
@@ -616,6 +672,7 @@ function CatalogSection({
                 className="mt-0.5 accent-accent"
                 checked={useCompanySite}
                 onChange={e => setUseCompanySite(e.target.checked)}
+                disabled={!sheetsConnected}
               />
               <span>
                 Use company website{' '}
@@ -633,12 +690,13 @@ function CatalogSection({
               value={url}
               onChange={e => setUrl(e.target.value)}
               placeholder="https://…"
-              className="w-full border border-border px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted"
+              disabled={!sheetsConnected}
+              className="w-full border border-border px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted disabled:opacity-50"
             />
           )}
           <button
             onClick={handleScrape}
-            disabled={scraping || !(useCompanySite ? companyWebsite : url).trim()}
+            disabled={!sheetsConnected || scraping || !(useCompanySite ? companyWebsite : url).trim()}
             className="btn btn-primary"
           >
             {scraping ? <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.75} /> : 'Extract products'}
@@ -646,6 +704,11 @@ function CatalogSection({
         </div>
       )}
       {status && <p className="text-[12px] text-ink-secondary">{status}</p>}
+      {error && (
+        <p className="ui-banner ui-banner--warn" role="alert">
+          {error}
+        </p>
+      )}
 
       {inputMode === 'file' && (
         <div>
@@ -663,8 +726,8 @@ function CatalogSection({
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            disabled={scraping}
-            className="w-full border border-dashed border-border px-4 py-8 text-center hover:border-ink-muted transition-colors"
+            disabled={!sheetsConnected || scraping}
+            className="w-full border border-dashed border-border px-4 py-8 text-center hover:border-ink-muted transition-colors disabled:opacity-50"
           >
             {scraping ? (
               <Loader2 className="w-4 h-4 animate-spin inline text-ink-muted" strokeWidth={1.75} />
@@ -1052,7 +1115,6 @@ function IntegrationsSection({
   onConnectReadyChange?: (ready: boolean) => void;
 }) {
   const [status, setStatus] = useState<SheetsStatus | null>(null);
-  const [gmailReady, setGmailReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sheetInput, setSheetInput] = useState('');
   const [connectBusy, setConnectBusy] = useState(false);
@@ -1068,10 +1130,10 @@ function IntegrationsSection({
   const [syncingLeads, setSyncingLeads] = useState(false);
   const [syncLeadsMsg, setSyncLeadsMsg] = useState('');
 
-  const sheetsReady = Boolean(status?.connected);
+  const sheetsReady = Boolean(status?.userOauthConnected || status?.oauth?.connected);
   useEffect(() => {
-    onConnectReadyChange?.(gmailReady || sheetsReady);
-  }, [gmailReady, sheetsReady, onConnectReadyChange]);
+    onConnectReadyChange?.(sheetsReady);
+  }, [sheetsReady, onConnectReadyChange]);
 
   const load = async () => {
     setLoading(true);
@@ -1223,7 +1285,7 @@ function IntegrationsSection({
   return (
     <div className="space-y-8">
       {/* Gmail card */}
-      <GmailConnectCard onReadyChange={setGmailReady} />
+      <GmailConnectCard />
 
       {/* Google Sheets card */}
       <div className="border border-border bg-panel/80 p-5 space-y-4">

@@ -23,6 +23,7 @@ interface Props {
   onClearLeads?: () => Promise<void> | void;
   onPrepareOutreach?: () => void;
   onSendAllReady?: () => void;
+  onSendSelected?: (ids: string[]) => Promise<void> | void;
   gmailConnected?: boolean;
   onGoWorkspace?: () => void;
 }
@@ -39,6 +40,7 @@ export default function QueueView({
   onClearLeads,
   onPrepareOutreach,
   onSendAllReady,
+  onSendSelected,
   gmailConnected = false,
   onGoWorkspace,
 }: Props) {
@@ -47,6 +49,8 @@ export default function QueueView({
   const [fitFilter, setFitFilter] = useState<FitFilter>('all');
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all');
   const [clearing, setClearing] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [sendingSelected, setSendingSelected] = useState(false);
   const lastRun = agentLogs[0];
   const lastRunLabel = lastRun ? formatRelative(lastRun.timestamp) : null;
 
@@ -59,6 +63,7 @@ export default function QueueView({
     setClearing(true);
     try {
       await onClearLeads();
+      setSelectedIds([]);
     } finally {
       setClearing(false);
     }
@@ -84,6 +89,33 @@ export default function QueueView({
   });
 
   const filtersActive = intentFilter !== 'all' || fitFilter !== 'all' || priorityFilter !== 'all';
+  const visibleIds = visible.map(p => p.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+
+  const toggleSelectAllVisible = () => {
+    if (allVisibleSelected) {
+      setSelectedIds(prev => prev.filter(id => !visibleIds.includes(id)));
+      return;
+    }
+    setSelectedIds(prev => Array.from(new Set([...prev, ...visibleIds])));
+  };
+
+  const handleSendSelected = async () => {
+    if (!onSendSelected || selectedIds.length === 0) return;
+    const count = selectedIds.length;
+    if (!window.confirm(`Prepare and send outreach for ${count} selected lead(s) via Gmail?`)) return;
+    setSendingSelected(true);
+    try {
+      await onSendSelected(selectedIds);
+      setSelectedIds([]);
+    } finally {
+      setSendingSelected(false);
+    }
+  };
 
   return (
     <div className="max-w-6xl w-full">
@@ -96,9 +128,19 @@ export default function QueueView({
       </div>
 
       <div className="toolbar nr-enter nr-enter-delay-1">
+        {onSendSelected && gmailConnected && selectedIds.length > 0 && (
+          <button
+            type="button"
+            onClick={() => void handleSendSelected()}
+            disabled={sendingSelected}
+            className="btn btn-primary"
+          >
+            {sendingSelected ? 'Sending…' : `Send selected (${selectedIds.length})`}
+          </button>
+        )}
         {onSendAllReady && gmailConnected && (
-          <button type="button" onClick={() => onSendAllReady()} className="btn btn-primary">
-            Send emails
+          <button type="button" onClick={() => onSendAllReady()} className="btn btn-secondary">
+            Send best-fit
           </button>
         )}
         {onPrepareOutreach && prospects.some(p => !p.outreachDraft && (
@@ -108,6 +150,11 @@ export default function QueueView({
         )) && (
           <button type="button" onClick={() => onPrepareOutreach()} className="btn btn-secondary">
             Prepare outreach
+          </button>
+        )}
+        {selectedIds.length > 0 && (
+          <button type="button" onClick={() => setSelectedIds([])} className="btn btn-ghost">
+            Clear selection
           </button>
         )}
         {onClearLeads && prospects.length > 0 && (
@@ -124,6 +171,7 @@ export default function QueueView({
         <span className="text-[12px] text-ink-muted tabular-nums">
           {visible.length} shown
           {filtersActive || filter !== 'All' ? ` of ${prospects.length}` : ''}
+          {selectedIds.length > 0 ? ` · ${selectedIds.length} selected` : ''}
         </span>
       </div>
 
@@ -229,21 +277,32 @@ export default function QueueView({
                 key={prospect.id}
                 className={`bg-panel border border-border p-3 lead-row-tone ${leadRowToneClass(prospect)}`}
               >
-                <button type="button" className="text-left w-full min-w-0" onClick={() => onReviewProspect(prospect.id)}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
-                      <p className="text-[12px] text-ink-muted truncate mt-0.5">
-                        {prospect.location || prospect.website || '—'}
-                      </p>
+                <div className="flex items-start gap-2">
+                  {onSendSelected && (
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(prospect.id)}
+                      onChange={() => toggleSelected(prospect.id)}
+                      className="mt-1 h-4 w-4 accent-[var(--accent)] shrink-0"
+                      aria-label={`Select ${prospect.companyName}`}
+                    />
+                  )}
+                  <button type="button" className="text-left w-full min-w-0" onClick={() => onReviewProspect(prospect.id)}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
+                        <p className="text-[12px] text-ink-muted truncate mt-0.5">
+                          {prospect.location || prospect.website || '—'}
+                        </p>
+                      </div>
+                      <span className="text-[14px] font-semibold tabular-nums shrink-0">{prospect.fitScore}</span>
                     </div>
-                    <span className="text-[14px] font-semibold tabular-nums shrink-0">{prospect.fitScore}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-[12px] text-ink-muted">
-                    <span className="capitalize">{prospect.source || 'web'}</span>
-                    <span className="capitalize">Intent {prospect.intent || prospect.fitBreakdown?.intent || '—'}</span>
-                  </div>
-                </button>
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-[12px] text-ink-muted">
+                      <span className="capitalize">{prospect.source || 'web'}</span>
+                      <span className="capitalize">Intent {prospect.intent || prospect.fitBreakdown?.intent || '—'}</span>
+                    </div>
+                  </button>
+                </div>
                 <select
                   value={normalizeStage(prospect.stage)}
                   onChange={e => onUpdateStage(prospect.id, e.target.value as Prospect['stage'])}
@@ -260,6 +319,17 @@ export default function QueueView({
           <div className="hidden md:block nr-enter nr-enter-delay-3">
             <div className="data-table">
               <div className="data-table__head">
+                <span>
+                  {onSendSelected ? (
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAllVisible}
+                      className="h-3.5 w-3.5 accent-[var(--accent)]"
+                      aria-label="Select all visible leads"
+                    />
+                  ) : null}
+                </span>
                 <span>Lead</span>
                 <span>Source</span>
                 <span>Intent</span>
@@ -272,6 +342,17 @@ export default function QueueView({
                     key={prospect.id}
                     className={`data-table__row lead-row-tone ${leadRowToneClass(prospect)}`}
                   >
+                    <span>
+                      {onSendSelected && (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(prospect.id)}
+                          onChange={() => toggleSelected(prospect.id)}
+                          className="h-3.5 w-3.5 accent-[var(--accent)]"
+                          aria-label={`Select ${prospect.companyName}`}
+                        />
+                      )}
+                    </span>
                     <button type="button" className="text-left min-w-0" onClick={() => onReviewProspect(prospect.id)}>
                       <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
                       <p className="text-[12px] text-ink-muted truncate mt-px">
@@ -337,7 +418,6 @@ function matchesQualityFilters(
     if (summary) {
       if (summary !== fitFilter) return false;
     } else {
-      // Fall back to score bands when summary is missing
       const score = p.fitScore || 0;
       if (fitFilter === 'high' && score < 75) return false;
       if (fitFilter === 'medium' && (score < 55 || score >= 75)) return false;

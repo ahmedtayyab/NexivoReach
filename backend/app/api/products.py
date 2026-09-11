@@ -11,10 +11,28 @@ from app.models.schemas import ProductItem, Business, User
 from app.api.serializers import product_to_frontend, normalize_extracted_product
 from app.api.deps import AuthUser, get_current_user, resolve_business_id
 from app.integrations import sheets as sheets_mod
+from app.integrations import sheets_oauth as sheets_oauth_mod
 from app.services import access as access_mod
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/products", tags=["products"])
+
+
+def _require_sheets_oauth(user: AuthUser) -> None:
+    """Catalog scrape/upload writes into the user's Sheets workbook — OAuth required first."""
+    with Session(engine) as session:
+        db_user = session.get(User, user.id)
+        if db_user and sheets_oauth_mod.is_connected(db_user):
+            return
+        # AUTH_DISABLED local operator can still extract without Sheets.
+        if user.id == "local":
+            return
+    from fastapi import HTTPException
+
+    raise HTTPException(
+        status_code=403,
+        detail="Connect Google Sheets in Workspace → Connect before fetching products.",
+    )
 
 
 def _sync_products_to_sheets(business_id: str, products: list[dict]) -> None:
@@ -85,6 +103,7 @@ async def extract_products_from_url(
     req: UrlParseRequest,
     _user: AuthUser = Depends(get_current_user),
 ):
+    _require_sheets_oauth(_user)
     with Session(engine) as session:
         db_user = session.get(User, _user.id)
         if db_user:
@@ -154,6 +173,7 @@ async def extract_products_from_url(
 
 @router.post("/upload-file")
 async def upload_catalog_file(file: UploadFile = File(...), _user: AuthUser = Depends(get_current_user)):
+    _require_sheets_oauth(_user)
     provider = get_ai_provider()
     content = await file.read()
     text = _file_to_text(file.filename or "", content)

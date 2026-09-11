@@ -89,9 +89,9 @@ export function workspaceSetupSteps(
 ): WorkspaceStepStatus[] {
   return [
     { id: 'company', label: 'Company', complete: isCompanySetupComplete(business) },
+    { id: 'integrations', label: 'Connect', complete: connectReady },
     { id: 'catalog', label: 'Catalog', complete: isCatalogSetupComplete(products, business) },
     { id: 'icp', label: 'Buyers', complete: isBuyersSetupComplete(icp) },
-    { id: 'integrations', label: 'Connect', complete: connectReady, optional: true },
   ];
 }
 
@@ -118,7 +118,8 @@ export function workspaceSetupProgress(steps: WorkspaceStepStatus[]): {
 
 /** Next tab after a successful save — stay on Buyers so Find buyers remains visible. */
 export function nextWorkspaceSection(from: SettingsSection): SettingsSection | null {
-  if (from === 'company') return 'catalog';
+  if (from === 'company') return 'integrations';
+  if (from === 'integrations') return 'catalog';
   if (from === 'catalog') return 'icp';
   return null;
 }

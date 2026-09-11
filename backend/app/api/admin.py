@@ -58,6 +58,19 @@ class UserPatch(BaseModel):
 class InviteCreate(BaseModel):
     email: str
     note: str = ""
+    sendEmail: bool = True
+
+
+def _invite_email_body(*, invitee: str, app_url: str, from_name: str) -> str:
+    return (
+        f"Hi,\n\n"
+        f"You've been invited to NexivoReach (private beta).\n\n"
+        f"1. Open {app_url}\n"
+        f"2. Sign in with Google using this exact address: {invitee}\n\n"
+        f"If Google still shows “access blocked”, ask the operator to also add you as an "
+        f"OAuth test user in Google Cloud Console while the app is in Testing mode.\n\n"
+        f"— {from_name or 'NexivoReach'}\n"
+    )
 
 
 def _user_card(session: Session, user: User, day: str) -> dict:
@@ -359,17 +372,52 @@ def list_allowlist(_admin: AuthUser = Depends(_require_admin)):
 
 
 @router.post("/allowlist")
-def create_invite(payload: InviteCreate, admin: AuthUser = Depends(_require_admin)):
+async def create_invite(payload: InviteCreate, admin: AuthUser = Depends(_require_admin)):
+    from app.config import effective_app_url
+    from app.integrations import gmail as gmail_mod
+
     with Session(engine) as session:
         row = access_mod.add_invite(
             session, payload.email, payload.note, created_by=admin.email or admin.id
         )
-        return {
+        invite_link = effective_app_url().rstrip("/")
+        result = {
             "email": row.email,
             "note": row.note,
             "createdAt": row.created_at,
             "createdBy": row.created_by,
+            "inviteLink": invite_link,
+            "emailSent": False,
+            "emailError": "",
         }
+
+        if not payload.sendEmail:
+            return result
+
+        db_admin = session.get(User, admin.id)
+        if not db_admin or not gmail_mod.is_connected(db_admin):
+            result["emailError"] = (
+                "Invite saved, but Gmail isn’t connected on this admin account — "
+                "connect Gmail in Workspace → Connect, or copy the invite link and email them manually."
+            )
+            return result
+
+        try:
+            await gmail_mod.send_email(
+                session,
+                db_admin,
+                to=row.email,
+                subject="You're invited to NexivoReach",
+                body=_invite_email_body(
+                    invitee=row.email,
+                    app_url=invite_link,
+                    from_name=db_admin.name or db_admin.gmail_email or admin.email,
+                ),
+            )
+            result["emailSent"] = True
+        except Exception as exc:
+            result["emailError"] = f"Invite saved, but email failed: {str(exc)[:180]}"
+        return result
 
 
 @router.delete("/allowlist")

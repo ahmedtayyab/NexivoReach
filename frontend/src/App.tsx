@@ -450,10 +450,10 @@ export default function App() {
     }
     if (!ids.length) return;
     try {
-      const resp = await apiFetch('/api/prospects/send-batch', {
+      const resp = await apiFetch('/api/prospects/send-ready', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids, bestFitOnly: false, limit: ids.length }),
+        body: JSON.stringify({ ids, limit: ids.length }),
       });
       if (!resp.ok) throw new Error(await resp.text());
       const data = await resp.json();
@@ -715,6 +715,7 @@ export default function App() {
             onClearLeads={handleClearLeads}
             onPrepareOutreach={() => handlePrepareOutreach()}
             onSendAllReady={() => handleSendAllReady('ready')}
+            onSendSelected={handleSendSelected}
             gmailConnected={Boolean(user?.gmail?.connected)}
             onGoWorkspace={() => navigate('company')}
           />

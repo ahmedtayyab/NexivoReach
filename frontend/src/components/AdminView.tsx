@@ -67,6 +67,9 @@ type Invite = {
   note: string;
   createdAt: string;
   createdBy: string;
+  inviteLink?: string;
+  emailSent?: boolean;
+  emailError?: string;
 };
 
 type SupportTicket = {
@@ -316,11 +319,25 @@ export default function AdminView() {
       const created = (await resp.json()) as Invite;
       setInvites(prev => {
         const without = prev.filter(i => i.email !== created.email);
-        return [created, ...without];
+        return [
+          {
+            email: created.email,
+            note: created.note,
+            createdAt: created.createdAt,
+            createdBy: created.createdBy,
+          },
+          ...without,
+        ];
       });
       setInviteEmail('');
       setInviteNote('');
-      setInviteMsg(`Invited ${created.email} — they can sign in with Google now.`);
+      if (created.emailSent) {
+        setInviteMsg(`Invited ${created.email} — allowlisted and invite email sent via your Gmail.`);
+      } else if (created.emailError) {
+        setInviteMsg(`${created.email} is allowlisted. ${created.emailError}`);
+      } else {
+        setInviteMsg(`Allowlisted ${created.email} — they can sign in with Google now.`);
+      }
       // Refresh KPIs in the background; list already updated.
       void load();
     } catch (err) {
@@ -819,9 +836,13 @@ export default function AdminView() {
         <div className="admin-panel__head">
           <h2>Invite allowlist</h2>
           <span className="text-[12px] text-ink-muted">
-            {inviteOnly ? 'New signups need an invite' : 'Signup is open — list still useful for tracking'}
+            {inviteOnly ? 'Gates Google signup' : 'Signup is open — list still useful for tracking'}
           </span>
         </div>
+        <p className="text-[12.5px] text-ink-muted mb-3 max-w-2xl">
+          Adding an email unlocks sign-in for that Google account. When your admin Gmail is connected
+          (Workspace → Connect), we also send them an invite email with the app link.
+        </p>
         <form className="flex flex-col sm:flex-row gap-2 mb-3 max-w-2xl" onSubmit={e => void addInvite(e)}>
           <input
             type="email"
@@ -852,12 +873,29 @@ export default function AdminView() {
             ) : (
               <UserPlus className="w-3.5 h-3.5" />
             )}
-            {busyId === 'invite' ? 'Adding…' : 'Invite'}
+            {busyId === 'invite' ? 'Adding…' : 'Invite & email'}
           </button>
         </form>
+        <button
+          type="button"
+          className="text-[12.5px] text-accent hover:underline mb-3"
+          onClick={() => {
+            const link = window.location.origin;
+            void navigator.clipboard?.writeText(
+              `You're invited to NexivoReach.\nSign in with Google at ${link}\n(Ask the operator to allowlist your email first.)`,
+            );
+            setInviteMsg('Copied a shareable invite blurb to clipboard.');
+          }}
+        >
+          Copy invite blurb
+        </button>
         {inviteMsg && (
           <p
-            className={`text-[12.5px] mb-3 ${inviteMsg.toLowerCase().includes('invited') ? 'text-[var(--accent)]' : 'text-amber-700'}`}
+            className={`text-[12.5px] mb-3 ${
+              inviteMsg.toLowerCase().includes('email sent') || inviteMsg.toLowerCase().includes('allowlisted')
+                ? 'text-[var(--accent)]'
+                : 'text-amber-700'
+            }`}
             role="status"
           >
             {inviteMsg}
