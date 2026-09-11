@@ -124,12 +124,12 @@ export default function PredictiveField({
             type="button"
             onClick={handleSuggestAi}
             disabled={aiLoading}
-            className="inline-flex items-center gap-1 text-[11.5px] text-accent hover:underline disabled:opacity-50"
+            className="ai-action"
           >
             {aiLoading ? (
-              <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.75} />
+              <Loader2 className="w-3 h-3 animate-spin ai-action__icon" strokeWidth={1.75} />
             ) : (
-              <Sparkles className="w-3 h-3" strokeWidth={1.75} />
+              <Sparkles className="w-3 h-3 ai-action__icon" strokeWidth={1.75} />
             )}
             Suggest for me
           </button>
@@ -191,7 +191,7 @@ export default function PredictiveField({
         )}
       </div>
 
-      {aiError && <p className="text-[12px] text-amber-600 mt-1">{aiError}</p>}
+      {aiError && <p className="text-[12px] mt-1" style={{ color: 'var(--warning)' }}>{aiError}</p>}
 
       {!single && (
         <div className="flex flex-wrap gap-1.5 mt-2">
@@ -202,9 +202,9 @@ export default function PredictiveField({
                 key={item}
                 type="button"
                 onClick={() => onChange(toggleCsvValue(value, item))}
-                className={`px-2 py-1 rounded-full text-[12px] border transition-colors ${
+                className={`px-2 py-1 rounded-md text-[12px] border transition-colors ${
                   selected
-                    ? 'bg-ink text-panel-elevated border-ink'
+                    ? 'bg-[var(--sidebar-active)] text-[var(--brand)] border-[var(--brand)]'
                     : 'bg-panel border-border text-ink-secondary hover:border-ink-muted'
                 }`}
               >

@@ -374,13 +374,17 @@ function CompanySection({
             type="button"
             onClick={handleExtract}
             disabled={extracting || !description.trim()}
-            className="shrink-0 px-3 py-2 border border-border hover:border-ink-muted rounded-md text-[12px] text-ink-secondary hover:text-ink transition-colors disabled:opacity-40"
+            className="ai-action shrink-0 border border-[color-mix(in_srgb,var(--brass)_25%,var(--border))] px-2.5 py-2"
             title="Fill markets and categories from the description"
           >
-            {extracting ? <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.75} /> : 'Auto-fill'}
+            {extracting ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin ai-action__icon" strokeWidth={1.75} />
+            ) : (
+              'Auto-fill'
+            )}
           </button>
         </div>
-        {error && <p className="text-[12px] text-amber-600 mt-1">{error}</p>}
+        {error && <p className="text-[12px] mt-1" style={{ color: 'var(--warning)' }}>{error}</p>}
       </div>
 
       {!showMore ? (
@@ -1038,11 +1042,11 @@ function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) 
         {loading ? (
           <Loader2 className="w-4 h-4 animate-spin text-ink-secondary shrink-0" />
         ) : status?.connected ? (
-          <span className="flex items-center gap-1.5 text-[12px] text-emerald-600 font-medium shrink-0">
+          <span className="flex items-center gap-1.5 text-[12px] font-medium shrink-0" style={{ color: 'var(--green)' }}>
             <CheckCircle2 className="w-4 h-4" /> Connected
           </span>
         ) : (
-          <span className="flex items-center gap-1.5 text-[12px] text-amber-600 font-medium shrink-0">
+          <span className="flex items-center gap-1.5 text-[12px] font-medium shrink-0" style={{ color: 'var(--warning)' }}>
             <XCircle className="w-4 h-4" /> Not connected
           </span>
         )}
@@ -1276,11 +1280,11 @@ function IntegrationsSection({
           {loading ? (
             <Loader2 className="w-4 h-4 animate-spin text-ink-secondary shrink-0" />
           ) : connectedEnough ? (
-            <span className="flex items-center gap-1.5 text-[12px] text-emerald-600 font-medium shrink-0">
+            <span className="flex items-center gap-1.5 text-[12px] font-medium shrink-0" style={{ color: 'var(--green)' }}>
               <CheckCircle2 className="w-4 h-4" /> Connected
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 text-[12px] text-amber-600 font-medium shrink-0">
+            <span className="flex items-center gap-1.5 text-[12px] font-medium shrink-0" style={{ color: 'var(--warning)' }}>
               <XCircle className="w-4 h-4" /> Needed
             </span>
           )}
