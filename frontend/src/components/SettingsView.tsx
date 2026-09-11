@@ -134,12 +134,16 @@ export default function SettingsView({
     : section === 'catalog' ? 'Continue to Find buyers'
     : null;
 
+  const heroArt =
+    section === 'company' ? brandAssets.workspaceDesk
+    : section === 'integrations' ? brandAssets.integrationsDesk
+    : section === 'catalog' ? brandAssets.workspaceDesk
+    : brandAssets.findBuyers;
+
   return (
     <div className="setup-desk">
       <header className="setup-desk__hero">
-        {section === 'company' && (
-          <img src={brandAssets.workspaceDesk} alt="" className="brand-panel-art brand-panel-art--hero" />
-        )}
+        <img src={heroArt} alt="" className="brand-panel-art brand-panel-art--hero" />
         <p className="setup-desk__step tabular-nums">
           Step {stepNumber} of {steps.length}
         </p>
@@ -1273,9 +1277,6 @@ function IntegrationsSection({
 
   return (
     <div className="space-y-5 max-w-xl">
-      {!connectedEnough && (
-        <img src={brandAssets.integrationsDesk} alt="" className="brand-panel-art" />
-      )}
       <div className="border border-border bg-panel p-5 space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
