@@ -36,6 +36,9 @@ const ROUTE_ALIASES: Record<string, AppRoute> = {
   workspace: 'company',
   setup: 'company',
   'company-profile': 'company',
+  'settings/integrations': 'integrations',
+  'settings/connect': 'integrations',
+  connect: 'integrations',
   catalogue: 'catalog',
   'product-catalog': 'catalog',
   signals: 'icp',
@@ -54,8 +57,12 @@ export function normalizeRoute(raw: string | undefined | null): AppRoute {
   if (!raw) return 'company';
   const key = raw.replace(/^#/, '').trim().toLowerCase();
   if (!key) return 'company';
+  // Support nested hashes like settings/integrations
   if (ROUTE_ALIASES[key]) return ROUTE_ALIASES[key];
+  const leaf = key.includes('/') ? key.split('/').filter(Boolean).pop() || key : key;
+  if (ROUTE_ALIASES[leaf]) return ROUTE_ALIASES[leaf];
   if (APP_ROUTES.includes(key as AppRoute)) return key as AppRoute;
+  if (APP_ROUTES.includes(leaf as AppRoute)) return leaf as AppRoute;
   return 'company';
 }
 

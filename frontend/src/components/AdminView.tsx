@@ -186,9 +186,11 @@ export default function AdminView() {
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setLoading(true);
+      setError('');
+    }
     try {
       const [o, u, a, t] = await Promise.all([
         apiFetch('/api/admin/overview'),
@@ -218,14 +220,22 @@ export default function AdminView() {
       setTickets(Array.isArray(ticketData.tickets) ? ticketData.tickets : []);
       setOpenTicketCount(Number(ticketData.openCount) || 0);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load admin');
+      if (!opts?.silent) setError(e instanceof Error ? e.message : 'Failed to load admin');
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  // Live refresh while Admin is open (tickets, usage, invites).
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void load({ silent: true });
+    }, 20000);
+    return () => window.clearInterval(id);
   }, [load]);
 
   const filtered = useMemo(() => {

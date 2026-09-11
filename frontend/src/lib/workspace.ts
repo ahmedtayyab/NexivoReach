@@ -88,10 +88,10 @@ export function workspaceSetupSteps(
   connectReady = false,
 ): WorkspaceStepStatus[] {
   return [
-    { id: 'company', label: 'Company', complete: isCompanySetupComplete(business) },
-    { id: 'integrations', label: 'Connect', complete: connectReady },
-    { id: 'catalog', label: 'Catalog', complete: isCatalogSetupComplete(products, business) },
-    { id: 'icp', label: 'Buyers', complete: isBuyersSetupComplete(icp) },
+    { id: 'company', label: '1. Company', complete: isCompanySetupComplete(business) },
+    { id: 'integrations', label: '2. Connect', complete: connectReady },
+    { id: 'catalog', label: '3. Products', complete: isCatalogSetupComplete(products, business) },
+    { id: 'icp', label: '4. Find buyers', complete: isBuyersSetupComplete(icp) },
   ];
 }
 

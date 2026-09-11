@@ -109,7 +109,7 @@ export default function FindBuyersPanel({
       <div className="find-buyers__head">
         <h3 className="find-buyers__title">Find buyers</h3>
         <p className="find-buyers__desc">
-          The agent searches from your company, catalog, and buyer profile — then scores Fit and Intent separately.
+          One click. Results go to Leads for review.
         </p>
       </div>
 
@@ -121,7 +121,7 @@ export default function FindBuyersPanel({
 
       <PredictiveField
         label="Optional focus"
-        hint="Leave blank to use your catalog and buyers. Or type a specific hunt."
+        hint="Leave blank to use your catalog and buyers."
         value={query}
         onChange={setQuery}
         suggestions={suggestions}
@@ -145,14 +145,14 @@ export default function FindBuyersPanel({
             statusText ||
             (lastFound !== null
               ? `Last run added ${lastFound} lead${lastFound === 1 ? '' : 's'}.`
-              : 'Uses saved company + catalog + buyers when the box is empty.')
+              : '')
           )}
         </p>
         <button
           type="button"
           onClick={handleRun}
           disabled={isRunning || !ready}
-          className="btn btn-primary"
+          className="btn btn-primary find-buyers__cta"
         >
           {isRunning ? 'Searching…' : 'Find buyers'}
         </button>

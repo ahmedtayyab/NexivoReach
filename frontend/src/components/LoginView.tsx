@@ -12,7 +12,15 @@ export default function LoginView({ error }: Props) {
         alt=""
         className="absolute inset-0 w-full h-full object-cover"
       />
-      <div className="absolute inset-0 bg-canvas/55" aria-hidden />
+      <div className="absolute inset-0 bg-[#121820]/45" aria-hidden />
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            'linear-gradient(115deg, rgba(228,235,241,0.88) 0%, rgba(228,235,241,0.55) 42%, rgba(42,90,132,0.28) 100%)',
+        }}
+        aria-hidden
+      />
 
       <div className="relative w-full max-w-md nr-enter">
         <div className="mb-10 flex justify-center nr-enter nr-enter-delay-1">
@@ -43,7 +51,10 @@ export default function LoginView({ error }: Props) {
         </div>
 
         <p className="text-[12px] text-ink-muted mt-10">
-          Turn products into qualified buyers.
+          Turn products into qualified buyers.{' '}
+          <a href="/privacy.html" className="underline hover:text-ink">
+            Privacy
+          </a>
         </p>
       </div>
     </div>

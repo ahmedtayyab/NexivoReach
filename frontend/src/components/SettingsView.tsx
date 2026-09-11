@@ -11,7 +11,6 @@ import {
 import type { SettingsSection } from '../lib/navigation';
 import {
   isCatalogSetupComplete,
-  isCompanySetupComplete,
   nextWorkspaceSection,
   workspaceSetupProgress,
   workspaceSetupSteps,
@@ -67,36 +66,27 @@ export default function SettingsView({
 }: Props) {
   const [connectReady, setConnectReady] = useState(false);
   const [sheetsConnected, setSheetsConnected] = useState(false);
-  const tabs: { id: SettingsSection; label: string }[] = [
-    { id: 'company', label: 'Company' },
-    { id: 'integrations', label: 'Connect' },
-    { id: 'catalog', label: 'Catalog' },
-    { id: 'icp', label: 'Buyers' },
-  ];
-
-  const titles: Record<SettingsSection, string> = {
-    company: 'Company',
-    catalog: 'Catalog',
-    icp: 'Buyers',
-    integrations: 'Connect',
-  };
-  const blurb: Record<SettingsSection, string> = {
-    company: 'What you sell and where — used to plan searches and judge fit.',
-    catalog: 'Products the agent matches against buyer sites. Requires Google Sheets connected first.',
-    icp: 'Who should buy — then run Find buyers below. Markets default to company unless you override.',
-    integrations: 'Connect Google Sheets before importing a catalog. Gmail is for sending outreach.',
-  };
 
   const steps = useMemo(
     () => workspaceSetupSteps(businessInfo, products, icp, connectReady),
     [businessInfo, products, icp, connectReady],
   );
   const progress = useMemo(() => workspaceSetupProgress(steps), [steps]);
-  const stepComplete = useMemo(() => {
-    const map = {} as Record<SettingsSection, boolean>;
-    for (const step of steps) map[step.id] = step.complete;
-    return map;
-  }, [steps]);
+  const stepIndex = Math.max(0, steps.findIndex(s => s.id === section));
+  const stepNumber = stepIndex >= 0 ? stepIndex + 1 : 1;
+
+  const titles: Record<SettingsSection, string> = {
+    company: 'Tell us about your company',
+    integrations: 'Connect Google once',
+    catalog: 'Add what you sell',
+    icp: 'Who should we find?',
+  };
+  const blurb: Record<SettingsSection, string> = {
+    company: 'Name and website are enough to start. Description helps the agent.',
+    integrations: 'One click for Gmail + Sheets. Required before importing a catalog.',
+    catalog: 'Pull products from your website, or skip and continue.',
+    icp: 'Name the buyer type, then hit Find buyers. Results land in Leads.',
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -113,7 +103,7 @@ export default function SettingsView({
           setConnectReady(sheetsOk);
         }
       } catch {
-        // ignore — progress still works for required steps
+        // ignore
       }
     })();
     return () => {
@@ -136,100 +126,59 @@ export default function SettingsView({
     if (next) onSectionChange(next);
   };
 
-  // Find buyers once — on Buyers tab only (not Company/Catalog too).
   const showFind = Boolean(onAddProspects && onAddLog && section === 'icp');
+  const nextLabel =
+    section === 'company' ? 'Continue to Connect'
+    : section === 'integrations' ? 'Continue to Products'
+    : section === 'catalog' ? 'Continue to Find buyers'
+    : null;
 
   return (
     <div className="setup-desk">
       <header className="setup-desk__hero">
-        <h1 className="setup-desk__title">Workspace</h1>
-        <p className="setup-desk__lede">
-          Brief the agent, then find buyers. Leads and Outreach handle what comes next.
+        <p className="setup-desk__step tabular-nums">
+          Step {stepNumber} of {steps.length}
         </p>
-        <div className="ws-progress" aria-label="Workspace setup progress">
-          <div className="ws-progress__row">
-            <span className="ws-progress__label">
-              {progress.requiredDone >= progress.requiredTotal
-                ? connectReady
-                  ? 'Workspace ready'
-                  : 'Ready to find buyers — Connect is optional'
-                : `Setup ${progress.requiredDone} of ${progress.requiredTotal} required`}
-            </span>
-            <span className="ws-progress__pct tabular-nums">{progress.percent}%</span>
-          </div>
-          <div
-            className="ws-progress__track"
-            role="progressbar"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={progress.percent}
-          >
-            <div className="ws-progress__fill" style={{ width: `${progress.percent}%` }} />
-          </div>
-          <ol className="ws-progress__steps">
-            {steps.map(step => (
-              <li
-                key={step.id}
-                className={[
-                  step.complete ? 'is-done' : '',
-                  section === step.id ? 'is-current' : '',
-                  step.optional ? 'is-optional' : '',
-                ].filter(Boolean).join(' ')}
-              >
-                <button type="button" onClick={() => onSectionChange(step.id)}>
-                  {step.complete ? (
-                    <CheckCircle2 className="w-3.5 h-3.5" strokeWidth={2} aria-hidden />
-                  ) : (
-                    <span className="ws-progress__dot" aria-hidden />
-                  )}
-                  <span>
-                    {step.label}
-                    {step.optional ? ' · optional' : ''}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ol>
+        <h1 className="setup-desk__title">{titles[section]}</h1>
+        <p className="setup-desk__lede">{blurb[section]}</p>
+        <div className="ws-stepper" aria-label="Setup steps">
+          {steps.map((step, i) => (
+            <button
+              key={step.id}
+              type="button"
+              className={[
+                'ws-stepper__item',
+                step.complete ? 'is-done' : '',
+                section === step.id ? 'is-current' : '',
+              ].filter(Boolean).join(' ')}
+              onClick={() => onSectionChange(step.id)}
+            >
+              <span className="ws-stepper__num">{i + 1}</span>
+              <span className="ws-stepper__label">{step.label.replace(/^\d+\.\s*/, '')}</span>
+            </button>
+          ))}
+        </div>
+        <div
+          className="ws-progress__track mt-3"
+          role="progressbar"
+          aria-valuenow={progress.percent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div className="ws-progress__fill" style={{ width: `${progress.percent}%` }} />
         </div>
       </header>
 
-      <div className="ws-tabs" role="tablist" aria-label="Workspace sections">
-        {tabs.map(t => (
-          <button
-            key={t.id}
-            type="button"
-            role="tab"
-            aria-selected={section === t.id}
-            className={[
-              section === t.id ? 'is-active' : '',
-              stepComplete[t.id] ? 'is-complete' : '',
-            ].filter(Boolean).join(' ')}
-            onClick={() => onSectionChange(t.id)}
-          >
-            {stepComplete[t.id] && (
-              <CheckCircle2 className="w-3.5 h-3.5 ws-tabs__check" strokeWidth={2} aria-hidden />
-            )}
-            {t.label}
-          </button>
-        ))}
-      </div>
-
       <div className={section === 'integrations' || section === 'icp' ? 'ws-panel ws-panel--wide' : 'ws-panel'}>
-        <div className="mb-4">
-          <h2 className="text-[15px] font-semibold text-ink m-0">{titles[section]}</h2>
-          <p className="text-[12.5px] text-ink-muted mt-1 mb-0 leading-snug">{blurb[section]}</p>
-        </div>
-
         {section === 'company' && (
           <CompanySection
             key={businessInfo.id ?? 'company'}
             businessInfo={businessInfo}
             products={products}
+            continueLabel={nextLabel || 'Continue'}
             onSave={info => {
-              const wasComplete = isCompanySetupComplete(businessInfo);
               onSaveBusiness(info);
-              const nowComplete = isCompanySetupComplete(info);
-              if (!wasComplete && nowComplete) advanceAfter('company', true, info);
+              advanceAfter('company', true, info);
             }}
           />
         )}
@@ -237,19 +186,17 @@ export default function SettingsView({
           <CatalogSection
             products={products}
             sheetsConnected={sheetsConnected}
+            continueLabel={nextLabel || 'Continue'}
             onGoConnect={() => onSectionChange('integrations')}
+            onContinue={() => advanceAfter('catalog', true)}
             onSave={nextProducts => {
-              const wasComplete = isCatalogSetupComplete(products, businessInfo);
               onSaveProducts(nextProducts);
-              const nowComplete = isCatalogSetupComplete(nextProducts, businessInfo);
-              if (!wasComplete && nowComplete) advanceAfter('catalog', true);
             }}
             companyWebsite={businessInfo.website}
           />
         )}
         {section === 'icp' && (
           <ICPSection
-            key={icp.companySize + (businessInfo.targetMarkets || []).join('|')}
             icp={icp}
             businessInfo={businessInfo}
             products={products}
@@ -259,11 +206,12 @@ export default function SettingsView({
         {section === 'integrations' && (
           <IntegrationsSection
             companyId={businessInfo.id}
+            continueLabel={nextLabel || 'Continue'}
+            onContinue={() => advanceAfter('integrations', true)}
             onRestoredFromSheets={onRestoredFromSheets}
             onConnectReadyChange={ready => {
               setConnectReady(ready);
               setSheetsConnected(ready);
-              if (ready) advanceAfter('integrations', true);
             }}
           />
         )}
@@ -286,22 +234,27 @@ export default function SettingsView({
 }
 
 
+
 function CompanySection({
   businessInfo,
   products,
   onSave,
+  continueLabel = 'Continue',
 }: {
   businessInfo: BusinessInfo;
   products: Product[];
   onSave: (b: BusinessInfo) => void;
+  continueLabel?: string;
 }) {
   const [name, setName] = useState(businessInfo.name ?? '');
   const [website, setWebsite] = useState(businessInfo.website ?? '');
   const [description, setDescription] = useState(businessInfo.description ?? '');
   const [markets, setMarkets] = useState((businessInfo.targetMarkets ?? []).join(', '));
   const [categories, setCategories] = useState((businessInfo.primaryCategories ?? []).join(', '));
+  const [showMore, setShowMore] = useState(
+    Boolean((businessInfo.targetMarkets ?? []).length || (businessInfo.primaryCategories ?? []).length),
+  );
   const [extracting, setExtracting] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
   const [liveCategorySuggestions, setLiveCategorySuggestions] = useState<string[]>([]);
   const [categorySuggesting, setCategorySuggesting] = useState(false);
@@ -399,78 +352,83 @@ function CompanySection({
       targetMarkets: markets.split(',').map(s => s.trim()).filter(Boolean),
       primaryCategories: categories.split(',').map(s => s.trim()).filter(Boolean),
     });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
   };
 
   return (
     <div className="space-y-5 max-w-lg">
-      <p className="text-[13px] text-ink-muted">Brief your company like you would a new salesperson.</p>
+      <Field label="Company name" value={name} onChange={setName} placeholder="Acme Manufacturing" />
+      <Field label="Website" value={website} onChange={setWebsite} placeholder="https://..." />
       <div>
         <label className="block text-[12px] font-medium text-ink-secondary mb-1">
-          Business description <span className="text-ink-muted font-normal">(auto-fill from this)</span>
+          What you sell <span className="text-ink-muted font-normal">(short description)</span>
         </label>
         <div className="flex gap-2 items-start">
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value)}
             rows={3}
-            placeholder="We manufacture industrial valves in Italy and sell to water utilities in Germany and the UK..."
+            placeholder="We manufacture industrial valves and sell to water utilities in Germany and the UK…"
             className="flex-1 border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted resize-none"
           />
           <button
+            type="button"
             onClick={handleExtract}
             disabled={extracting || !description.trim()}
             className="shrink-0 px-3 py-2 border border-border hover:border-ink-muted rounded-md text-[12px] text-ink-secondary hover:text-ink transition-colors disabled:opacity-40"
+            title="Fill markets and categories from the description"
           >
             {extracting ? <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.75} /> : 'Auto-fill'}
           </button>
         </div>
         {error && <p className="text-[12px] text-amber-600 mt-1">{error}</p>}
-        {catalogCats.length > 0 && (
-          <p className="text-[12px] text-ink-muted mt-2">
-            From your catalog: {catalogCats.slice(0, 5).join(', ')}
-            {catalogCats.length > 5 ? '…' : ''} — used to refine suggestions below.
-          </p>
-        )}
       </div>
 
-      <Field label="Business name" value={name} onChange={setName} placeholder="Acme Manufacturing" />
-      <Field label="Website" value={website} onChange={setWebsite} placeholder="https://..." />
-      <PredictiveField
-        label="Where we sell"
-        hint="Markets the company sells into. Buyers reuse this unless you override."
-        value={markets}
-        onChange={setMarkets}
-        suggestions={marketSuggestions}
-        placeholder="United States, United Kingdom, UAE"
-        aiContext={{
-          field: 'markets',
-          description,
-          catalogCategories: catalogCats,
-        }}
-      />
-      <PredictiveField
-        label="Product categories"
-        hint={
-          categorySuggesting
-            ? 'Inferring categories from your description…'
-            : 'Inferred from your description (and catalog when available). Click chips or Suggest for me — type any custom category.'
-        }
-        value={categories}
-        onChange={setCategories}
-        suggestions={categorySuggestions}
-        placeholder="e.g. Sportswear, Industrial Equipment, SaaS"
-        aiContext={{
-          field: 'categories',
-          description,
-          catalogCategories: catalogCats,
-        }}
-      />
+      {!showMore ? (
+        <button
+          type="button"
+          className="text-[12.5px] text-ink-muted hover:text-ink underline-offset-2 hover:underline"
+          onClick={() => setShowMore(true)}
+        >
+          More options — markets & categories
+        </button>
+      ) : (
+        <div className="space-y-4 pt-1 border-t border-border-subtle">
+          <PredictiveField
+            label="Where we sell"
+            hint="Optional. Buyers reuse this unless you override later."
+            value={markets}
+            onChange={setMarkets}
+            suggestions={marketSuggestions}
+            placeholder="United States, United Kingdom, UAE"
+            aiContext={{
+              field: 'markets',
+              description,
+              catalogCategories: catalogCats,
+            }}
+          />
+          <PredictiveField
+            label="Product categories"
+            hint={
+              categorySuggesting
+                ? 'Inferring categories…'
+                : 'Optional. Helps Find buyers if you skip the product catalog.'
+            }
+            value={categories}
+            onChange={setCategories}
+            suggestions={categorySuggestions}
+            placeholder="e.g. Sportswear, Industrial Equipment"
+            aiContext={{
+              field: 'categories',
+              description,
+              catalogCategories: catalogCats,
+            }}
+          />
+        </div>
+      )}
 
       <div className="pt-1">
-        <button onClick={handleSave} className="btn btn-primary">
-          {saved ? 'Saved' : 'Save company'}
+        <button type="button" onClick={handleSave} className="btn btn-primary">
+          {continueLabel}
         </button>
       </div>
     </div>
@@ -498,14 +456,19 @@ function CatalogSection({
   companyWebsite = '',
   sheetsConnected = false,
   onGoConnect,
+  continueLabel = 'Continue',
+  onContinue,
 }: {
   products: Product[];
   onSave: (p: Product[]) => void;
   companyWebsite?: string;
   sheetsConnected?: boolean;
   onGoConnect?: () => void;
+  continueLabel?: string;
+  onContinue?: () => void;
 }) {
   const [inputMode, setInputMode] = useState<'url' | 'file' | 'manual'>('url');
+  const [showOther, setShowOther] = useState(false);
   const [url, setUrl] = useState(companyWebsite || '');
   const [useCompanySite, setUseCompanySite] = useState(Boolean(companyWebsite?.trim()));
   const [scraping, setScraping] = useState(false);
@@ -635,74 +598,52 @@ function CatalogSection({
       {!sheetsConnected && (
         <div className="ui-banner ui-banner--warn" role="status">
           <p className="m-0 text-[13px]">
-            Connect your Google Sheets account before fetching or uploading a catalog — products sync into your workbook.
+            Connect Google Sheets first — products sync into your workbook.
           </p>
           {onGoConnect && (
             <button type="button" className="btn btn-secondary mt-2" onClick={onGoConnect}>
-              Open Connect
+              Go to Connect
             </button>
           )}
         </div>
       )}
 
-      <div>
-        <label className="block text-[12px] font-medium text-ink-secondary mb-2">Import source</label>
-        <div className="flex space-x-5">
-          {(['url', 'file', 'manual'] as const).map(m => (
-            <label key={m} className="flex items-center space-x-1.5 cursor-pointer text-[13px] text-ink-secondary">
-              <input
-                type="radio"
-                name="import-mode"
-                checked={inputMode === m}
-                onChange={() => setInputMode(m)}
-                className="accent-accent"
-              />
-              <span>{m === 'url' ? 'Website' : m === 'file' ? 'Upload file' : 'Manual entry'}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {inputMode === 'url' && (
-        <div className="space-y-2">
-          {companyWebsite?.trim() ? (
-            <label className="flex items-start gap-2 text-[13px] text-ink-secondary cursor-pointer">
-              <input
-                type="checkbox"
-                className="mt-0.5 accent-accent"
-                checked={useCompanySite}
-                onChange={e => setUseCompanySite(e.target.checked)}
-                disabled={!sheetsConnected}
-              />
-              <span>
-                Use company website{' '}
-                <span className="text-ink-muted">({companyWebsite.trim()})</span>
-              </span>
-            </label>
-          ) : (
-            <p className="text-[12.5px] text-ink-muted">
-              Add a website in Company above, or paste a catalog URL here.
-            </p>
-          )}
-          {!useCompanySite && (
+      <div className="space-y-2">
+        <label className="block text-[12px] font-medium text-ink-secondary">Website</label>
+        {companyWebsite?.trim() ? (
+          <label className="flex items-start gap-2 text-[13px] text-ink-secondary cursor-pointer">
             <input
-              type="url"
-              value={url}
-              onChange={e => setUrl(e.target.value)}
-              placeholder="https://…"
+              type="checkbox"
+              className="mt-0.5 accent-accent"
+              checked={useCompanySite}
+              onChange={e => setUseCompanySite(e.target.checked)}
               disabled={!sheetsConnected}
-              className="w-full border border-border px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted disabled:opacity-50"
             />
-          )}
-          <button
-            onClick={handleScrape}
-            disabled={!sheetsConnected || scraping || !(useCompanySite ? companyWebsite : url).trim()}
-            className="btn btn-primary"
-          >
-            {scraping ? <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.75} /> : 'Extract products'}
-          </button>
-        </div>
-      )}
+            <span>
+              Use company website{' '}
+              <span className="text-ink-muted">({companyWebsite.trim()})</span>
+            </span>
+          </label>
+        ) : null}
+        {!useCompanySite && (
+          <input
+            type="url"
+            value={url}
+            onChange={e => setUrl(e.target.value)}
+            placeholder="https://your-shop.com/products"
+            disabled={!sheetsConnected}
+            className="w-full border border-border px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted disabled:opacity-50"
+          />
+        )}
+        <button
+          type="button"
+          onClick={handleScrape}
+          disabled={!sheetsConnected || scraping || !(useCompanySite ? companyWebsite : url).trim()}
+          className="btn btn-primary"
+        >
+          {scraping ? <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.75} /> : 'Extract products'}
+        </button>
+      </div>
       {status && <p className="text-[12px] text-ink-secondary">{status}</p>}
       {error && (
         <p className="ui-banner ui-banner--warn" role="alert">
@@ -710,59 +651,74 @@ function CatalogSection({
         </p>
       )}
 
-      {inputMode === 'file' && (
-        <div>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".pdf,.csv,.xlsx,.xls"
-            className="hidden"
-            onChange={e => {
-              const file = e.target.files?.[0];
-              if (file) handleFile(file);
-              e.target.value = '';
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            disabled={!sheetsConnected || scraping}
-            className="w-full border border-dashed border-border px-4 py-8 text-center hover:border-ink-muted transition-colors disabled:opacity-50"
-          >
-            {scraping ? (
-              <Loader2 className="w-4 h-4 animate-spin inline text-ink-muted" strokeWidth={1.75} />
-            ) : (
-              <>
-                <p className="text-[13px] text-ink-secondary">Drop a PDF, CSV, or Excel file, or browse</p>
-                <p className="text-[12px] text-ink-muted mt-1">Supports .pdf, .csv, .xlsx</p>
-              </>
-            )}
-          </button>
-        </div>
-      )}
-
-      {inputMode === 'manual' && (
-        <div className="space-y-3 border border-border bg-panel p-4">
-          <Field label="Product name" value={manual.name} onChange={v => setManual({ ...manual, name: v })} placeholder="Product name" />
-          <Field label="Category" value={manual.category} onChange={v => setManual({ ...manual, category: v })} placeholder="Category" />
-          <Field label="Price" value={manual.price} onChange={v => setManual({ ...manual, price: v })} placeholder="$1,850" />
-          <div>
-            <label className="block text-[12px] font-medium text-ink-secondary mb-1">Description</label>
-            <textarea
-              value={manual.description}
-              onChange={e => setManual({ ...manual, description: e.target.value })}
-              rows={2}
-              className="w-full border border-border px-3 py-2 text-[13px] text-ink-secondary"
-            />
+      {!showOther ? (
+        <button
+          type="button"
+          className="text-[12.5px] text-ink-muted hover:text-ink underline-offset-2 hover:underline"
+          onClick={() => {
+            setShowOther(true);
+            setInputMode('file');
+          }}
+        >
+          Or upload a file / add one product
+        </button>
+      ) : (
+        <div className="space-y-3 pt-1 border-t border-border-subtle">
+          <div className="flex space-x-5">
+            {(['file', 'manual'] as const).map(m => (
+              <label key={m} className="flex items-center space-x-1.5 cursor-pointer text-[13px] text-ink-secondary">
+                <input
+                  type="radio"
+                  name="import-mode"
+                  checked={inputMode === m}
+                  onChange={() => setInputMode(m)}
+                  className="accent-accent"
+                />
+                <span>{m === 'file' ? 'Upload file' : 'Manual entry'}</span>
+              </label>
+            ))}
           </div>
-          <button onClick={handleManualAdd} disabled={!manual.name.trim()} className="btn btn-primary">
-            <Plus className="w-3.5 h-3.5" strokeWidth={2} />
-            Add product
-          </button>
+
+          {inputMode === 'file' && (
+            <div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".pdf,.csv,.xlsx,.xls"
+                className="hidden"
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (file) handleFile(file);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={!sheetsConnected || scraping}
+                className="w-full border border-dashed border-border px-4 py-6 text-center hover:border-ink-muted transition-colors disabled:opacity-50"
+              >
+                {scraping ? (
+                  <Loader2 className="w-4 h-4 animate-spin inline text-ink-muted" strokeWidth={1.75} />
+                ) : (
+                  <p className="text-[13px] text-ink-secondary">PDF, CSV, or Excel</p>
+                )}
+              </button>
+            </div>
+          )}
+
+          {inputMode === 'manual' && (
+            <div className="space-y-3 border border-border bg-panel p-4">
+              <Field label="Product name" value={manual.name} onChange={v => setManual({ ...manual, name: v })} placeholder="Product name" />
+              <Field label="Category" value={manual.category} onChange={v => setManual({ ...manual, category: v })} placeholder="Category" />
+              <button type="button" onClick={handleManualAdd} disabled={!manual.name.trim()} className="btn btn-primary">
+                <Plus className="w-3.5 h-3.5" strokeWidth={2} />
+                Add product
+              </button>
+            </div>
+          )}
         </div>
       )}
-
-      {error && <p className="text-[12px] text-amber-700">{error}</p>}
 
       {products.length > 0 && (
         <div className="pt-2">
@@ -802,6 +758,7 @@ function CatalogSection({
                       </p>
                     </div>
                     <button
+                      type="button"
                       onClick={() => removeProduct(product.id)}
                       className="text-border hover:text-ink-secondary shrink-0 mt-0.5"
                       aria-label={`Remove ${product.name}`}
@@ -830,6 +787,15 @@ function CatalogSection({
           )}
         </div>
       )}
+
+      <div className="pt-2 flex flex-wrap gap-2 items-center">
+        <button type="button" className="btn btn-primary" onClick={() => onContinue?.()}>
+          {continueLabel}
+        </button>
+        {products.length === 0 && (
+          <span className="text-[12px] text-ink-muted">You can continue without products if categories are set.</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -856,13 +822,31 @@ function ICPSection({
     marketsMatch ? marketList : (icp.targetCountries ?? []).join(', '),
   );
   const [companySize, setCompanySize] = useState(icp.companySize ?? 'Any');
-  const [minDealSize, setMinDealSize] = useState(icp.minDealSize || '');
   const [signals] = useState(icp.buyingSignals ?? []);
-  const [saved, setSaved] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     if (sameAsMarkets) setCountries(marketList);
   }, [sameAsMarkets, marketList]);
+
+  // Keep parent ICP in sync so Find buyers picks up typed criteria without an extra Save click.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const resolvedCountries = sameAsMarkets
+        ? (businessInfo.targetMarkets ?? [])
+        : countries.split(',').map(s => s.trim()).filter(Boolean);
+      onSave({
+        ...icp,
+        targetBuyerTypes: buyerTypes.split(',').map(s => s.trim()).filter(Boolean),
+        targetCountries: resolvedCountries,
+        companySize,
+        minDealSize: undefined,
+        buyingSignals: signals,
+      });
+    }, 450);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- persist draft fields only
+  }, [buyerTypes, countries, sameAsMarkets, companySize]);
 
   const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
   const context = useMemo(
@@ -885,105 +869,96 @@ function ICPSection({
     [context, catalogCats],
   );
 
-  const handleSave = () => {
-    const resolvedCountries = sameAsMarkets
-      ? (businessInfo.targetMarkets ?? [])
-      : countries.split(',').map(s => s.trim()).filter(Boolean);
-    onSave({
-      ...icp,
-      targetBuyerTypes: buyerTypes.split(',').map(s => s.trim()).filter(Boolean),
-      targetCountries: resolvedCountries,
-      companySize,
-      minDealSize: minDealSize || undefined,
-      buyingSignals: signals,
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
-
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-10 max-w-3xl">
-      <div className="space-y-4">
-        <p className="section-label">Target Buyer Criteria</p>
-        <p className="text-[13px] text-ink-muted leading-relaxed">
-          Name who you want in the pipeline. Geography defaults to company markets so you are not asked twice.
-        </p>
+    <div className="space-y-5 max-w-xl">
+      <PredictiveField
+        label="Buyer types"
+        hint="Who should we find? e.g. distributors, hospitals, gyms."
+        value={buyerTypes}
+        onChange={setBuyerTypes}
+        suggestions={buyerSuggestions}
+        placeholder="Distributors, Retailers, Hospitals…"
+        aiContext={{
+          field: 'buyers',
+          description: businessInfo.description,
+          catalogCategories: catalogCats.length ? catalogCats : businessInfo.primaryCategories,
+        }}
+      />
+
+      <label className="flex items-start gap-2 text-[13px] text-ink-secondary cursor-pointer">
+        <input
+          type="checkbox"
+          className="mt-0.5 accent-accent"
+          checked={sameAsMarkets}
+          onChange={e => setSameAsMarkets(e.target.checked)}
+        />
+        <span>
+          Same markets as company
+          {marketList ? (
+            <span className="text-ink-muted"> ({marketList})</span>
+          ) : (
+            <span className="text-ink-muted"> — optional; set in Company if needed</span>
+          )}
+        </span>
+      </label>
+      {!sameAsMarkets && (
         <PredictiveField
-          label="Buyer types"
-          hint="Type who you sell to (e.g. “gym”, “hospital”, “distributor”) — options appear as you type."
-          value={buyerTypes}
-          onChange={setBuyerTypes}
-          suggestions={buyerSuggestions}
-          placeholder="Distributors, Retailers, Hospitals…"
+          label="Where to look"
+          hint="Only if different from company markets."
+          value={countries}
+          onChange={setCountries}
+          suggestions={countrySuggestions}
+          placeholder="United Arab Emirates, Germany"
           aiContext={{
-            field: 'buyers',
+            field: 'markets',
             description: businessInfo.description,
-            catalogCategories: catalogCats.length ? catalogCats : businessInfo.primaryCategories,
+            catalogCategories: catalogCats,
           }}
         />
-        <label className="flex items-start gap-2 text-[13px] text-ink-secondary cursor-pointer">
-          <input
-            type="checkbox"
-            className="mt-0.5 accent-accent"
-            checked={sameAsMarkets}
-            onChange={e => setSameAsMarkets(e.target.checked)}
-          />
-          <span>
-            Same markets as company
-            {marketList ? <span className="text-ink-muted"> ({marketList})</span> : <span className="text-ink-muted"> — set markets in Company first</span>}
-          </span>
-        </label>
-        {!sameAsMarkets && (
-          <PredictiveField
-            label="Where we look for buyers"
-            hint="Only if different from company markets."
-            value={countries}
-            onChange={setCountries}
-            suggestions={countrySuggestions}
-            placeholder="United Arab Emirates, Germany"
-            aiContext={{
-              field: 'markets',
-              description: businessInfo.description,
-              catalogCategories: catalogCats,
-            }}
-          />
-        )}
-        <div>
-          <label className="block text-[12px] font-medium text-ink-secondary mb-1">Company size</label>
-          <select
-            value={companySize}
-            onChange={e => setCompanySize(e.target.value as IdealCustomerProfile['companySize'])}
-            className="w-full border border-border px-3 py-2 text-[13px] text-ink-secondary bg-panel"
-          >
-            {['Any', 'Small', 'Medium', 'Enterprise'].map(size => (
-              <option key={size} value={size}>{size}</option>
-            ))}
-          </select>
-        </div>
-        <Field label="Minimum deal size" value={minDealSize} onChange={setMinDealSize} placeholder="$15,000" />
-        <div className="pt-2">
-          <button onClick={handleSave} className="btn btn-primary">
-            {saved ? 'Saved' : 'Save buyers'}
-          </button>
-        </div>
-      </div>
+      )}
 
-      <div>
-        <p className="section-label mb-1.5">Buying Signal Rules</p>
-        <p className="text-[13px] text-ink-muted leading-relaxed mb-3">
-          Optional. These are examples of timing the agent may look for on a qualified site (expansion, sourcing, a new line). A company is not a hot lead just because it matches a product keyword.
-        </p>
-        <div className="space-y-4 divide-y divide-border-subtle">
-          {signals.map((sig, i) => (
-            <div key={sig.id || i} className="pt-3 first:pt-0">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[13.5px] font-medium text-ink-secondary">{sig.name}</p>
-                <span className="text-[12px] text-ink-muted">+{sig.weight} pts</span>
+      {!showAdvanced ? (
+        <button
+          type="button"
+          className="text-[12.5px] text-ink-muted hover:text-ink underline-offset-2 hover:underline"
+          onClick={() => setShowAdvanced(true)}
+        >
+          More options — company size & signals
+        </button>
+      ) : (
+        <div className="space-y-4 pt-1 border-t border-border-subtle">
+          <div>
+            <label className="block text-[12px] font-medium text-ink-secondary mb-1">Company size</label>
+            <select
+              value={companySize}
+              onChange={e => setCompanySize(e.target.value as IdealCustomerProfile['companySize'])}
+              className="w-full border border-border px-3 py-2 text-[13px] text-ink-secondary bg-panel"
+            >
+              {['Any', 'Small', 'Medium', 'Enterprise'].map(size => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
+          </div>
+          {signals.length > 0 && (
+            <div>
+              <p className="text-[12px] font-medium text-ink-secondary mb-2">Buying signals (optional)</p>
+              <div className="space-y-3">
+                {signals.map((sig, i) => (
+                  <div key={sig.id || i}>
+                    <p className="text-[13px] font-medium text-ink-secondary">{sig.name}</p>
+                    <p className="text-[12px] text-ink-muted mt-0.5">{sig.description}</p>
+                  </div>
+                ))}
               </div>
-              <p className="text-[12px] text-ink-secondary mt-0.5 leading-relaxed">{sig.description}</p>
             </div>
-          ))}
+          )}
         </div>
+      )}
+
+      <div className="pt-1">
+        <p className="text-[12px] text-ink-muted m-0">
+          Criteria save as you type. Use <strong className="font-medium text-ink">Find buyers</strong> below when ready.
+        </p>
       </div>
     </div>
   );
@@ -1104,6 +1079,8 @@ function IntegrationsSection({
   companyId,
   onRestoredFromSheets,
   onConnectReadyChange,
+  continueLabel = 'Continue',
+  onContinue,
 }: {
   companyId?: string;
   onRestoredFromSheets?: (payload: {
@@ -1113,6 +1090,8 @@ function IntegrationsSection({
     activeBusinessId?: string;
   }) => void | Promise<void>;
   onConnectReadyChange?: (ready: boolean) => void;
+  continueLabel?: string;
+  onContinue?: () => void;
 }) {
   const [status, setStatus] = useState<SheetsStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1120,6 +1099,7 @@ function IntegrationsSection({
   const [connectBusy, setConnectBusy] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [connectMsg, setConnectMsg] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [restoreOptions, setRestoreOptions] = useState<
     Array<{ companyName: string; productsTab?: string; leadsTab?: string }>
   >([]);
@@ -1281,102 +1261,78 @@ function IntegrationsSection({
   const platformReady = Boolean(status?.platformReady);
   const userOauth = Boolean(status?.userOauthConnected ?? status?.oauth?.connected);
   const oauthEmail = status?.oauth?.email || '';
+  const connectedEnough = userOauth;
 
   return (
-    <div className="space-y-8">
-      {/* Gmail card */}
-      <GmailConnectCard />
-
-      {/* Google Sheets card */}
-      <div className="border border-border bg-panel/80 p-5 space-y-4">
-        <div className="flex items-center justify-between gap-3">
+    <div className="space-y-5 max-w-xl">
+      <div className="border border-border bg-panel p-5 space-y-3">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 className="font-display text-[15px] font-semibold text-ink">Google Sheets</h3>
-            <p className="text-[12.5px] text-ink-secondary mt-0.5">
-              Connect your Google account once. Companies share one workbook in your Drive; each gets its own Products and Leads tabs.
+            <h3 className="font-display text-[15px] font-semibold text-ink m-0">Gmail + Sheets</h3>
+            <p className="text-[12.5px] text-ink-secondary mt-1 mb-0 leading-snug">
+              One Google click. Then create a spreadsheet for this company.
             </p>
           </div>
           {loading ? (
             <Loader2 className="w-4 h-4 animate-spin text-ink-secondary shrink-0" />
-          ) : status?.connected ? (
+          ) : connectedEnough ? (
             <span className="flex items-center gap-1.5 text-[12px] text-emerald-600 font-medium shrink-0">
-              <CheckCircle2 className="w-4 h-4" /> Linked
-            </span>
-          ) : userOauth ? (
-            <span className="flex items-center gap-1.5 text-[12px] text-amber-600 font-medium shrink-0">
-              <CheckCircle2 className="w-4 h-4" /> Account ready
+              <CheckCircle2 className="w-4 h-4" /> Connected
             </span>
           ) : (
             <span className="flex items-center gap-1.5 text-[12px] text-amber-600 font-medium shrink-0">
-              <XCircle className="w-4 h-4" /> Not connected
+              <XCircle className="w-4 h-4" /> Needed
             </span>
           )}
         </div>
 
         {userOauth && oauthEmail && (
-          <p className="text-[13px] text-ink-secondary">
-            Sheets account <span className="font-medium text-ink">{oauthEmail}</span>
+          <p className="text-[13px] text-ink-secondary m-0">
+            Signed in as <span className="font-medium text-ink">{oauthEmail}</span>
           </p>
         )}
 
         {!userOauth && platformReady && !loading && (
-          <div className="flex flex-wrap gap-2 items-center">
-            <a
-              href="/api/auth/sheets"
-              className="inline-flex px-3 py-1.5 text-[13px] bg-accent hover:bg-accent-hover text-white rounded-md nr-btn-press"
-            >
-              Connect Google Sheets
-            </a>
-            <button
-              type="button"
-              onClick={load}
-              className="text-[12.5px] text-ink-secondary hover:text-ink underline-offset-2 hover:underline"
-            >
-              Refresh status
-            </button>
-          </div>
+          <a
+            href="/api/auth/workspace"
+            className="inline-flex px-4 py-2 text-[13px] bg-accent hover:bg-accent-hover text-white rounded-md nr-btn-press"
+          >
+            Connect Gmail + Sheets
+          </a>
+        )}
+
+        {!platformReady && !loading && (
+          <p className="text-[12.5px] text-ink-secondary m-0">
+            Google sign-in is not configured on the server.
+          </p>
         )}
 
         {userOauth && !status?.connected && !loading && (
-          <div className="space-y-3 pt-1">
-            <p className="text-[12.5px] text-ink-secondary leading-relaxed">
-              Create a spreadsheet (or paste one you already own). Later companies will reuse this workbook and add new tabs.
+          <div className="space-y-3 pt-1 border-t border-border-subtle">
+            <p className="text-[12.5px] text-ink-secondary m-0">
+              Create a spreadsheet for product and lead sync.
             </p>
-            <div className="flex flex-wrap gap-2 items-center">
-              <button
-                type="button"
-                disabled={createBusy}
-                onClick={handleCreate}
-                className="px-3 py-2 text-[13px] bg-accent hover:bg-accent-hover disabled:opacity-50 text-white rounded-md"
-              >
-                {createBusy ? 'Creating…' : 'Create spreadsheet'}
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!window.confirm('Disconnect Google Sheets from NexivoReach? Company sheet links stay until you unlink them.')) return;
-                  await apiFetch('/api/auth/sheets/disconnect', { method: 'POST' });
-                  setConnectMsg('Google Sheets disconnected.');
-                  await load();
-                }}
-                className="px-3 py-1.5 text-[12.5px] border border-border rounded-md text-ink-secondary hover:border-ink-muted"
-              >
-                Disconnect account
-              </button>
-            </div>
-            <div className="flex flex-col sm:flex-row gap-2 max-w-xl">
+            <button
+              type="button"
+              disabled={createBusy}
+              onClick={handleCreate}
+              className="btn btn-primary"
+            >
+              {createBusy ? 'Creating…' : 'Create spreadsheet'}
+            </button>
+            <div className="flex flex-col sm:flex-row gap-2">
               <input
                 type="text"
                 value={sheetInput}
                 onChange={e => setSheetInput(e.target.value)}
-                placeholder="Or paste spreadsheet URL / ID you own"
+                placeholder="Or paste spreadsheet URL / ID"
                 className="flex-1 border border-border rounded-md px-3 py-2 text-[13px] text-ink bg-panel"
               />
               <button
                 type="button"
                 disabled={connectBusy || !sheetInput.trim()}
                 onClick={handleConnect}
-                className="btn-secondary text-[13px] py-2 px-3 disabled:opacity-40"
+                className="btn btn-secondary disabled:opacity-40"
               >
                 {connectBusy ? 'Linking…' : 'Link sheet'}
               </button>
@@ -1385,139 +1341,120 @@ function IntegrationsSection({
         )}
 
         {status?.connected && status.url && (
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            <a
-              href={status.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-[12.5px] text-accent hover:underline"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              {status.spreadsheet_title || 'Open spreadsheet'}
-            </a>
-            <button
-              type="button"
-              disabled={syncingLeads}
-              onClick={async () => {
-                setSyncingLeads(true);
-                setSyncLeadsMsg('');
-                try {
-                  const resp = await apiFetch('/api/sheets/sync-leads', { method: 'POST' });
-                  if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Sync failed'));
-                  const data = await resp.json();
-                  setSyncLeadsMsg(
-                    `Synced ${data.written || 0} lead(s)`
-                    + (data.tab ? ` to “${data.tab}”` : '')
-                    + ' — emailed rows should now be blue.',
-                  );
-                } catch (e) {
-                  setSyncLeadsMsg(e instanceof Error ? e.message : 'Sync failed');
-                } finally {
-                  setSyncingLeads(false);
-                }
-              }}
-              className="btn-secondary text-[12.5px] py-1.5 px-3 disabled:opacity-50"
-            >
-              {syncingLeads ? 'Coloring…' : 'Sync leads & colors'}
-            </button>
-            <button
-              type="button"
-              onClick={handleDisconnect}
-              className="px-3 py-1.5 text-[12.5px] border border-border rounded-md text-ink-secondary hover:border-ink-muted"
-            >
-              Unlink sheet
-            </button>
-            {userOauth && (
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!window.confirm('Disconnect Google Sheets from NexivoReach?')) return;
-                  await apiFetch('/api/auth/sheets/disconnect', { method: 'POST' });
-                  setConnectMsg('Google Sheets disconnected.');
-                  await load();
-                }}
-                className="px-3 py-1.5 text-[12.5px] text-ink-secondary hover:underline"
-              >
-                Disconnect account
-              </button>
-            )}
-            {syncLeadsMsg && (
-              <p className="w-full text-[12px] text-ink-secondary">{syncLeadsMsg}</p>
-            )}
-          </div>
+          <a
+            href={status.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-[12.5px] text-accent hover:underline"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            {status.spreadsheet_title || 'Open spreadsheet'}
+          </a>
         )}
 
-        {!platformReady && !loading && (
-          <p className="text-[12.5px] text-ink-secondary leading-relaxed">
-            Google sign-in is not configured on the server, so Sheets connect is unavailable.
-          </p>
-        )}
+        {connectMsg && <p className="text-[12.5px] text-ink-secondary m-0">{connectMsg}</p>}
+      </div>
 
-        {connectMsg && (
-          <p className="text-[12.5px] text-ink-secondary">{connectMsg}</p>
+      <div className="pt-1 flex flex-wrap gap-2 items-center">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => onContinue?.()}
+          disabled={!connectedEnough}
+        >
+          {continueLabel}
+        </button>
+        {!connectedEnough && (
+          <span className="text-[12px] text-ink-muted">Connect Google to continue.</span>
         )}
       </div>
 
-      {status?.connected && restoreOptions.length > 0 && (
-        <div className="rounded-xl border border-border bg-surface p-6 space-y-4">
-          <div>
-            <h3 className="text-[14px] font-semibold text-ink">Restore from this company’s sheet</h3>
-            <p className="text-[12.5px] text-ink-secondary mt-0.5 leading-relaxed">
-              Pull catalog (and optionally leads) from tabs in the spreadsheet linked above into this company.
-            </p>
-          </div>
-          <div>
-            <label className="block text-[12px] font-medium text-ink-secondary mb-1">Company tab</label>
-            <select
-              value={restoreCompany}
-              onChange={e => setRestoreCompany(e.target.value)}
-              className="w-full max-w-md border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary bg-panel"
-            >
-              {restoreOptions.map(opt => (
-                <option key={opt.companyName} value={opt.companyName}>
-                  {opt.companyName}
-                  {opt.productsTab ? ' (products)' : ''}
-                  {opt.leadsTab ? ' (leads)' : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-          <label className="flex items-center gap-2 text-[13px] text-ink-secondary">
-            <input
-              type="checkbox"
-              checked={includeLeads}
-              onChange={e => setIncludeLeads(e.target.checked)}
-            />
-            Also restore leads (usually skip — re-run Discover instead)
-          </label>
-          <button
-            type="button"
-            onClick={handleRestore}
-            disabled={restoring || !restoreCompany}
-            className="px-4 py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-[13px] font-medium rounded-md transition-colors"
-          >
-            {restoring ? 'Restoring…' : 'Restore company'}
-          </button>
-          {restoreMsg && (
-            <p className="text-[12.5px] text-ink-secondary">{restoreMsg}</p>
+      {!showAdvanced ? (
+        <button
+          type="button"
+          className="text-[12.5px] text-ink-muted hover:text-ink underline-offset-2 hover:underline"
+          onClick={() => setShowAdvanced(true)}
+        >
+          More options — Gmail status, restore, sync
+        </button>
+      ) : (
+        <div className="space-y-6 pt-2 border-t border-border-subtle">
+          <GmailConnectCard />
+
+          {status?.connected && (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={syncingLeads}
+                onClick={async () => {
+                  setSyncingLeads(true);
+                  setSyncLeadsMsg('');
+                  try {
+                    const resp = await apiFetch('/api/sheets/sync-leads', { method: 'POST' });
+                    if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Sync failed'));
+                    const data = await resp.json();
+                    setSyncLeadsMsg(
+                      `Synced ${data.written || 0} lead(s)`
+                      + (data.tab ? ` to “${data.tab}”` : '')
+                      + '.',
+                    );
+                  } catch (e) {
+                    setSyncLeadsMsg(e instanceof Error ? e.message : 'Sync failed');
+                  } finally {
+                    setSyncingLeads(false);
+                  }
+                }}
+                className="btn btn-secondary disabled:opacity-50"
+              >
+                {syncingLeads ? 'Syncing…' : 'Sync leads & colors'}
+              </button>
+              <button type="button" onClick={handleDisconnect} className="btn btn-ghost">
+                Unlink sheet
+              </button>
+              {syncLeadsMsg && (
+                <p className="w-full text-[12px] text-ink-secondary m-0">{syncLeadsMsg}</p>
+              )}
+            </div>
+          )}
+
+          {status?.connected && restoreOptions.length > 0 && (
+            <div className="space-y-3">
+              <h3 className="text-[14px] font-semibold text-ink m-0">Restore from sheet</h3>
+              <select
+                value={restoreCompany}
+                onChange={e => setRestoreCompany(e.target.value)}
+                className="w-full max-w-md border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary bg-panel"
+              >
+                {restoreOptions.map(opt => (
+                  <option key={opt.companyName} value={opt.companyName}>
+                    {opt.companyName}
+                  </option>
+                ))}
+              </select>
+              <label className="flex items-center gap-2 text-[13px] text-ink-secondary">
+                <input
+                  type="checkbox"
+                  checked={includeLeads}
+                  onChange={e => setIncludeLeads(e.target.checked)}
+                />
+                Also restore leads
+              </label>
+              <button
+                type="button"
+                onClick={handleRestore}
+                disabled={restoring || !restoreCompany}
+                className="btn btn-secondary disabled:opacity-40"
+              >
+                {restoring ? 'Restoring…' : 'Restore company'}
+              </button>
+              {restoreMsg && (
+                <p className="text-[12.5px] text-ink-secondary m-0">{restoreMsg}</p>
+              )}
+            </div>
           )}
         </div>
       )}
-
-      {/* What syncs */}
-      <div className="rounded-xl border border-border bg-surface p-6">
-        <h4 className="text-[13px] font-semibold text-ink mb-3">What gets synced</h4>
-        <ul className="space-y-2 text-[12.5px] text-ink-secondary">
-          <li className="flex gap-2">
-            <span className="text-accent font-bold mt-0.5">→</span>
-            <span><strong className="text-ink">Product Catalog</strong> — every time you save your catalog, all products are upserted into a per-company tab (e.g. <em>"Acme — Products"</em>).</span>
-          </li>
-          <li className="flex gap-2">
-            <span className="text-accent font-bold mt-0.5">→</span>
-            <span><strong className="text-ink">Prospects</strong> — written to your company <em>Leads</em> tab (keyed on website). Status drives row color: white = To contact, blue = Contacted (emailed), green = Replied, amber = Re-contact.</span>
-          </li>
-        </ul>
-      </div>
     </div>
   );
 }
+

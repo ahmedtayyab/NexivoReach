@@ -138,6 +138,7 @@ export default function SupportView() {
                   <option value="limits">Limits / usage</option>
                   <option value="billing">Billing / plan</option>
                   <option value="bug">Bug</option>
+                  <option value="appeal">Appeal / suspension</option>
                 </select>
               </label>
               <label>

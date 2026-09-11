@@ -14,6 +14,7 @@ from app.api.deps import (
     SESSION_COOKIE,
     auth_required,
     get_current_user,
+    get_session_user,
     google_configured,
     local_user,
     AuthUser,
@@ -75,24 +76,27 @@ def auth_me(request: Request):
             },
         }
     try:
-        user = get_current_user(request)
+        # Allow suspended sessions so the client can show the appeal page.
+        user = get_session_user(request)
         with Session(engine) as session:
             row = session.get(User, user.id)
             if row:
-                usage = access_mod.usage_snapshot(session, row)
+                usage = None
+                if not row.is_suspended:
+                    usage = access_mod.usage_snapshot(session, row)
                 return {
                     "configured": True,
                     "inviteOnly": bool(settings.INVITE_ONLY),
                     "user": _user_payload(row, usage),
+                    "error": "suspended" if row.is_suspended else None,
                 }
         return {
             "configured": True,
             "inviteOnly": bool(settings.INVITE_ONLY),
             "user": _user_payload(user),
+            "error": "suspended" if user.is_suspended else None,
         }
-    except HTTPException as exc:
-        if exc.status_code == 403 and "suspended" in str(exc.detail).lower():
-            return {"configured": True, "user": None, "error": "suspended"}
+    except HTTPException:
         return {"configured": True, "user": None}
 
 
@@ -123,9 +127,43 @@ def google_login():
     return response
 
 
+@router.get("/workspace")
+def workspace_connect(request: Request, user: AuthUser = Depends(get_current_user)):
+    """One consent for Gmail + Sheets (avoids two separate Google logins)."""
+    if not google_configured():
+        raise HTTPException(status_code=503, detail="Google OAuth is not configured")
+    if not auth_required():
+        raise HTTPException(status_code=400, detail="Connect Google after signing in")
+    state = create_oauth_state("workspace", user_id=user.id)
+    scopes = (
+        f"openid email profile {gmail_mod.GMAIL_SCOPES} {sheets_oauth_mod.SHEETS_SCOPES}"
+    )
+    params = {
+        "client_id": settings.GOOGLE_CLIENT_ID,
+        "redirect_uri": effective_google_redirect_uri(),
+        "response_type": "code",
+        "scope": scopes,
+        "state": state,
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+    }
+    response = RedirectResponse(f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
+    response.set_cookie(
+        "nr_oauth_state",
+        state,
+        httponly=True,
+        samesite="lax",
+        secure=_secure_cookies(),
+        max_age=600,
+        path="/",
+    )
+    return response
+
+
 @router.get("/gmail")
 def gmail_connect(request: Request, user: AuthUser = Depends(get_current_user)):
-    """Separate consent for Gmail send + read. Reuses the same OAuth redirect URI."""
+    """Separate consent for Gmail send + read. Prefer /api/auth/workspace for one-shot connect."""
     if not google_configured():
         raise HTTPException(status_code=503, detail="Google OAuth is not configured")
     if not auth_required():
@@ -244,6 +282,9 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
     if purpose == "sheets":
         return _sheets_callback(code, state_payload, app_url)
 
+    if purpose == "workspace":
+        return _workspace_callback(code, state_payload, app_url)
+
     if not verify_oauth_state(state, "oauth"):
         return RedirectResponse(f"{app_url}/?auth=error")
 
@@ -296,7 +337,28 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
             )
         else:
             if user.is_suspended:
-                return RedirectResponse(f"{app_url}/?auth=suspended")
+                # Keep a session so they can open the appeal page and submit a ticket.
+                user.email = email
+                user.name = info.get("name") or user.name
+                user.picture = info.get("picture") or user.picture
+                session.add(user)
+                session.commit()
+                session.refresh(user)
+                response = HTMLResponse(
+                    """<!DOCTYPE html><html><head><meta charset="utf-8"></head>"""
+                    """<body><script>window.location.replace('/?auth=suspended#suspended');</script></body></html>"""
+                )
+                response.set_cookie(
+                    SESSION_COOKIE,
+                    create_session_token(user.id),
+                    httponly=True,
+                    samesite="lax",
+                    secure=_secure_cookies(),
+                    max_age=60 * 60 * 24 * 14,
+                    path="/",
+                )
+                response.delete_cookie("nr_oauth_state", path="/")
+                return response
             user.email = email
             user.name = info.get("name") or user.name
             user.picture = info.get("picture") or user.picture
@@ -324,10 +386,11 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
     return response
 
 
-def _gmail_callback(code: str, state_payload: dict, app_url: str):
+def _workspace_callback(code: str, state_payload: dict, app_url: str):
+    """Store one refresh token for both Gmail and Sheets after a combined consent."""
     user_id = state_payload.get("uid") or ""
-    if state_payload.get("typ") != "gmail" or not user_id:
-        return RedirectResponse(f"{app_url}/?gmail=error#settings/integrations")
+    if state_payload.get("typ") != "workspace" or not user_id:
+        return RedirectResponse(f"{app_url}/?sheets=error#integrations")
 
     with httpx.Client(timeout=20.0) as client:
         token_res = client.post(
@@ -342,12 +405,82 @@ def _gmail_callback(code: str, state_payload: dict, app_url: str):
             headers={"Accept": "application/json"},
         )
         if token_res.status_code >= 400:
-            return RedirectResponse(f"{app_url}/?gmail=error#settings/integrations")
+            return RedirectResponse(f"{app_url}/?sheets=error#integrations")
         token_data = token_res.json()
         access_token = token_data.get("access_token")
         refresh_token = token_data.get("refresh_token")
         if not access_token:
-            return RedirectResponse(f"{app_url}/?gmail=error#settings/integrations")
+            return RedirectResponse(f"{app_url}/?sheets=error#integrations")
+        info_res = client.get(
+            GOOGLE_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        account_email = ""
+        if info_res.status_code < 400:
+            account_email = info_res.json().get("email") or ""
+
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if not user:
+            return RedirectResponse(f"{app_url}/?sheets=error#integrations")
+        # First consent must return a refresh token; later re-auths may omit it.
+        if not refresh_token and not (
+            (user.gmail_refresh_token or "").strip() or (user.sheets_refresh_token or "").strip()
+        ):
+            return RedirectResponse(f"{app_url}/?sheets=error#integrations")
+        expires_in = int(token_data.get("expires_in") or 3600)
+        email = account_email or user.email
+        gmail_mod.store_tokens(
+            session,
+            user,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=expires_in,
+            email=email,
+        )
+        # Re-load after gmail store (session refreshed tokens on same row).
+        user = session.get(User, user_id) or user
+        sheets_oauth_mod.store_tokens(
+            session,
+            user,
+            access_token=access_token,
+            refresh_token=refresh_token or user.sheets_refresh_token or user.gmail_refresh_token,
+            expires_in=expires_in,
+            email=email,
+        )
+
+    response = HTMLResponse(
+        """<!DOCTYPE html><html><head><meta charset="utf-8"></head>"""
+        """<body><script>window.location.replace('/?sheets=connected&gmail=connected#integrations');</script></body></html>"""
+    )
+    response.delete_cookie("nr_oauth_state", path="/")
+    return response
+
+
+def _gmail_callback(code: str, state_payload: dict, app_url: str):
+    user_id = state_payload.get("uid") or ""
+    if state_payload.get("typ") != "gmail" or not user_id:
+        return RedirectResponse(f"{app_url}/?gmail=error#integrations")
+
+    with httpx.Client(timeout=20.0) as client:
+        token_res = client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "redirect_uri": effective_google_redirect_uri(),
+                "grant_type": "authorization_code",
+            },
+            headers={"Accept": "application/json"},
+        )
+        if token_res.status_code >= 400:
+            return RedirectResponse(f"{app_url}/?gmail=error#integrations")
+        token_data = token_res.json()
+        access_token = token_data.get("access_token")
+        refresh_token = token_data.get("refresh_token")
+        if not access_token:
+            return RedirectResponse(f"{app_url}/?gmail=error#integrations")
         info_res = client.get(
             GOOGLE_USERINFO_URL,
             headers={"Authorization": f"Bearer {access_token}"},
@@ -359,10 +492,10 @@ def _gmail_callback(code: str, state_payload: dict, app_url: str):
     with Session(engine) as session:
         user = session.get(User, user_id)
         if not user:
-            return RedirectResponse(f"{app_url}/?gmail=error#settings/integrations")
+            return RedirectResponse(f"{app_url}/?gmail=error#integrations")
         # Refresh token only returned on first consent; keep existing if missing
         if not refresh_token and not (user.gmail_refresh_token or "").strip():
-            return RedirectResponse(f"{app_url}/?gmail=error#settings/integrations")
+            return RedirectResponse(f"{app_url}/?gmail=error#integrations")
         gmail_mod.store_tokens(
             session,
             user,
@@ -374,7 +507,7 @@ def _gmail_callback(code: str, state_payload: dict, app_url: str):
 
     response = HTMLResponse(
         """<!DOCTYPE html><html><head><meta charset="utf-8"></head>"""
-        """<body><script>window.location.replace('/?gmail=connected#settings/integrations');</script></body></html>"""
+        """<body><script>window.location.replace('/?gmail=connected#integrations');</script></body></html>"""
     )
     response.delete_cookie("nr_oauth_state", path="/")
     return response
@@ -383,7 +516,7 @@ def _gmail_callback(code: str, state_payload: dict, app_url: str):
 def _sheets_callback(code: str, state_payload: dict, app_url: str):
     user_id = state_payload.get("uid") or ""
     if state_payload.get("typ") != "sheets" or not user_id:
-        return RedirectResponse(f"{app_url}/?sheets=error#settings/integrations")
+        return RedirectResponse(f"{app_url}/?sheets=error#integrations")
 
     with httpx.Client(timeout=20.0) as client:
         token_res = client.post(
@@ -398,12 +531,12 @@ def _sheets_callback(code: str, state_payload: dict, app_url: str):
             headers={"Accept": "application/json"},
         )
         if token_res.status_code >= 400:
-            return RedirectResponse(f"{app_url}/?sheets=error#settings/integrations")
+            return RedirectResponse(f"{app_url}/?sheets=error#integrations")
         token_data = token_res.json()
         access_token = token_data.get("access_token")
         refresh_token = token_data.get("refresh_token")
         if not access_token:
-            return RedirectResponse(f"{app_url}/?sheets=error#settings/integrations")
+            return RedirectResponse(f"{app_url}/?sheets=error#integrations")
         info_res = client.get(
             GOOGLE_USERINFO_URL,
             headers={"Authorization": f"Bearer {access_token}"},
@@ -415,9 +548,9 @@ def _sheets_callback(code: str, state_payload: dict, app_url: str):
     with Session(engine) as session:
         user = session.get(User, user_id)
         if not user:
-            return RedirectResponse(f"{app_url}/?sheets=error#settings/integrations")
+            return RedirectResponse(f"{app_url}/?sheets=error#integrations")
         if not refresh_token and not (user.sheets_refresh_token or "").strip():
-            return RedirectResponse(f"{app_url}/?sheets=error#settings/integrations")
+            return RedirectResponse(f"{app_url}/?sheets=error#integrations")
         sheets_oauth_mod.store_tokens(
             session,
             user,
@@ -429,7 +562,7 @@ def _sheets_callback(code: str, state_payload: dict, app_url: str):
 
     response = HTMLResponse(
         """<!DOCTYPE html><html><head><meta charset="utf-8"></head>"""
-        """<body><script>window.location.replace('/?sheets=connected#settings/integrations');</script></body></html>"""
+        """<body><script>window.location.replace('/?sheets=connected#integrations');</script></body></html>"""
     )
     response.delete_cookie("nr_oauth_state", path="/")
     return response

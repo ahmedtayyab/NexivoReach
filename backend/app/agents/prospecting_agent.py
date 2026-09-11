@@ -24,14 +24,14 @@ from app.tools.contact_finder import discover_contacts, contacts_from_text
 from app.providers.factory import get_ai_provider
 
 
-FETCH_CAP = 80
-SAVE_CAP = 80
-WAVE1_RESULT_CAP = 140
-WAVE2_RESULT_CAP = 80
-ENRICH_CAP = 16  # AI drafts for top fits
-CONTACT_CAP = 80  # emails scraped automatically for (almost) every saved lead
-MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 35
-DEFAULT_HUNT_LIMIT = 80
+FETCH_CAP = 120
+SAVE_CAP = 120
+WAVE1_RESULT_CAP = 220
+WAVE2_RESULT_CAP = 140
+ENRICH_CAP = 24  # AI drafts for top fits
+CONTACT_CAP = 120  # emails scraped automatically for (almost) every saved lead
+MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 55
+DEFAULT_HUNT_LIMIT = 120
 
 
 def _domain(url: str) -> str:

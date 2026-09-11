@@ -92,6 +92,40 @@ def get_current_user(request: Request) -> AuthUser:
         )
 
 
+def get_session_user(request: Request) -> AuthUser:
+    """Like get_current_user, but suspended accounts may call limited endpoints (appeal)."""
+    if not auth_required():
+        return local_user()
+    token = request.cookies.get(SESSION_COOKIE)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = decode_session_token(token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        from app.services import access as access_mod
+
+        access_mod.sync_admin_flag(session, user)
+        return AuthUser(
+            id=user.id or user_id,
+            email=user.email,
+            name=user.name,
+            picture=user.picture,
+            google_id=user.google_id,
+            active_business_id=user.active_business_id,
+            is_admin=access_mod.user_is_admin(user),
+            is_suspended=bool(user.is_suspended),
+            plan=user.plan or "pilot",
+        )
+
+
 def ensure_default_business(session: Session, user: AuthUser) -> Business:
     """Return the user's active company, creating a blank one if they have none."""
     businesses = session.exec(

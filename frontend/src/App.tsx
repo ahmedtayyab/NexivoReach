@@ -34,6 +34,7 @@ import NotificationsRail, {
   useNotificationUnread,
 } from './components/NotificationBell';
 import LoginView from './components/LoginView';
+import SuspendedView from './components/SuspendedView';
 import BrandLockup from './components/brand/BrandLockup';
 import { Menu } from 'lucide-react';
 
@@ -144,8 +145,8 @@ export default function App() {
       setAuthError('Invite only — ask the operator to add your email before signing in.');
       window.history.replaceState({}, '', window.location.pathname + window.location.hash);
     } else if (params.get('auth') === 'suspended') {
-      setAuthError('This account is suspended. Contact the operator.');
-      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+      // SuspendedView renders once /me returns the suspended user session.
+      window.history.replaceState({}, '', window.location.pathname + '#suspended');
     }
 
     (async () => {
@@ -155,10 +156,12 @@ export default function App() {
         const data = await resp.json();
         setAuthConfigured(Boolean(data.configured));
         setUser(data.user ?? null);
-        if (!data.configured || data.user) {
+        if (data.user?.isSuspended || data.error === 'suspended') {
+          // Don't bootstrap workspace data for suspended accounts.
+        } else if (!data.configured || data.user) {
           await bootstrap();
         }
-        if (data.user) {
+        if (data.user && !data.user.isSuspended) {
           const initialRoute = resolveRouteFromLocation();
           setActiveRoute(initialRoute);
           window.history.replaceState({ route: initialRoute }, '', `#${initialRoute}`);
@@ -669,6 +672,15 @@ export default function App() {
 
   if (authConfigured && !user) {
     return <LoginView error={authError} />;
+  }
+
+  if (user?.isSuspended) {
+    return (
+      <SuspendedView
+        user={user}
+        onLogout={() => void handleLogout()}
+      />
+    );
   }
 
   return (
