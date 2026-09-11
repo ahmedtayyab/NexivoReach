@@ -29,6 +29,10 @@ import ReviewDrawer from './components/prospects/ReviewDrawer';
 import ActivityView from './components/ActivityView';
 import AdminView from './components/AdminView';
 import SupportView from './components/SupportView';
+import NotificationsRail, {
+  NotificationHeaderButton,
+  useNotificationUnread,
+} from './components/NotificationBell';
 import LoginView from './components/LoginView';
 import BrandLockup from './components/brand/BrandLockup';
 import { Menu } from 'lucide-react';
@@ -49,6 +53,8 @@ export default function App() {
   const [agentLogs, setAgentLogs] = useState<AgentRunLog[]>(emptyAgentLogs);
   const [selectedProspectId, setSelectedProspectId] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [notifSheetOpen, setNotifSheetOpen] = useState(false);
+  const notifUnread = useNotificationUnread(user);
 
   const selectedProspect = prospects.find(p => p.id === selectedProspectId) ?? null;
 
@@ -205,7 +211,8 @@ export default function App() {
       navigate('company', true);
     }
     if (activeRoute === 'notifications') {
-      navigate('support', true);
+      setNotifSheetOpen(true);
+      navigate('company', true);
     }
     if (activeRoute === 'admin' && user && !user.isAdmin) {
       navigate('company', true);
@@ -676,7 +683,7 @@ export default function App() {
           <Menu className="w-5 h-5" strokeWidth={1.75} />
         </button>
         <BrandLockup size="sm" className="absolute left-1/2 -translate-x-1/2 pointer-events-none" />
-        <span className="w-9" aria-hidden />
+        <NotificationHeaderButton unread={notifUnread} onClick={() => setNotifSheetOpen(true)} />
       </header>
 
       <Sidebar
@@ -697,7 +704,7 @@ export default function App() {
 
       <main
         key={isSettingsRoute(activeRoute) ? 'workspace' : activeRoute}
-        className="app-main flex-1 min-w-0 px-4 py-5 sm:px-6 md:px-10 md:py-8 pb-20 md:pb-8"
+        className="app-main flex-1 min-w-0 px-4 py-5 sm:px-6 md:px-8 md:py-8 pb-20 md:pb-8"
       >
         {activeRoute === 'queue' && (
           <QueueView
@@ -752,6 +759,16 @@ export default function App() {
         {activeRoute === 'admin' && user?.isAdmin && <AdminView />}
         {activeRoute === 'support' && <SupportView />}
       </main>
+
+      <NotificationsRail
+        user={user}
+        mobileOpen={notifSheetOpen}
+        onMobileOpenChange={setNotifSheetOpen}
+        onNavigate={route => {
+          navigate(normalizeRoute(route));
+          setNotifSheetOpen(false);
+        }}
+      />
 
       <MobileNav
         activeTab={sidebarTabForRoute(activeRoute)}

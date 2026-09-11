@@ -4,7 +4,6 @@ import type { AuthUser, BusinessInfo } from '../../types';
 import type { AppRoute } from '../../lib/navigation';
 import BrandLockup from '../brand/BrandLockup';
 import ConnectionStatus from '../ConnectionStatus';
-import NotificationBell from '../NotificationBell';
 
 interface Props {
   activeTab: string;
@@ -198,12 +197,6 @@ export default function Sidebar({
               </span>
             </button>
           ))}
-          <NotificationBell
-            user={user ?? null}
-            onNavigate={route => {
-              go(route === 'notifications' ? 'support' : route);
-            }}
-          />
           <button
             type="button"
             onClick={() => go('support')}
