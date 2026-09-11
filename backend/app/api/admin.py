@@ -12,8 +12,16 @@ from sqlmodel import Session, col, func, select
 from app.api.deps import AuthUser, get_current_user
 from app.config import settings
 from app.database.session import engine
-from app.models.schemas import Business, InviteAllowlist, ProspectRecord, UsageDaily, User
+from app.models.schemas import Business, InviteAllowlist, ProspectRecord, SupportTicket, UsageDaily, User
 from app.services import access as access_mod
+from app.services import notifications as notif_mod
+from app.api.support import (
+    VALID_PRIORITY,
+    VALID_STATUS,
+    _now as ticket_now,
+    _user_label,
+    serialize_ticket,
+)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -182,12 +190,28 @@ def list_users(_admin: AuthUser = Depends(_require_admin)):
         return {"users": [_user_card(session, u, day) for u in users], "day": day}
 
 
+def _notify_account_change(session: Session, user: User, title: str, body: str, kind: str = "system") -> None:
+    if not user.id:
+        return
+    notif_mod.notify_user(
+        session,
+        user.id,
+        kind=kind,
+        title=title,
+        body=body,
+        href="#support",
+        meta={"source": "admin"},
+    )
+
+
 @router.patch("/users/{user_id}")
 def patch_user(user_id: str, payload: UserPatch, admin: AuthUser = Depends(_require_admin)):
     with Session(engine) as session:
         user = session.get(User, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
+
+        notices: list[tuple[str, str, str]] = []
 
         if payload.clearRestrictions:
             user.is_suspended = False
@@ -196,6 +220,13 @@ def patch_user(user_id: str, payload: UserPatch, admin: AuthUser = Depends(_requ
             user.daily_extract_limit = None
             user.daily_prepare_limit = None
             user.daily_send_limit = None
+            notices.append(
+                (
+                    "system",
+                    "Account restrictions cleared",
+                    "Your suspension was lifted and custom daily caps were reset to the default plan limits.",
+                )
+            )
         elif payload.liftAllCaps:
             user.is_suspended = False
             user.usage_unlimited = True
@@ -203,11 +234,34 @@ def patch_user(user_id: str, payload: UserPatch, admin: AuthUser = Depends(_requ
             user.daily_extract_limit = None
             user.daily_prepare_limit = None
             user.daily_send_limit = None
+            notices.append(
+                (
+                    "system",
+                    "Daily usage caps lifted",
+                    "An admin removed your daily hunt/extract/prepare/send limits. You can keep working without hitting caps.",
+                )
+            )
         else:
             if payload.isSuspended is not None:
                 if user.id == admin.id and payload.isSuspended:
                     raise HTTPException(status_code=400, detail="Cannot suspend yourself")
                 user.is_suspended = payload.isSuspended
+                if payload.isSuspended:
+                    notices.append(
+                        (
+                            "warn",
+                            "Account suspended",
+                            "An admin suspended your account. Open Support if you believe this is a mistake.",
+                        )
+                    )
+                else:
+                    notices.append(
+                        (
+                            "system",
+                            "Account unsuspended",
+                            "An admin restored access to your account. You can sign in and continue.",
+                        )
+                    )
             if payload.isAdmin is not None:
                 if user.id == admin.id and not payload.isAdmin:
                     raise HTTPException(status_code=400, detail="Cannot remove your own admin flag")
@@ -217,26 +271,70 @@ def patch_user(user_id: str, payload: UserPatch, admin: AuthUser = Depends(_requ
                 if plan not in {"pilot", "free", "pro", "growth"}:
                     raise HTTPException(status_code=400, detail="Invalid plan")
                 user.plan = plan
+                notices.append(
+                    (
+                        "info",
+                        f"Plan updated to {plan}",
+                        f"Your NexivoReach plan is now “{plan}”. Limits may change with your package.",
+                    )
+                )
             if payload.usageUnlimited is not None:
                 user.usage_unlimited = payload.usageUnlimited
                 if payload.usageUnlimited:
-                    # Custom per-action caps are irrelevant while unlimited.
                     user.daily_hunt_limit = None
                     user.daily_extract_limit = None
                     user.daily_prepare_limit = None
                     user.daily_send_limit = None
+                    notices.append(
+                        (
+                            "system",
+                            "Unlimited usage enabled",
+                            "An admin enabled unlimited daily usage on your account.",
+                        )
+                    )
+                else:
+                    notices.append(
+                        (
+                            "warn",
+                            "Unlimited usage turned off",
+                            "Daily caps apply again on your account. Check Notifications for remaining usage.",
+                        )
+                    )
+            limit_bits: list[str] = []
             if payload.dailyHuntLimit is not None:
                 user.daily_hunt_limit = payload.dailyHuntLimit if payload.dailyHuntLimit >= 0 else None
+                limit_bits.append(
+                    f"hunt → {user.daily_hunt_limit if user.daily_hunt_limit is not None else 'default'}"
+                )
             if payload.dailyExtractLimit is not None:
                 user.daily_extract_limit = payload.dailyExtractLimit if payload.dailyExtractLimit >= 0 else None
+                limit_bits.append(
+                    f"extract → {user.daily_extract_limit if user.daily_extract_limit is not None else 'default'}"
+                )
             if payload.dailyPrepareLimit is not None:
                 user.daily_prepare_limit = payload.dailyPrepareLimit if payload.dailyPrepareLimit >= 0 else None
+                limit_bits.append(
+                    f"prepare → {user.daily_prepare_limit if user.daily_prepare_limit is not None else 'default'}"
+                )
             if payload.dailySendLimit is not None:
                 user.daily_send_limit = payload.dailySendLimit if payload.dailySendLimit >= 0 else None
+                limit_bits.append(
+                    f"send → {user.daily_send_limit if user.daily_send_limit is not None else 'default'}"
+                )
+            if limit_bits:
+                notices.append(
+                    (
+                        "info",
+                        "Daily limits updated",
+                        "An admin changed your caps: " + "; ".join(limit_bits) + ".",
+                    )
+                )
 
         session.add(user)
         session.commit()
         session.refresh(user)
+        for kind, title, body in notices:
+            _notify_account_change(session, user, title, body, kind=kind)
         return _user_card(session, user, access_mod.utc_day())
 
 
@@ -292,3 +390,85 @@ def delete_invite_path(email: str, _admin: AuthUser = Depends(_require_admin)):
         if not ok:
             raise HTTPException(status_code=404, detail="Invite not found")
         return {"ok": True, "email": access_mod.normalize_email(email)}
+
+
+class TicketPatch(BaseModel):
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    adminReply: Optional[str] = None
+
+
+@router.get("/tickets")
+def list_tickets(_admin: AuthUser = Depends(_require_admin), status: Optional[str] = None):
+    with Session(engine) as session:
+        all_rows = session.exec(
+            select(SupportTicket).order_by(col(SupportTicket.updated_at).desc())
+        ).all()
+        open_count = sum(1 for r in all_rows if r.status in {"open", "in_progress"})
+        rows = all_rows
+        if status:
+            want = status.strip().lower()
+            rows = [r for r in all_rows if r.status == want]
+        out = []
+        for r in rows:
+            email, name = _user_label(session, r.user_id)
+            out.append(serialize_ticket(r, email=email, name=name))
+        return {"tickets": out, "openCount": open_count}
+
+
+@router.patch("/tickets/{ticket_id}")
+def patch_ticket(ticket_id: str, payload: TicketPatch, _admin: AuthUser = Depends(_require_admin)):
+    with Session(engine) as session:
+        row = session.get(SupportTicket, ticket_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        reply_changed = False
+        if payload.status is not None:
+            status = payload.status.strip().lower()
+            if status not in VALID_STATUS:
+                raise HTTPException(status_code=400, detail="Invalid status")
+            row.status = status
+            if status in {"resolved", "closed"} and not row.resolved_at:
+                row.resolved_at = ticket_now()
+            if status in {"open", "in_progress"}:
+                row.resolved_at = None
+        if payload.priority is not None:
+            priority = payload.priority.strip().lower()
+            if priority not in VALID_PRIORITY:
+                raise HTTPException(status_code=400, detail="Invalid priority")
+            row.priority = priority
+        if payload.adminReply is not None:
+            reply = payload.adminReply.strip()
+            if reply != (row.admin_reply or ""):
+                reply_changed = True
+            row.admin_reply = reply[:5000]
+
+        row.updated_at = ticket_now()
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+
+        if reply_changed and row.admin_reply:
+            notif_mod.notify_user(
+                session,
+                row.user_id,
+                kind="ticket",
+                title="Support replied to your ticket",
+                body=f"Update on “{row.subject}”: {row.admin_reply[:240]}",
+                href="#support",
+                meta={"ticketId": row.id, "status": row.status},
+            )
+        elif payload.status is not None:
+            notif_mod.notify_user(
+                session,
+                row.user_id,
+                kind="ticket",
+                title=f"Ticket marked {row.status.replace('_', ' ')}",
+                body=f"“{row.subject}” is now {row.status.replace('_', ' ')}.",
+                href="#support",
+                meta={"ticketId": row.id, "status": row.status},
+            )
+
+        email, name = _user_label(session, row.user_id)
+        return serialize_ticket(row, email=email, name=name)

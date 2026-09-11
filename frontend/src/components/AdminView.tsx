@@ -69,6 +69,22 @@ type Invite = {
   createdBy: string;
 };
 
+type SupportTicket = {
+  id: string;
+  userId: string;
+  email?: string;
+  name?: string;
+  subject: string;
+  body: string;
+  status: string;
+  priority: string;
+  category: string;
+  adminReply?: string;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string | null;
+};
+
 async function apiErrorMessage(resp: Response, fallback: string): Promise<string> {
   const text = await resp.text();
   try {
@@ -149,9 +165,14 @@ function WeekChart({ series }: { series: Overview['series'] }) {
 }
 
 export default function AdminView() {
+  const [tab, setTab] = useState<'ops' | 'support'>('ops');
   const [overview, setOverview] = useState<Overview | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [invites, setInvites] = useState<Invite[]>([]);
+  const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [openTicketCount, setOpenTicketCount] = useState(0);
+  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+  const [ticketReply, setTicketReply] = useState('');
   const [inviteOnly, setInviteOnly] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -166,10 +187,11 @@ export default function AdminView() {
     setLoading(true);
     setError('');
     try {
-      const [o, u, a] = await Promise.all([
+      const [o, u, a, t] = await Promise.all([
         apiFetch('/api/admin/overview'),
         apiFetch('/api/admin/users'),
         apiFetch('/api/admin/allowlist'),
+        apiFetch('/api/admin/tickets'),
       ]);
       if (!o.ok) {
         if (o.status === 403) {
@@ -181,13 +203,17 @@ export default function AdminView() {
       }
       if (!u.ok) throw new Error(await apiErrorMessage(u, 'Failed to load users'));
       if (!a.ok) throw new Error(await apiErrorMessage(a, 'Failed to load allowlist'));
+      if (!t.ok) throw new Error(await apiErrorMessage(t, 'Failed to load tickets'));
       const overviewData = (await o.json()) as Overview;
       const usersData = await u.json();
       const allowData = await a.json();
+      const ticketData = await t.json();
       setOverview(overviewData);
       setUsers(Array.isArray(usersData.users) ? usersData.users : []);
       setInvites(Array.isArray(allowData.invites) ? allowData.invites : []);
       setInviteOnly(Boolean(allowData.inviteOnly ?? overviewData.inviteOnly));
+      setTickets(Array.isArray(ticketData.tickets) ? ticketData.tickets : []);
+      setOpenTicketCount(Number(ticketData.openCount) || 0);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load admin');
     } finally {
@@ -211,6 +237,40 @@ export default function AdminView() {
   }, [users, query]);
 
   const selected = users.find(u => u.id === selectedId) || null;
+  const selectedTicket = tickets.find(t => t.id === selectedTicketId) || null;
+
+  useEffect(() => {
+    if (!selectedTicket) {
+      setTicketReply('');
+      return;
+    }
+    setTicketReply(selectedTicket.adminReply || '');
+  }, [selectedTicket]);
+
+  const patchTicket = async (id: string, body: Record<string, unknown>) => {
+    setBusyId(id);
+    setError('');
+    try {
+      const resp = await apiFetch(`/api/admin/tickets/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Ticket update failed'));
+      const updated = (await resp.json()) as SupportTicket;
+      setTickets(prev => prev.map(t => (t.id === id ? updated : t)));
+      setOpenTicketCount(
+        prev => {
+          const next = tickets.map(t => (t.id === id ? updated : t));
+          return next.filter(t => t.status === 'open' || t.status === 'in_progress').length || prev;
+        },
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ticket update failed');
+    } finally {
+      setBusyId('');
+    }
+  };
 
   const patchUser = async (id: string, body: Record<string, unknown>) => {
     setBusyId(id);
@@ -325,6 +385,105 @@ export default function AdminView() {
         </p>
       )}
 
+      <div className="admin-tabs" role="tablist">
+        <button type="button" role="tab" className={tab === 'ops' ? 'is-active' : ''} onClick={() => setTab('ops')}>
+          Ops
+        </button>
+        <button
+          type="button"
+          role="tab"
+          className={tab === 'support' ? 'is-active' : ''}
+          onClick={() => setTab('support')}
+        >
+          Support{openTicketCount > 0 ? ` (${openTicketCount})` : ''}
+        </button>
+      </div>
+
+      {tab === 'support' && (
+        <div className="admin-grid admin-grid--users mb-4">
+          <section className="admin-panel admin-panel--stretch">
+            <div className="admin-panel__head">
+              <h2>Tickets</h2>
+              <span className="text-[12px] text-ink-muted">{openTicketCount} open</span>
+            </div>
+            {tickets.length === 0 ? (
+              <p className="text-[13px] text-ink-muted">No support tickets yet.</p>
+            ) : (
+              <ul className="admin-ticket-list">
+                {tickets.map(t => (
+                  <li key={t.id}>
+                    <button
+                      type="button"
+                      className={selectedTicketId === t.id ? 'is-active' : ''}
+                      onClick={() => setSelectedTicketId(t.id)}
+                    >
+                      <span className="admin-ticket__sub">{t.subject}</span>
+                      <span className="admin-ticket__meta">
+                        {t.name || t.email || t.userId} · {t.status.replace('_', ' ')} · {t.category} ·{' '}
+                        {(t.updatedAt || t.createdAt || '').slice(0, 10)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <section className="admin-panel admin-panel--stretch">
+            {!selectedTicket ? (
+              <p className="text-[13px] text-ink-muted">Select a ticket to reply.</p>
+            ) : (
+              <div className="admin-ticket-detail">
+                <h2 className="text-[15px] font-medium mb-1">{selectedTicket.subject}</h2>
+                <p className="text-[12px] text-ink-muted mb-3">
+                  {selectedTicket.email || selectedTicket.userId} · {selectedTicket.priority} priority
+                </p>
+                <p className="text-[13.5px] text-ink-secondary whitespace-pre-wrap mb-3">{selectedTicket.body}</p>
+                <label>
+                  Status
+                  <select
+                    value={selectedTicket.status}
+                    disabled={busyId === selectedTicket.id}
+                    onChange={e => void patchTicket(selectedTicket.id, { status: e.target.value })}
+                  >
+                    <option value="open">Open</option>
+                    <option value="in_progress">In progress</option>
+                    <option value="resolved">Resolved</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                </label>
+                <label>
+                  Reply to customer
+                  <textarea
+                    rows={5}
+                    value={ticketReply}
+                    onChange={e => setTicketReply(e.target.value)}
+                    placeholder="What should the customer know?"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-primary mt-3"
+                  disabled={busyId === selectedTicket.id || !ticketReply.trim()}
+                  onClick={() =>
+                    void patchTicket(selectedTicket.id, {
+                      adminReply: ticketReply.trim(),
+                      status: selectedTicket.status === 'open' ? 'in_progress' : selectedTicket.status,
+                    })
+                  }
+                >
+                  {busyId === selectedTicket.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : null}
+                  Send reply
+                </button>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
+      {tab === 'ops' && (
+        <>
       {overview && (
         <>
           <div className="admin-kpis">
@@ -733,6 +892,8 @@ export default function AdminView() {
           </ul>
         )}
       </section>
+        </>
+      )}
     </div>
   );
 }

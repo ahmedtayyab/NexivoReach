@@ -152,6 +152,8 @@ def usage_snapshot(session: Session, user: User) -> dict:
 
 def consume_usage(session: Session, user: User, kind: UsageKind, amount: int = 1) -> dict:
     """Raise 429 if over daily cap; otherwise increment and return snapshot."""
+    from app.services import notifications as notif_mod
+
     assert_not_suspended(user)
     amount = max(1, int(amount))
     if user_bypasses_caps(user):
@@ -178,6 +180,7 @@ def consume_usage(session: Session, user: User, kind: UsageKind, amount: int = 1
         "send": row.sends,
     }[kind]
     if current + amount > limit:
+        notif_mod.notify_limit_reached(session, user, kind, limit)
         raise HTTPException(
             status_code=429,
             detail=(
@@ -195,7 +198,9 @@ def consume_usage(session: Session, user: User, kind: UsageKind, amount: int = 1
         row.sends += amount
     session.add(row)
     session.commit()
-    return usage_snapshot(session, user)
+    snap = usage_snapshot(session, user)
+    notif_mod.notify_usage_if_low(session, user, snap)
+    return snap
 
 
 def add_invite(session: Session, email: str, note: str = "", created_by: str = "") -> InviteAllowlist:

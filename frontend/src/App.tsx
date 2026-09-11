@@ -28,6 +28,7 @@ import OutreachInboxView from './components/OutreachInboxView';
 import ReviewDrawer from './components/prospects/ReviewDrawer';
 import ActivityView from './components/ActivityView';
 import AdminView from './components/AdminView';
+import SupportView from './components/SupportView';
 import LoginView from './components/LoginView';
 import BrandLockup from './components/brand/BrandLockup';
 import { Menu } from 'lucide-react';
@@ -197,9 +198,14 @@ export default function App() {
       activeRoute === 'outreach' ||
       activeRoute === 'activity' ||
       activeRoute === 'admin' ||
+      activeRoute === 'support' ||
+      activeRoute === 'notifications' ||
       isSettingsRoute(activeRoute);
     if (!valid) {
       navigate('company', true);
+    }
+    if (activeRoute === 'notifications') {
+      navigate('support', true);
     }
     if (activeRoute === 'admin' && user && !user.isAdmin) {
       navigate('company', true);
@@ -744,6 +750,7 @@ export default function App() {
         )}
         {activeRoute === 'activity' && <ActivityView agentLogs={agentLogs} />}
         {activeRoute === 'admin' && user?.isAdmin && <AdminView />}
+        {activeRoute === 'support' && <SupportView />}
       </main>
 
       <MobileNav

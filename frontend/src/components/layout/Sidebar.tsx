@@ -1,9 +1,10 @@
-import { Plus, LogOut, ChevronDown, X, Settings, LayoutList, Activity, Mail, Shield } from 'lucide-react';
+import { Plus, LogOut, ChevronDown, X, Settings, LayoutList, Activity, Mail, Shield, LifeBuoy } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { AuthUser, BusinessInfo } from '../../types';
 import type { AppRoute } from '../../lib/navigation';
 import BrandLockup from '../brand/BrandLockup';
 import ConnectionStatus from '../ConnectionStatus';
+import NotificationBell from '../NotificationBell';
 
 interface Props {
   activeTab: string;
@@ -197,6 +198,22 @@ export default function Sidebar({
               </span>
             </button>
           ))}
+          <NotificationBell
+            user={user ?? null}
+            onNavigate={route => {
+              go(route === 'notifications' ? 'support' : route);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => go('support')}
+            className={`nr-nav-link ${activeTab === 'support' ? 'is-active' : ''}`}
+          >
+            <span className="nr-nav-link__left">
+              <LifeBuoy className="w-4 h-4 shrink-0" strokeWidth={activeTab === 'support' ? 2 : 1.75} />
+              Support
+            </span>
+          </button>
           <button
             type="button"
             onClick={() => go('activity')}

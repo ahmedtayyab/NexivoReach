@@ -144,3 +144,37 @@ class UsageDaily(SQLModel, table=True):
     extracts: int = 0
     prepares: int = 0
     sends: int = 0
+
+
+class Notification(SQLModel, table=True):
+    """In-app notification for a single user."""
+
+    __tablename__ = "notification"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    kind: str = "info"  # info | warn | usage | system | ticket
+    title: str = ""
+    body: str = ""
+    href: Optional[str] = None
+    read_at: Optional[str] = None
+    created_at: str = ""
+    meta: dict = Field(default={}, sa_type=JSON)
+
+
+class SupportTicket(SQLModel, table=True):
+    """Customer support ticket (simple: one body + admin reply)."""
+
+    __tablename__ = "support_ticket"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    subject: str = ""
+    body: str = ""
+    status: str = "open"  # open | in_progress | resolved | closed
+    priority: str = "normal"  # low | normal | high
+    category: str = "general"  # general | billing | limits | bug
+    admin_reply: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+    resolved_at: Optional[str] = None
