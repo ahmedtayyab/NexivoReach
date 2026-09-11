@@ -1,4 +1,13 @@
-export type AppRoute = 'queue' | 'discover' | 'outreach' | 'catalog' | 'company' | 'icp' | 'activity' | 'integrations';
+export type AppRoute =
+  | 'queue'
+  | 'discover'
+  | 'outreach'
+  | 'catalog'
+  | 'company'
+  | 'icp'
+  | 'activity'
+  | 'integrations'
+  | 'admin';
 
 export type SettingsSection = 'company' | 'catalog' | 'icp' | 'integrations';
 
@@ -11,6 +20,7 @@ export const APP_ROUTES: AppRoute[] = [
   'icp',
   'integrations',
   'activity',
+  'admin',
 ];
 
 export const SETTINGS_SECTIONS: SettingsSection[] = ['company', 'catalog', 'icp', 'integrations'];

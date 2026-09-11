@@ -181,7 +181,22 @@ export interface AuthUser {
   email: string;
   name: string;
   picture?: string;
+  isAdmin?: boolean;
+  isSuspended?: boolean;
+  plan?: string;
+  usage?: {
+    day: string;
+    used: { hunt: number; extract: number; prepare: number; send: number };
+    limits: { hunt: number; extract: number; prepare: number; send: number };
+    remaining: { hunt: number; extract: number; prepare: number; send: number };
+    bypassed?: boolean;
+  };
   gmail?: {
+    connected: boolean;
+    email?: string;
+    connectedAt?: string;
+  };
+  sheets?: {
     connected: boolean;
     email?: string;
     connectedAt?: string;

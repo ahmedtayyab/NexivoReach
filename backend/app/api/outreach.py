@@ -16,6 +16,7 @@ from app.integrations import gmail as gmail_mod
 from app.integrations import sheets as sheets_mod
 from app.models.schemas import Business, ProspectRecord, User
 from app.providers.factory import get_ai_provider
+from app.services import access as access_mod
 from app.tools.contact_finder import discover_contacts, resolve_lead_email, email_from_contacts
 from app.tools.web_search import WebSearchTool
 import logging
@@ -308,6 +309,7 @@ async def prepare_outreach_batch(
     force = bool(payload.get("force"))
     ids = payload.get("ids") or []
     with Session(engine) as session:
+        db_user = session.get(User, user.id)
         business_id = resolve_business_id(request, user, session)
         seller = _seller_name(session, business_id)
         rows = session.exec(
@@ -328,8 +330,12 @@ async def prepare_outreach_batch(
                 continue
             targets.append(row)
 
+        batch = targets[:40]
+        if db_user and batch:
+            access_mod.consume_usage(session, db_user, "prepare", amount=len(batch))
+
         updated = []
-        for row in targets[:40]:
+        for row in batch:
             try:
                 updated.append(await _prepare_one(session, row, seller, force=force))
             except Exception as exc:
@@ -483,6 +489,9 @@ async def send_batch(
 
         targets.sort(key=lambda r: int(r.fit_score or 0), reverse=True)
         targets = targets[:limit]
+
+        if targets:
+            access_mod.consume_usage(session, db_user, "send", amount=len(targets))
 
         sent_rows: List[ProspectRecord] = []
         errors: List[Dict[str, str]] = []
@@ -761,6 +770,9 @@ async def prepare_outreach(
         business_id = resolve_business_id(request, user, session)
         row = _get_owned(session, prospect_id, business_id)
         seller = _seller_name(session, business_id)
+        db_user = session.get(User, user.id)
+        if db_user:
+            access_mod.consume_usage(session, db_user, "prepare")
         row = await _prepare_one(session, row, seller, force=force or not row.outreach_draft)
         return prospect_to_frontend(row)
 
@@ -845,6 +857,10 @@ async def send_outreach(
             session.add(row)
             session.commit()
             session.refresh(row)
+
+        db_user = session.get(User, user.id)
+        if db_user and gmail_mod.is_connected(db_user):
+            access_mod.consume_usage(session, db_user, "send")
             draft = dict(row.outreach_draft or {})
 
         db_user = session.get(User, user.id)

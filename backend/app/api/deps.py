@@ -25,6 +25,9 @@ class AuthUser:
     picture: str
     google_id: str
     active_business_id: Optional[str] = None
+    is_admin: bool = False
+    is_suspended: bool = False
+    plan: str = "pilot"
 
 
 def google_configured() -> bool:
@@ -45,6 +48,9 @@ def local_user() -> AuthUser:
         picture="",
         google_id="local",
         active_business_id=None,
+        is_admin=True,
+        is_suspended=False,
+        plan="pilot",
     )
 
 
@@ -69,6 +75,10 @@ def get_current_user(request: Request) -> AuthUser:
         user = session.get(User, user_id)
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        from app.services import access as access_mod
+
+        access_mod.sync_admin_flag(session, user)
+        access_mod.assert_not_suspended(user)
         return AuthUser(
             id=user.id or user_id,
             email=user.email,
@@ -76,6 +86,9 @@ def get_current_user(request: Request) -> AuthUser:
             picture=user.picture,
             google_id=user.google_id,
             active_business_id=user.active_business_id,
+            is_admin=access_mod.user_is_admin(user),
+            is_suspended=bool(user.is_suspended),
+            plan=user.plan or "pilot",
         )
 
 

@@ -69,6 +69,15 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "dev-only-change-me"
     APP_URL: str = "http://localhost:3000"
     AUTH_DISABLED: bool = False
+    # Comma-separated Google emails that always get admin + invite bypass.
+    ADMIN_EMAILS: str = ""
+    # When true, new Google signups must be on the invite allowlist (or an admin email).
+    INVITE_ONLY: bool = True
+    # Default daily caps per user (UTC day). Admins bypass. Overrides live on User rows.
+    DAILY_HUNT_LIMIT: int = 5
+    DAILY_EXTRACT_LIMIT: int = 10
+    DAILY_PREPARE_LIMIT: int = 50
+    DAILY_SEND_LIMIT: int = 40
     # Local default: SQLite. Production (Render): managed Postgres via DATABASE_URL.
     DATABASE_URL: str = "sqlite:///./nexivoreach.db"
     GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON: str = ""

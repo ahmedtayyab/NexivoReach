@@ -24,9 +24,33 @@ def init_db():
     _ensure_user_gmail_columns()
     _ensure_user_sheets_oauth_columns()
     _ensure_business_sheets_columns()
+    _ensure_user_access_columns()
     if _backend == "sqlite":
         _ensure_sqlite_columns()
         _migrate_multi_company()
+
+
+def _ensure_user_access_columns():
+    """Admin / suspend / plan / per-user daily cap overrides on nr_user."""
+    tables = ("nr_user", "user")
+    additions = [
+        ("is_admin", "BOOLEAN"),
+        ("is_suspended", "BOOLEAN"),
+        ("plan", "VARCHAR"),
+        ("usage_unlimited", "BOOLEAN"),
+        ("daily_hunt_limit", "INTEGER"),
+        ("daily_extract_limit", "INTEGER"),
+        ("daily_prepare_limit", "INTEGER"),
+        ("daily_send_limit", "INTEGER"),
+    ]
+    with engine.connect() as conn:
+        for table in tables:
+            for column, coltype in additions:
+                try:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}"))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
 
 
 def _ensure_user_sheets_oauth_columns():

@@ -97,6 +97,16 @@ class User(SQLModel, table=True):
     picture: str = ""
     created_at: str = ""
     active_business_id: Optional[str] = Field(default=None, index=True)
+    # Access control / SaaS scaffolding
+    is_admin: bool = False
+    is_suspended: bool = False
+    plan: str = "pilot"  # pilot | free | pro | growth (billing later)
+    # When true, daily hunt/extract/prepare/send caps are not enforced (still counted).
+    usage_unlimited: bool = False
+    daily_hunt_limit: Optional[int] = Field(default=None)
+    daily_extract_limit: Optional[int] = Field(default=None)
+    daily_prepare_limit: Optional[int] = Field(default=None)
+    daily_send_limit: Optional[int] = Field(default=None)
     # User Gmail OAuth (separate from login session)
     gmail_refresh_token: Optional[str] = Field(default=None)
     gmail_access_token: Optional[str] = Field(default=None)
@@ -109,3 +119,28 @@ class User(SQLModel, table=True):
     sheets_token_expiry: Optional[str] = Field(default=None)
     sheets_email: Optional[str] = Field(default=None)
     sheets_connected_at: Optional[str] = Field(default=None)
+
+
+class InviteAllowlist(SQLModel, table=True):
+    """Emails allowed to create an account when INVITE_ONLY is on."""
+
+    __tablename__ = "invite_allowlist"
+
+    email: str = Field(primary_key=True)
+    note: str = ""
+    created_at: str = ""
+    created_by: str = ""
+
+
+class UsageDaily(SQLModel, table=True):
+    """UTC-day counters for pooled API cost control."""
+
+    __tablename__ = "usage_daily"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    day: str = Field(index=True)  # YYYY-MM-DD UTC
+    hunts: int = 0
+    extracts: int = 0
+    prepares: int = 0
+    sends: int = 0

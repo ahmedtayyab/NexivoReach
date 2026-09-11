@@ -42,5 +42,13 @@ services:
         sync: false
       - key: GOOGLE_REDIRECT_URI
         sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: INVITE_ONLY
+        value: "true"
+      - key: DAILY_HUNT_LIMIT
+        value: "5"
+      - key: DAILY_EXTRACT_LIMIT
+        value: "10"
       - key: GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON
         sync: false

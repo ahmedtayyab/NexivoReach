@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 from uuid import uuid4
 from sqlmodel import Session, select
 from app.agents.prospecting_agent import ProspectingAgent
-from app.models.schemas import ProspectRecord, AgentRunRecord, Business
+from app.models.schemas import ProspectRecord, AgentRunRecord, Business, User
 from app.database.session import engine
 from app.api.deps import AuthUser, get_current_user, resolve_business_id
 from app.api.serializers import prospect_to_frontend, run_to_frontend
@@ -150,6 +150,15 @@ async def run_discovery_agent(
     user: AuthUser = Depends(get_current_user),
 ):
     with Session(engine) as session:
+        db_user = session.get(User, user.id)
+        if not db_user and user.id == "local":
+            # AUTH_DISABLED: ensure a local row exists for usage tracking
+            from app.api.deps import ensure_default_business
+            ensure_default_business(session, user)
+            db_user = session.get(User, user.id)
+        if db_user:
+            from app.services import access as access_mod
+            access_mod.consume_usage(session, db_user, "hunt")
         business_id = resolve_business_id(request, user, session)
         existing = session.exec(
             select(ProspectRecord).where(ProspectRecord.business_id == business_id)

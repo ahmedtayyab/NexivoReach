@@ -26,6 +26,7 @@ from app.api.tokens import (
 )
 from app.integrations import gmail as gmail_mod
 from app.integrations import sheets_oauth as sheets_oauth_mod
+from app.services import access as access_mod
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -34,14 +35,29 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 
-def _user_payload(user) -> dict:
+def _user_payload(user, usage: dict | None = None) -> dict:
+    admin = False
+    suspended = False
+    plan = "pilot"
+    if isinstance(user, User):
+        admin = access_mod.user_is_admin(user)
+        suspended = bool(user.is_suspended)
+        plan = user.plan or "pilot"
+    elif hasattr(user, "is_admin"):
+        admin = bool(user.is_admin)
+        suspended = bool(getattr(user, "is_suspended", False))
+        plan = getattr(user, "plan", None) or "pilot"
     return {
         "id": user.id,
         "email": user.email,
         "name": user.name,
         "picture": user.picture,
-        "gmail": gmail_mod.status_payload(user),
-        "sheets": sheets_oauth_mod.status_payload(user),
+        "isAdmin": admin,
+        "isSuspended": suspended,
+        "plan": plan,
+        "usage": usage,
+        "gmail": gmail_mod.status_payload(user) if isinstance(user, User) else {"connected": False, "email": "", "connectedAt": ""},
+        "sheets": sheets_oauth_mod.status_payload(user) if isinstance(user, User) else {"connected": False, "email": "", "connectedAt": ""},
     }
 
 
@@ -49,15 +65,34 @@ def _user_payload(user) -> dict:
 def auth_me(request: Request):
     if not auth_required():
         u = local_user()
-        return {"configured": False, "user": {**_user_payload(u), "gmail": {"connected": False, "email": "", "connectedAt": ""}}}
+        return {
+            "configured": False,
+            "inviteOnly": bool(settings.INVITE_ONLY),
+            "user": {
+                **_user_payload(u),
+                "gmail": {"connected": False, "email": "", "connectedAt": ""},
+                "sheets": {"connected": False, "email": "", "connectedAt": ""},
+            },
+        }
     try:
         user = get_current_user(request)
         with Session(engine) as session:
             row = session.get(User, user.id)
             if row:
-                return {"configured": True, "user": _user_payload(row)}
-        return {"configured": True, "user": _user_payload(user)}
-    except HTTPException:
+                usage = access_mod.usage_snapshot(session, row)
+                return {
+                    "configured": True,
+                    "inviteOnly": bool(settings.INVITE_ONLY),
+                    "user": _user_payload(row, usage),
+                }
+        return {
+            "configured": True,
+            "inviteOnly": bool(settings.INVITE_ONLY),
+            "user": _user_payload(user),
+        }
+    except HTTPException as exc:
+        if exc.status_code == 403 and "suspended" in str(exc.detail).lower():
+            return {"configured": True, "user": None, "error": "suspended"}
         return {"configured": True, "user": None}
 
 
@@ -245,6 +280,10 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
     with Session(engine) as session:
         user = session.exec(select(User).where(User.google_id == google_id)).first()
         if not user:
+            try:
+                access_mod.assert_can_signup(session, email)
+            except HTTPException:
+                return RedirectResponse(f"{app_url}/?auth=invite")
             user = User(
                 id=f"user-{uuid4().hex[:12]}",
                 google_id=google_id,
@@ -252,11 +291,17 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
                 name=info.get("name") or email.split("@")[0],
                 picture=info.get("picture") or "",
                 created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                is_admin=access_mod.is_admin_email(email),
+                plan="pilot",
             )
         else:
+            if user.is_suspended:
+                return RedirectResponse(f"{app_url}/?auth=suspended")
             user.email = email
             user.name = info.get("name") or user.name
             user.picture = info.get("picture") or user.picture
+        if access_mod.is_admin_email(email):
+            user.is_admin = True
         session.add(user)
         session.commit()
         session.refresh(user)

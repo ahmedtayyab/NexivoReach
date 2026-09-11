@@ -7,10 +7,11 @@ from sqlmodel import Session, select
 from app.providers.factory import get_ai_provider
 from app.tools.web_search import WebSearchTool
 from app.database.session import engine
-from app.models.schemas import ProductItem, Business
+from app.models.schemas import ProductItem, Business, User
 from app.api.serializers import product_to_frontend, normalize_extracted_product
 from app.api.deps import AuthUser, get_current_user, resolve_business_id
 from app.integrations import sheets as sheets_mod
+from app.services import access as access_mod
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/products", tags=["products"])
@@ -80,7 +81,14 @@ def _file_to_text(filename: str, raw: bytes) -> str:
 
 
 @router.post("/extract-url")
-async def extract_products_from_url(req: UrlParseRequest, _user: AuthUser = Depends(get_current_user)):
+async def extract_products_from_url(
+    req: UrlParseRequest,
+    _user: AuthUser = Depends(get_current_user),
+):
+    with Session(engine) as session:
+        db_user = session.get(User, _user.id)
+        if db_user:
+            access_mod.consume_usage(session, db_user, "extract")
     scraper = WebSearchTool()
     pages, shop_products = await scraper.scrape_shop_catalog(req.url)
     combined = "\n".join(text for _, text in pages) or req.url

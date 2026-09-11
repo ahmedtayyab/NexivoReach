@@ -29,7 +29,7 @@ export default function LoginView({ error }: Props) {
 
           {error && (
             <p className="ui-banner ui-banner--warn mb-4" role="alert">
-              Sign-in failed. Check your Google OAuth settings and try again.
+              {error}
             </p>
           )}
 

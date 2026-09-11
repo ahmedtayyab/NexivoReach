@@ -1,4 +1,4 @@
-import { Plus, LogOut, ChevronDown, X, Settings, LayoutList, Activity, Mail } from 'lucide-react';
+import { Plus, LogOut, ChevronDown, X, Settings, LayoutList, Activity, Mail, Shield } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { AuthUser, BusinessInfo } from '../../types';
 import type { AppRoute } from '../../lib/navigation';
@@ -63,6 +63,10 @@ export default function Sidebar({
     { id: 'queue', label: 'Leads', icon: LayoutList },
     { id: 'outreach', label: 'Outreach', icon: Mail },
   ];
+
+  const ops = user?.isAdmin
+    ? [{ id: 'admin', label: 'Admin', icon: Shield }]
+    : [];
 
   const go = (id: string) => {
     onTabChange(id);
@@ -179,7 +183,20 @@ export default function Sidebar({
         </div>
 
         <div className="mx-2 border-t border-border-subtle" />
-        <div className="px-2 py-2">
+        <div className="px-2 py-2 space-y-0.5">
+          {ops.map(({ id, label: itemLabel, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => go(id)}
+              className={`nr-nav-link ${activeTab === id ? 'is-active' : ''}`}
+            >
+              <span className="nr-nav-link__left">
+                <Icon className="w-4 h-4 shrink-0" strokeWidth={activeTab === id ? 2 : 1.75} />
+                {itemLabel}
+              </span>
+            </button>
+          ))}
           <button
             type="button"
             onClick={() => go('activity')}

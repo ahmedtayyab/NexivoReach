@@ -27,6 +27,7 @@ import SettingsView from './components/SettingsView';
 import OutreachInboxView from './components/OutreachInboxView';
 import ReviewDrawer from './components/prospects/ReviewDrawer';
 import ActivityView from './components/ActivityView';
+import AdminView from './components/AdminView';
 import LoginView from './components/LoginView';
 import BrandLockup from './components/brand/BrandLockup';
 import { Menu } from 'lucide-react';
@@ -132,6 +133,12 @@ export default function App() {
     if (params.get('auth') === 'error') {
       setAuthError('Sign-in failed. Check your Google OAuth settings and try again.');
       window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+    } else if (params.get('auth') === 'invite') {
+      setAuthError('Invite only — ask the operator to add your email before signing in.');
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+    } else if (params.get('auth') === 'suspended') {
+      setAuthError('This account is suspended. Contact the operator.');
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
     }
 
     (async () => {
@@ -189,8 +196,12 @@ export default function App() {
       activeRoute === 'queue' ||
       activeRoute === 'outreach' ||
       activeRoute === 'activity' ||
+      activeRoute === 'admin' ||
       isSettingsRoute(activeRoute);
     if (!valid) {
+      navigate('company', true);
+    }
+    if (activeRoute === 'admin' && user && !user.isAdmin) {
       navigate('company', true);
     }
   }, [activeRoute, authLoading, user]);
@@ -732,6 +743,7 @@ export default function App() {
           />
         )}
         {activeRoute === 'activity' && <ActivityView agentLogs={agentLogs} />}
+        {activeRoute === 'admin' && user?.isAdmin && <AdminView />}
       </main>
 
       <MobileNav
