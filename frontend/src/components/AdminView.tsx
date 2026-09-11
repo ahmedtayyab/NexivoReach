@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Loader2, Shield, UserPlus, Ban, CheckCircle2, RefreshCw } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 
@@ -158,6 +158,7 @@ export default function AdminView() {
   const [busyId, setBusyId] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteNote, setInviteNote] = useState('');
+  const [inviteMsg, setInviteMsg] = useState('');
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -170,7 +171,14 @@ export default function AdminView() {
         apiFetch('/api/admin/users'),
         apiFetch('/api/admin/allowlist'),
       ]);
-      if (!o.ok) throw new Error(await apiErrorMessage(o, 'Failed to load overview'));
+      if (!o.ok) {
+        if (o.status === 403) {
+          throw new Error(
+            'Admin only — set ADMIN_EMAILS to your Google email on Render, redeploy, then sign out and back in.',
+          );
+        }
+        throw new Error(await apiErrorMessage(o, 'Failed to load overview'));
+      }
       if (!u.ok) throw new Error(await apiErrorMessage(u, 'Failed to load users'));
       if (!a.ok) throw new Error(await apiErrorMessage(a, 'Failed to load allowlist'));
       const overviewData = (await o.json()) as Overview;
@@ -224,22 +232,41 @@ export default function AdminView() {
     }
   };
 
-  const addInvite = async () => {
-    if (!inviteEmail.trim()) return;
+  const addInvite = async (e?: FormEvent) => {
+    e?.preventDefault();
+    const email = inviteEmail.trim();
+    if (!email) {
+      setInviteMsg('Enter an email address first.');
+      return;
+    }
+    if (!email.includes('@')) {
+      setInviteMsg('That doesn’t look like a valid email.');
+      return;
+    }
     setBusyId('invite');
     setError('');
+    setInviteMsg('');
     try {
       const resp = await apiFetch('/api/admin/allowlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inviteEmail.trim(), note: inviteNote.trim() }),
+        body: JSON.stringify({ email, note: inviteNote.trim() }),
       });
       if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Invite failed'));
+      const created = (await resp.json()) as Invite;
+      setInvites(prev => {
+        const without = prev.filter(i => i.email !== created.email);
+        return [created, ...without];
+      });
       setInviteEmail('');
       setInviteNote('');
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Invite failed');
+      setInviteMsg(`Invited ${created.email} — they can sign in with Google now.`);
+      // Refresh KPIs in the background; list already updated.
+      void load();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invite failed';
+      setError(message);
+      setInviteMsg(message);
     } finally {
       setBusyId('');
     }
@@ -247,14 +274,20 @@ export default function AdminView() {
 
   const removeInvite = async (email: string) => {
     setBusyId(email);
+    setInviteMsg('');
     try {
-      const resp = await apiFetch(`/api/admin/allowlist/${encodeURIComponent(email)}`, {
-        method: 'DELETE',
-      });
+      const resp = await apiFetch(
+        `/api/admin/allowlist?email=${encodeURIComponent(email)}`,
+        { method: 'DELETE' },
+      );
       if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Remove failed'));
-      await load();
+      setInvites(prev => prev.filter(i => i.email !== email.toLowerCase() && i.email !== email));
+      setInviteMsg(`Removed ${email} from the allowlist.`);
+      void load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Remove failed');
+      const message = e instanceof Error ? e.message : 'Remove failed';
+      setError(message);
+      setInviteMsg(message);
     } finally {
       setBusyId('');
     }
@@ -630,13 +663,18 @@ export default function AdminView() {
             {inviteOnly ? 'New signups need an invite' : 'Signup is open — list still useful for tracking'}
           </span>
         </div>
-        <div className="flex flex-col sm:flex-row gap-2 mb-4 max-w-2xl">
+        <form className="flex flex-col sm:flex-row gap-2 mb-3 max-w-2xl" onSubmit={e => void addInvite(e)}>
           <input
             type="email"
             value={inviteEmail}
-            onChange={e => setInviteEmail(e.target.value)}
+            onChange={e => {
+              setInviteEmail(e.target.value);
+              if (inviteMsg) setInviteMsg('');
+            }}
             placeholder="pilot@company.com"
             className="flex-1 border border-border rounded-md px-3 py-2 text-[13px]"
+            autoComplete="email"
+            required
           />
           <input
             type="text"
@@ -646,15 +684,26 @@ export default function AdminView() {
             className="sm:w-48 border border-border rounded-md px-3 py-2 text-[13px]"
           />
           <button
-            type="button"
-            className="btn btn-primary"
+            type="submit"
+            className="btn btn-primary inline-flex items-center justify-center gap-1.5"
             disabled={busyId === 'invite' || !inviteEmail.trim()}
-            onClick={() => void addInvite()}
           >
-            <UserPlus className="w-3.5 h-3.5" />
-            Invite
+            {busyId === 'invite' ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <UserPlus className="w-3.5 h-3.5" />
+            )}
+            {busyId === 'invite' ? 'Adding…' : 'Invite'}
           </button>
-        </div>
+        </form>
+        {inviteMsg && (
+          <p
+            className={`text-[12.5px] mb-3 ${inviteMsg.toLowerCase().includes('invited') ? 'text-[var(--accent)]' : 'text-amber-700'}`}
+            role="status"
+          >
+            {inviteMsg}
+          </p>
+        )}
         {invites.length === 0 ? (
           <p className="text-[13px] text-ink-muted">No invites yet. Add your first pilot email above.</p>
         ) : (

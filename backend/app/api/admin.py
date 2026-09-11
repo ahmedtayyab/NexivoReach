@@ -274,10 +274,21 @@ def create_invite(payload: InviteCreate, admin: AuthUser = Depends(_require_admi
         }
 
 
-@router.delete("/allowlist/{email}")
+@router.delete("/allowlist")
 def delete_invite(email: str, _admin: AuthUser = Depends(_require_admin)):
+    """Remove an invite. Email is a query param so addresses with @ work reliably."""
     with Session(engine) as session:
         ok = access_mod.remove_invite(session, email)
         if not ok:
             raise HTTPException(status_code=404, detail="Invite not found")
-        return {"ok": True}
+        return {"ok": True, "email": access_mod.normalize_email(email)}
+
+
+# Keep old path working for any cached clients
+@router.delete("/allowlist/{email}")
+def delete_invite_path(email: str, _admin: AuthUser = Depends(_require_admin)):
+    with Session(engine) as session:
+        ok = access_mod.remove_invite(session, email)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Invite not found")
+        return {"ok": True, "email": access_mod.normalize_email(email)}
