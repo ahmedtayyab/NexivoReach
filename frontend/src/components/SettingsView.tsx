@@ -1057,7 +1057,7 @@ function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) 
         {!status?.connected ? (
           <a
             href="/api/auth/gmail"
-            className="inline-flex px-3 py-1.5 text-[13px] bg-accent hover:bg-accent-hover text-ink font-medium rounded-md nr-btn-press"
+            className="inline-flex px-3 py-1.5 text-[13px] bg-accent hover:bg-accent-hover text-white font-medium rounded-md nr-btn-press"
           >
             Connect Gmail
           </a>
@@ -1295,7 +1295,7 @@ function IntegrationsSection({
         {!userOauth && platformReady && !loading && (
           <a
             href="/api/auth/workspace"
-            className="inline-flex px-4 py-2 text-[13px] bg-accent hover:bg-accent-hover text-ink font-medium rounded-md nr-btn-press"
+            className="inline-flex px-4 py-2 text-[13px] bg-accent hover:bg-accent-hover text-white font-medium rounded-md nr-btn-press"
           >
             Connect Gmail + Sheets
           </a>

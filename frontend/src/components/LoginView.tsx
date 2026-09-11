@@ -12,12 +12,12 @@ export default function LoginView({ error }: Props) {
         alt=""
         className="absolute inset-0 w-full h-full object-cover"
       />
-      <div className="absolute inset-0 bg-[#14161A]/48" aria-hidden />
+      <div className="absolute inset-0 bg-[#0B1F3A]/52" aria-hidden />
       <div
         className="absolute inset-0"
         style={{
           background:
-            'linear-gradient(115deg, rgba(232,233,235,0.9) 0%, rgba(232,233,235,0.55) 45%, rgba(201,137,26,0.28) 100%)',
+            'linear-gradient(115deg, rgba(231,238,246,0.9) 0%, rgba(231,238,246,0.5) 42%, rgba(27,110,245,0.28) 72%, rgba(240,162,2,0.22) 100%)',
         }}
         aria-hidden
       />

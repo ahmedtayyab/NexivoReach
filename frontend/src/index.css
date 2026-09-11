@@ -1,49 +1,53 @@
-/* NexivoReach — graphite paper, ink type, amber action.
-   High-contrast CTAs without purple glow or cream/terracotta AI looks. */
+/* NexivoReach — Navy + Electric Blue + Amber.
+   Navy structure, electric blue actions, amber signals. No purple glow. */
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Syne:wght@600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-display: "Syne", ui-sans-serif, sans-serif;
   --font-sans: "IBM Plex Sans", ui-sans-serif, sans-serif;
-  --color-canvas: #E8E9EB;
-  --color-surface: #F3F3F4;
+  --color-canvas: #E7EEF6;
+  --color-surface: #F1F5FA;
   --color-panel: #FFFFFF;
   --color-panel-elevated: #FFFFFF;
-  --color-muted: #DDDEE1;
-  --color-border: #C4C6CB;
-  --color-border-subtle: #DADBDE;
-  --color-ink: #14161A;
-  --color-ink-secondary: #3C414A;
-  --color-ink-muted: #6A707A;
-  --color-accent: #C9891A;
-  --color-accent-hover: #A36E12;
+  --color-muted: #D9E3EF;
+  --color-border: #B7C6D8;
+  --color-border-subtle: #D0DBE8;
+  --color-ink: #0B1F3A;
+  --color-ink-secondary: #334860;
+  --color-ink-muted: #5E738C;
+  --color-accent: #1B6EF5;
+  --color-accent-hover: #1458C7;
 }
 
 @layer base {
   :root {
-    --bg-app: #E8E9EB;
+    --navy: #0B1F3A;
+    --navy-soft: rgba(11, 31, 58, 0.08);
+    --bg-app: #E7EEF6;
     --bg-panel: #FFFFFF;
-    --bg-surface: #F3F3F4;
-    --border: #C4C6CB;
-    --border-subtle: #DADBDE;
-    --text-primary: #14161A;
-    --text-secondary: #3C414A;
-    --text-muted: #6A707A;
-    --accent: #C9891A;
-    --accent-hover: #A36E12;
-    --accent-soft: rgba(201, 137, 26, 0.14);
+    --bg-surface: #F1F5FA;
+    --border: #B7C6D8;
+    --border-subtle: #D0DBE8;
+    --text-primary: #0B1F3A;
+    --text-secondary: #334860;
+    --text-muted: #5E738C;
+    --accent: #1B6EF5;
+    --accent-hover: #1458C7;
+    --accent-soft: rgba(27, 110, 245, 0.12);
     --panel: #FFFFFF;
     --panel-elevated: #FFFFFF;
-    --muted: #DDDEE1;
+    --muted: #D9E3EF;
     --green: #1F7A58;
-    --amber: #C9891A;
-    --danger: #B33B3B;
-    --info: #3D4F63;
-    --row-hover: #EEEEEF;
+    --amber: #F0A202;
+    --amber-hover: #D48C00;
+    --amber-soft: rgba(240, 162, 2, 0.16);
+    --danger: #C0392B;
+    --info: #1B6EF5;
+    --row-hover: #E8F0FA;
     --radius-sm: 4px;
     --radius-md: 6px;
-    --sidebar-bg: #F6F6F7;
+    --sidebar-bg: #F5F8FC;
     --font-display: "Syne", ui-sans-serif, sans-serif;
     --font-sans: "IBM Plex Sans", ui-sans-serif, sans-serif;
   }
@@ -53,9 +57,9 @@
   body {
     background-color: var(--bg-app);
     background-image:
-      radial-gradient(ellipse 85% 50% at 0% -6%, rgba(201, 137, 26, 0.12), transparent 52%),
-      radial-gradient(ellipse 70% 40% at 100% 0%, rgba(61, 79, 99, 0.1), transparent 48%),
-      linear-gradient(180deg, #F0F0F1 0%, var(--bg-app) 42%, #E2E3E6 100%);
+      radial-gradient(ellipse 90% 55% at 0% -8%, rgba(27, 110, 245, 0.16), transparent 55%),
+      radial-gradient(ellipse 70% 42% at 100% 0%, rgba(240, 162, 2, 0.12), transparent 50%),
+      linear-gradient(180deg, #EEF3F9 0%, var(--bg-app) 44%, #DCE6F1 100%);
     background-attachment: fixed;
     color: var(--text-primary);
     font-family: var(--font-sans);
@@ -484,15 +488,25 @@ input:focus, textarea:focus, select:focus {
 }
 .btn-primary {
   background: var(--accent);
-  color: #1A1408;
+  color: #FFFFFF;
   border-color: var(--accent);
-  box-shadow: 0 1px 0 rgba(20, 22, 26, 0.1);
+  box-shadow: 0 1px 0 rgba(11, 31, 58, 0.12);
   font-weight: 600;
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
-  color: #FFF8EB;
+  color: #FFFFFF;
+}
+.btn-amber {
+  background: var(--amber);
+  color: var(--navy);
+  border-color: var(--amber);
+  font-weight: 600;
+}
+.btn-amber:hover:not(:disabled) {
+  background: var(--amber-hover);
+  border-color: var(--amber-hover);
 }
 .btn-secondary {
   background: var(--bg-panel);
@@ -624,12 +638,12 @@ input:focus, textarea:focus, select:focus {
 .conn-dot.is-off { background: #9aa19a; }
 
 .find-buyers {
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
   background: var(--bg-panel);
   padding: 1.15rem 1.15rem 1.25rem;
   border-radius: 10px;
-  border-left: 3px solid var(--accent);
-  box-shadow: 0 10px 28px rgba(18, 24, 32, 0.05);
+  border-left: 3px solid var(--amber);
+  box-shadow: 0 10px 28px rgba(11, 31, 58, 0.06);
 }
 .find-buyers__head { margin-bottom: 0.85rem; }
 .find-buyers__title {
@@ -637,7 +651,7 @@ input:focus, textarea:focus, select:focus {
   font-family: var(--font-display);
   font-size: 1.2rem;
   font-weight: 700;
-  color: var(--accent-hover);
+  color: var(--navy);
 }
 .find-buyers__desc {
   margin: 0.3rem 0 0;
@@ -911,7 +925,7 @@ input:focus, textarea:focus, select:focus {
   display: flex;
   align-items: center;
   border-bottom: 1px solid var(--border-subtle);
-  background: color-mix(in srgb, var(--accent) 4%, var(--sidebar-bg));
+  background: linear-gradient(90deg, var(--navy-soft), transparent 70%);
 }
 .nr-nav-link {
   display: flex;
@@ -1088,9 +1102,9 @@ input:focus, textarea:focus, select:focus {
 
 .nav-item-primary.is-workspace {
   background: var(--accent-soft) !important;
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent) !important;
   font-weight: 600 !important;
-  color: var(--accent-hover) !important;
+  color: var(--navy) !important;
 }
 .app-shell { background: transparent; }
 .app-main {
@@ -1102,14 +1116,14 @@ input:focus, textarea:focus, select:focus {
   background: var(--muted);
 }
 .find-buyers {
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
   background: var(--bg-panel);
   padding: 1.15rem 1.15rem 1.25rem;
   border-radius: 10px;
-  border-left: 3px solid var(--accent);
-  box-shadow: 0 10px 28px rgba(18, 24, 32, 0.05);
+  border-left: 3px solid var(--amber);
+  box-shadow: 0 10px 28px rgba(11, 31, 58, 0.06);
 }
-.find-buyers__title { font-size: 1.15rem; color: var(--accent-hover); }
+.find-buyers__title { font-size: 1.15rem; color: var(--navy); }
 
 /* ── Admin ops desk ──────────────────────────────────────────────────────── */
 .admin-desk { max-width: 64rem; }
@@ -1414,8 +1428,8 @@ input:focus, textarea:focus, select:focus {
   height: 14px;
   padding: 0 3px;
   border-radius: 999px;
-  background: var(--accent);
-  color: #1A1408;
+  background: var(--amber);
+  color: var(--navy);
   font-size: 9px;
   line-height: 14px;
   text-align: center;
@@ -1456,8 +1470,8 @@ input:focus, textarea:focus, select:focus {
   height: 1.15rem;
   padding: 0 0.3rem;
   border-radius: 999px;
-  background: var(--accent);
-  color: #1A1408;
+  background: var(--amber);
+  color: var(--navy);
   font-size: 10px;
   line-height: 1.15rem;
   text-align: center;
@@ -1514,8 +1528,8 @@ input:focus, textarea:focus, select:focus {
   height: 1.1rem;
   padding: 0 0.25rem;
   border-radius: 999px;
-  background: var(--accent);
-  color: #1A1408;
+  background: var(--amber);
+  color: var(--navy);
   font-size: 9px;
   line-height: 1.1rem;
   text-align: center;
@@ -1559,8 +1573,8 @@ input:focus, textarea:focus, select:focus {
   flex-shrink: 0;
 }
 .toast--sent .toast__icon {
-  background: color-mix(in srgb, var(--accent) 22%, #fff);
-  color: var(--accent-hover);
+  background: var(--amber-soft);
+  color: var(--amber-hover);
 }
 .toast--received .toast__icon {
   background: color-mix(in srgb, var(--green) 18%, #fff);
@@ -1575,8 +1589,8 @@ input:focus, textarea:focus, select:focus {
   color: var(--danger);
 }
 .toast--info .toast__icon {
-  background: color-mix(in srgb, var(--info) 14%, #fff);
-  color: var(--info);
+  background: var(--accent-soft);
+  color: var(--accent-hover);
 }
 .toast__copy { min-width: 0; }
 .toast__title {
