@@ -1,49 +1,49 @@
-/* NexivoReach — atlantic paper, denim brand (matches mark), clear action blue.
-   Cool neutrals + one decisive accent. Not purple, not cream/terracotta, not glow. */
+/* NexivoReach — graphite paper, ink type, amber action.
+   High-contrast CTAs without purple glow or cream/terracotta AI looks. */
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Syne:wght@600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-display: "Syne", ui-sans-serif, sans-serif;
   --font-sans: "IBM Plex Sans", ui-sans-serif, sans-serif;
-  --color-canvas: #E4EBF1;
-  --color-surface: #F2F6F9;
+  --color-canvas: #E8E9EB;
+  --color-surface: #F3F3F4;
   --color-panel: #FFFFFF;
   --color-panel-elevated: #FFFFFF;
-  --color-muted: #DCE5ED;
-  --color-border: #B8C5D1;
-  --color-border-subtle: #D2DCE5;
-  --color-ink: #121820;
-  --color-ink-secondary: #3A4654;
-  --color-ink-muted: #667788;
-  --color-accent: #2A5A84;
-  --color-accent-hover: #1E4566;
+  --color-muted: #DDDEE1;
+  --color-border: #C4C6CB;
+  --color-border-subtle: #DADBDE;
+  --color-ink: #14161A;
+  --color-ink-secondary: #3C414A;
+  --color-ink-muted: #6A707A;
+  --color-accent: #C9891A;
+  --color-accent-hover: #A36E12;
 }
 
 @layer base {
   :root {
-    --bg-app: #E4EBF1;
+    --bg-app: #E8E9EB;
     --bg-panel: #FFFFFF;
-    --bg-surface: #F2F6F9;
-    --border: #B8C5D1;
-    --border-subtle: #D2DCE5;
-    --text-primary: #121820;
-    --text-secondary: #3A4654;
-    --text-muted: #667788;
-    --accent: #2A5A84;
-    --accent-hover: #1E4566;
-    --accent-soft: rgba(42, 90, 132, 0.12);
+    --bg-surface: #F3F3F4;
+    --border: #C4C6CB;
+    --border-subtle: #DADBDE;
+    --text-primary: #14161A;
+    --text-secondary: #3C414A;
+    --text-muted: #6A707A;
+    --accent: #C9891A;
+    --accent-hover: #A36E12;
+    --accent-soft: rgba(201, 137, 26, 0.14);
     --panel: #FFFFFF;
     --panel-elevated: #FFFFFF;
-    --muted: #DCE5ED;
-    --green: #1E7A5C;
-    --amber: #B06A00;
+    --muted: #DDDEE1;
+    --green: #1F7A58;
+    --amber: #C9891A;
     --danger: #B33B3B;
-    --info: #2A5A84;
-    --row-hover: #E8F0F6;
+    --info: #3D4F63;
+    --row-hover: #EEEEEF;
     --radius-sm: 4px;
     --radius-md: 6px;
-    --sidebar-bg: #F7FAFC;
+    --sidebar-bg: #F6F6F7;
     --font-display: "Syne", ui-sans-serif, sans-serif;
     --font-sans: "IBM Plex Sans", ui-sans-serif, sans-serif;
   }
@@ -53,9 +53,9 @@
   body {
     background-color: var(--bg-app);
     background-image:
-      radial-gradient(ellipse 90% 55% at 0% -8%, rgba(42, 90, 132, 0.16), transparent 55%),
-      radial-gradient(ellipse 65% 40% at 100% 0%, rgba(30, 122, 92, 0.07), transparent 50%),
-      linear-gradient(180deg, #EAF1F6 0%, var(--bg-app) 45%, #DEE6ED 100%);
+      radial-gradient(ellipse 85% 50% at 0% -6%, rgba(201, 137, 26, 0.12), transparent 52%),
+      radial-gradient(ellipse 70% 40% at 100% 0%, rgba(61, 79, 99, 0.1), transparent 48%),
+      linear-gradient(180deg, #F0F0F1 0%, var(--bg-app) 42%, #E2E3E6 100%);
     background-attachment: fixed;
     color: var(--text-primary);
     font-family: var(--font-sans);
@@ -484,13 +484,15 @@ input:focus, textarea:focus, select:focus {
 }
 .btn-primary {
   background: var(--accent);
-  color: #F5F9FC;
+  color: #1A1408;
   border-color: var(--accent);
-  box-shadow: 0 1px 0 rgba(18, 24, 32, 0.08);
+  box-shadow: 0 1px 0 rgba(20, 22, 26, 0.1);
+  font-weight: 600;
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
+  color: #FFF8EB;
 }
 .btn-secondary {
   background: var(--bg-panel);
@@ -1413,11 +1415,11 @@ input:focus, textarea:focus, select:focus {
   padding: 0 3px;
   border-radius: 999px;
   background: var(--accent);
-  color: var(--panel-elevated, #fff);
+  color: #1A1408;
   font-size: 9px;
   line-height: 14px;
   text-align: center;
-  font-weight: 600;
+  font-weight: 700;
 }
 .notif-rail {
   display: none;
@@ -1455,11 +1457,11 @@ input:focus, textarea:focus, select:focus {
   padding: 0 0.3rem;
   border-radius: 999px;
   background: var(--accent);
-  color: var(--panel-elevated, #fff);
+  color: #1A1408;
   font-size: 10px;
   line-height: 1.15rem;
   text-align: center;
-  font-weight: 600;
+  font-weight: 700;
 }
 .notif-rail__actions {
   display: inline-flex;
@@ -1469,6 +1471,143 @@ input:focus, textarea:focus, select:focus {
 .notif-rail__close {
   padding: 0.25rem;
   color: var(--text-muted);
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.notif-rail__close:hover {
+  color: var(--text-primary);
+  background: var(--muted);
+}
+
+/* Collapsed desktop rail reopen tab */
+.notif-rail-tab {
+  display: none;
+}
+@media (min-width: 1100px) {
+  .notif-rail-tab {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    position: sticky;
+    top: 1rem;
+    align-self: flex-start;
+    margin: 1rem 0.65rem 0 0;
+    padding: 0.65rem 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-panel);
+    color: var(--text-secondary);
+    cursor: pointer;
+    box-shadow: 0 8px 20px rgba(20, 22, 26, 0.06);
+    z-index: 20;
+  }
+  .notif-rail-tab:hover {
+    color: var(--text-primary);
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  }
+}
+.notif-rail-tab__badge {
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #1A1408;
+  font-size: 9px;
+  line-height: 1.1rem;
+  text-align: center;
+  font-weight: 700;
+}
+
+/* In-app message popups (not browser notifications) */
+.toast-host {
+  position: fixed;
+  right: 1rem;
+  bottom: 1.1rem;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  width: min(22rem, calc(100vw - 2rem));
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.65rem;
+  align-items: start;
+  padding: 0.85rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  box-shadow: 0 14px 36px rgba(20, 22, 26, 0.14);
+  animation: nr-pop 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.toast__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.toast--sent .toast__icon {
+  background: color-mix(in srgb, var(--accent) 22%, #fff);
+  color: var(--accent-hover);
+}
+.toast--received .toast__icon {
+  background: color-mix(in srgb, var(--green) 18%, #fff);
+  color: var(--green);
+}
+.toast--ok .toast__icon {
+  background: color-mix(in srgb, var(--green) 18%, #fff);
+  color: var(--green);
+}
+.toast--error .toast__icon {
+  background: color-mix(in srgb, var(--danger) 14%, #fff);
+  color: var(--danger);
+}
+.toast--info .toast__icon {
+  background: color-mix(in srgb, var(--info) 14%, #fff);
+  color: var(--info);
+}
+.toast__copy { min-width: 0; }
+.toast__title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text-primary);
+  line-height: 1.25;
+}
+.toast__body {
+  margin: 0.2rem 0 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.toast__close {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 0.1rem;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.toast__close:hover { color: var(--text-primary); }
+@media (max-width: 640px) {
+  .toast-host {
+    bottom: 4.25rem;
+    right: 0.75rem;
+    left: 0.75rem;
+    width: auto;
+  }
 }
 .notif-rail__scroll {
   flex: 1;

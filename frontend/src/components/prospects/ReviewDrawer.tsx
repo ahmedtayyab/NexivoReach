@@ -129,7 +129,7 @@ export default function ReviewDrawer({
                     onUpdateStatus(prospect.id, 'Sent');
                   }
                 }}
-                className="px-2.5 sm:px-3.5 py-1.5 bg-accent hover:bg-accent-hover text-white text-[12px] sm:text-[13px] font-medium rounded-md nr-btn-press"
+                className="px-2.5 sm:px-3.5 py-1.5 bg-accent hover:bg-accent-hover text-ink text-[12px] sm:text-[13px] font-medium rounded-md nr-btn-press"
               >
                 {gmailConnected ? 'Approve & send' : 'Approve & open email'}
               </button>
@@ -479,7 +479,7 @@ export default function ReviewDrawer({
                 <button
                   type="button"
                   onClick={() => onPrepareFollowUp(prospect.id)}
-                  className="px-3 py-1.5 text-[12px] bg-accent text-white rounded-md nr-btn-press"
+                  className="px-3 py-1.5 text-[12px] bg-accent text-ink font-medium rounded-md nr-btn-press"
                 >
                   Draft follow-up email
                 </button>

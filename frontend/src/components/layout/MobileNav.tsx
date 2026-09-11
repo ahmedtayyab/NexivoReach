@@ -51,7 +51,7 @@ export default function MobileNav({
               <span className="relative">
                 <Icon className="w-5 h-5" strokeWidth={isActive ? 2 : 1.75} />
                 {badge > 0 && (
-                  <span className="absolute -top-1.5 -right-2 min-w-[14px] h-3.5 px-0.5 bg-accent text-panel-elevated text-[9px] leading-3.5 text-center tabular-nums">
+                  <span className="absolute -top-1.5 -right-2 min-w-[14px] h-3.5 px-0.5 bg-accent text-ink font-semibold text-[9px] leading-3.5 text-center tabular-nums">
                     {badge > 9 ? '9+' : badge}
                   </span>
                 )}

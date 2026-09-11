@@ -21,6 +21,9 @@ type Props = {
   /** Controlled mobile sheet */
   mobileOpen?: boolean;
   onMobileOpenChange?: (open: boolean) => void;
+  /** Desktop rail open (persistent column) */
+  desktopOpen?: boolean;
+  onDesktopOpenChange?: (open: boolean) => void;
 };
 
 function pct(used: number, limit: number): number {
@@ -131,6 +134,8 @@ export default function NotificationsRail({
   pollMs = 45000,
   mobileOpen = false,
   onMobileOpenChange,
+  desktopOpen = true,
+  onDesktopOpenChange,
 }: Props) {
   const [items, setItems] = useState<AppNotification[]>([]);
   const [unread, setUnread] = useState(0);
@@ -218,16 +223,17 @@ export default function NotificationsRail({
             {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
             Mark all
           </button>
-          {onMobileOpenChange && (
-            <button
-              type="button"
-              className="notif-rail__close lg:hidden"
-              onClick={() => onMobileOpenChange(false)}
-              aria-label="Close notifications"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
+          <button
+            type="button"
+            className="notif-rail__close"
+            onClick={() => {
+              onMobileOpenChange?.(false);
+              onDesktopOpenChange?.(false);
+            }}
+            aria-label="Close notifications"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
@@ -241,12 +247,25 @@ export default function NotificationsRail({
 
   return (
     <>
-      {/* Desktop: persistent right column */}
-      <aside className="notif-rail" aria-label="Notifications">
-        {panel}
-      </aside>
+      {desktopOpen && (
+        <aside className="notif-rail" aria-label="Notifications">
+          {panel}
+        </aside>
+      )}
+      {!desktopOpen && (
+        <button
+          type="button"
+          className="notif-rail-tab"
+          onClick={() => onDesktopOpenChange?.(true)}
+          aria-label={unread ? `Open notifications, ${unread} unread` : 'Open notifications'}
+        >
+          <Bell className="w-4 h-4" strokeWidth={1.75} />
+          {unread > 0 && (
+            <span className="notif-rail-tab__badge tabular-nums">{unread > 9 ? '9+' : unread}</span>
+          )}
+        </button>
+      )}
 
-      {/* Mobile: sheet over content */}
       {mobileOpen && (
         <div className="notif-sheet lg:hidden" role="dialog" aria-modal="true" aria-label="Notifications">
           <button

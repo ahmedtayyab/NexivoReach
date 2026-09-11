@@ -33,10 +33,13 @@ import NotificationsRail, {
   NotificationHeaderButton,
   useNotificationUnread,
 } from './components/NotificationBell';
+import ToastHost, { type AppToast, type ToastKind } from './components/ToastHost';
 import LoginView from './components/LoginView';
 import SuspendedView from './components/SuspendedView';
 import BrandLockup from './components/brand/BrandLockup';
 import { Menu } from 'lucide-react';
+
+const NOTIF_RAIL_KEY = 'nr-notif-rail-open';
 
 export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
@@ -55,7 +58,38 @@ export default function App() {
   const [selectedProspectId, setSelectedProspectId] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [notifSheetOpen, setNotifSheetOpen] = useState(false);
+  const [notifRailOpen, setNotifRailOpen] = useState(() => {
+    try {
+      const raw = localStorage.getItem(NOTIF_RAIL_KEY);
+      if (raw === null) return true;
+      return raw !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const [toasts, setToasts] = useState<AppToast[]>([]);
   const notifUnread = useNotificationUnread(user);
+
+  const pushToast = useCallback((kind: ToastKind, title: string, body?: string) => {
+    const id =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setToasts(prev => [...prev.slice(-4), { id, kind, title, body }]);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  const setNotifRailOpenPersist = useCallback((open: boolean) => {
+    setNotifRailOpen(open);
+    try {
+      localStorage.setItem(NOTIF_RAIL_KEY, open ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const selectedProspect = prospects.find(p => p.id === selectedProspectId) ?? null;
 
@@ -215,6 +249,7 @@ export default function App() {
     }
     if (activeRoute === 'notifications') {
       setNotifSheetOpen(true);
+      setNotifRailOpenPersist(true);
       navigate('company', true);
     }
     if (activeRoute === 'admin' && user && !user.isAdmin) {
@@ -338,13 +373,17 @@ export default function App() {
           ? `mailto:${encodeURIComponent(to)}?${params.toString()}`
           : `mailto:?${params.toString()}`;
         window.open(href, '_blank');
+        pushToast('info', 'Opened in your mail app', current?.companyName || 'Compose ready');
+      } else {
+        const to = recipientEmail(data.prospect as Prospect | undefined) || recipientEmail(current) || 'recipient';
+        pushToast('sent', 'Message sent', `${current?.companyName || 'Lead'} · ${to}`);
       }
       if (data.prospect) {
         setProspects(prev => prev.map(p => (p.id === prospectId ? (data.prospect as Prospect) : p)));
       }
     } catch (err) {
       console.error(err);
-      window.alert(err instanceof Error ? err.message : 'Send failed');
+      pushToast('error', 'Send failed', err instanceof Error ? err.message : 'Could not send email');
     }
   };
 
@@ -387,10 +426,10 @@ export default function App() {
         const map = new Map(updated.map(p => [p.id, p]));
         setProspects(prev => prev.map(p => map.get(p.id) || p));
       }
-      window.alert(`Prepared ${data.prepared || 0} outreach draft(s).`);
+      pushToast('ok', 'Drafts prepared', `${data.prepared || 0} outreach draft(s) ready`);
     } catch (err) {
       console.error(err);
-      window.alert(err instanceof Error ? err.message : 'Prepare outreach failed');
+      pushToast('error', 'Prepare failed', err instanceof Error ? err.message : 'Could not prepare outreach');
     }
   };
 
@@ -400,15 +439,16 @@ export default function App() {
       if (!resp.ok) throw new Error(await resp.text());
       const row = (await resp.json()) as Prospect;
       setProspects(prev => prev.map(p => (p.id === row.id ? row : p)));
+      pushToast('ok', 'Follow-up draft ready', row.companyName || 'Lead');
     } catch (err) {
       console.error(err);
-      window.alert(err instanceof Error ? err.message : 'Follow-up draft failed');
+      pushToast('error', 'Follow-up failed', err instanceof Error ? err.message : 'Could not prepare follow-up');
     }
   };
 
   const handleSendAllReady = async (mode: 'batch' | 'ready' = 'batch') => {
     if (!user?.gmail?.connected) {
-      window.alert('Connect Gmail in Workspace → Connect first, then you can send in one click.');
+      pushToast('info', 'Connect Gmail first', 'Workspace → Connect, then send in one click.');
       return;
     }
     const label = mode === 'ready'
@@ -430,25 +470,30 @@ export default function App() {
         setProspects(prev => prev.map(p => map.get(p.id) || p));
       }
       const failed = data.failed || 0;
-      const prepared = data.prepared ? ` Prepared ${data.prepared}.` : '';
-      const resolved = data.resolvedEmails ? ` Resolved ${data.resolvedEmails} email(s).` : '';
-      const skipped = data.skippedNoEmail
-        ? ` ${data.skippedNoEmail} had no public email on their site.`
-        : '';
-      window.alert(
-        `Sent ${data.sent || 0} email(s).${prepared}${resolved}${skipped}`
-        + (failed ? ` ${failed} failed.` : '')
-        + (data.errors?.[0]?.error ? `\nFirst error: ${data.errors[0].company}: ${data.errors[0].error}` : ''),
-      );
+      const sent = data.sent || 0;
+      const extras = [
+        data.prepared ? `Prepared ${data.prepared}` : '',
+        data.resolvedEmails ? `Resolved ${data.resolvedEmails} email(s)` : '',
+        data.skippedNoEmail ? `${data.skippedNoEmail} had no public email` : '',
+        failed ? `${failed} failed` : '',
+        data.errors?.[0]?.error ? `${data.errors[0].company}: ${data.errors[0].error}` : '',
+      ].filter(Boolean).join(' · ');
+      if (sent > 0) {
+        pushToast('sent', `Sent ${sent} message${sent === 1 ? '' : 's'}`, extras || undefined);
+      } else if (failed > 0) {
+        pushToast('error', 'Nothing sent', extras || 'Check Gmail connection and drafts.');
+      } else {
+        pushToast('info', 'Nothing to send', extras || 'No ready drafts matched.');
+      }
     } catch (err) {
       console.error(err);
-      window.alert(err instanceof Error ? err.message : 'Bulk send failed');
+      pushToast('error', 'Bulk send failed', err instanceof Error ? err.message : 'Could not send');
     }
   };
 
   const handleSendSelected = async (ids: string[]) => {
     if (!user?.gmail?.connected) {
-      window.alert('Connect Gmail in Workspace → Connect first, then you can send selected emails.');
+      pushToast('info', 'Connect Gmail first', 'Workspace → Connect, then send selected emails.');
       return;
     }
     if (!ids.length) return;
@@ -466,19 +511,24 @@ export default function App() {
         setProspects(prev => prev.map(p => map.get(p.id) || p));
       }
       const failed = data.failed || 0;
-      const prepared = data.prepared ? ` Prepared ${data.prepared}.` : '';
-      const resolved = data.resolvedEmails ? ` Resolved ${data.resolvedEmails} email(s).` : '';
-      const skipped = data.skippedNoEmail
-        ? ` ${data.skippedNoEmail} had no public email on their site.`
-        : '';
-      window.alert(
-        `Sent ${data.sent || 0} email(s).${prepared}${resolved}${skipped}`
-        + (failed ? ` ${failed} failed.` : '')
-        + (data.errors?.[0]?.error ? `\nFirst error: ${data.errors[0].company}: ${data.errors[0].error}` : ''),
-      );
+      const sent = data.sent || 0;
+      const extras = [
+        data.prepared ? `Prepared ${data.prepared}` : '',
+        data.resolvedEmails ? `Resolved ${data.resolvedEmails} email(s)` : '',
+        data.skippedNoEmail ? `${data.skippedNoEmail} had no public email` : '',
+        failed ? `${failed} failed` : '',
+        data.errors?.[0]?.error ? `${data.errors[0].company}: ${data.errors[0].error}` : '',
+      ].filter(Boolean).join(' · ');
+      if (sent > 0) {
+        pushToast('sent', `Sent ${sent} message${sent === 1 ? '' : 's'}`, extras || undefined);
+      } else if (failed > 0) {
+        pushToast('error', 'Nothing sent', extras || 'Check recipients and drafts.');
+      } else {
+        pushToast('info', 'Nothing sent', extras || 'Selected leads were not ready.');
+      }
     } catch (err) {
       console.error(err);
-      window.alert(err instanceof Error ? err.message : 'Send selected failed');
+      pushToast('error', 'Send selected failed', err instanceof Error ? err.message : 'Could not send');
     }
   };
 
@@ -511,10 +561,28 @@ export default function App() {
         const map = new Map(updated.map(p => [p.id, p]));
         setProspects(prev => prev.map(p => map.get(p.id) || p));
       }
-      window.alert(`Synced ${data.synced || 0} reply(ies) from Gmail.`);
+      const synced = data.synced || 0;
+      if (synced > 0) {
+        const names = updated
+          .slice(0, 3)
+          .map(p => p.companyName)
+          .filter(Boolean)
+          .join(', ');
+        pushToast(
+          'received',
+          synced === 1 ? 'Reply received' : `${synced} replies received`,
+          names || 'Synced from Gmail',
+        );
+      } else {
+        pushToast('info', 'No new replies', 'Inbox checked — nothing new yet.');
+      }
     } catch (err) {
       console.error(err);
-      window.alert(err instanceof Error ? err.message : 'Reply sync failed — connect Gmail in Settings');
+      pushToast(
+        'error',
+        'Reply sync failed',
+        err instanceof Error ? err.message : 'Connect Gmail in Workspace → Connect',
+      );
     }
   };
 
@@ -548,6 +616,11 @@ export default function App() {
         void persistProspect(updated);
         return updated;
       })
+    );
+    pushToast(
+      'received',
+      'Reply logged',
+      contactAgain ? 'Marked for re-contact' : 'Marked do not contact',
     );
   };
 
@@ -777,11 +850,15 @@ export default function App() {
         user={user}
         mobileOpen={notifSheetOpen}
         onMobileOpenChange={setNotifSheetOpen}
+        desktopOpen={notifRailOpen}
+        onDesktopOpenChange={setNotifRailOpenPersist}
         onNavigate={route => {
           navigate(normalizeRoute(route));
           setNotifSheetOpen(false);
         }}
       />
+
+      <ToastHost toasts={toasts} onDismiss={dismissToast} />
 
       <MobileNav
         activeTab={sidebarTabForRoute(activeRoute)}
