@@ -8,8 +8,14 @@ import {
   categoriesFromProducts,
   suggestionsForField,
 } from '../data/taxonomy';
-
 import type { SettingsSection } from '../lib/navigation';
+import {
+  isCatalogSetupComplete,
+  isCompanySetupComplete,
+  nextWorkspaceSection,
+  workspaceSetupProgress,
+  workspaceSetupSteps,
+} from '../lib/workspace';
 
 async function apiErrorMessage(resp: Response, fallback: string): Promise<string> {
   const text = await resp.text();
@@ -59,6 +65,7 @@ export default function SettingsView({
   onFindBuyersComplete,
   onRestoredFromSheets,
 }: Props) {
+  const [connectReady, setConnectReady] = useState(false);
   const tabs: { id: SettingsSection; label: string }[] = [
     { id: 'company', label: 'Company' },
     { id: 'catalog', label: 'Catalog' },
@@ -79,6 +86,55 @@ export default function SettingsView({
     integrations: 'Gmail for sending. Sheets for a private spreadsheet.',
   };
 
+  const steps = useMemo(
+    () => workspaceSetupSteps(businessInfo, products, icp, connectReady),
+    [businessInfo, products, icp, connectReady],
+  );
+  const progress = useMemo(() => workspaceSetupProgress(steps), [steps]);
+  const stepComplete = useMemo(() => {
+    const map = {} as Record<SettingsSection, boolean>;
+    for (const step of steps) map[step.id] = step.complete;
+    return map;
+  }, [steps]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [gmailResp, sheetsResp] = await Promise.all([
+          apiFetch('/api/auth/gmail/status'),
+          apiFetch('/api/sheets/status'),
+        ]);
+        let ready = false;
+        if (gmailResp.ok) {
+          const data = await gmailResp.json();
+          if (data?.connected) ready = true;
+        }
+        if (sheetsResp.ok) {
+          const data = await sheetsResp.json();
+          if (data?.connected) ready = true;
+        }
+        if (!cancelled) setConnectReady(ready);
+      } catch {
+        // ignore — progress still works for required steps
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [businessInfo.id]);
+
+  const advanceAfter = (from: SettingsSection, complete: boolean, nextBusiness?: BusinessInfo) => {
+    if (!complete) return;
+    if (from === 'company') {
+      const biz = nextBusiness ?? businessInfo;
+      onSectionChange(isCatalogSetupComplete(products, biz) ? 'icp' : 'catalog');
+      return;
+    }
+    const next = nextWorkspaceSection(from);
+    if (next) onSectionChange(next);
+  };
+
   // Find buyers once — on Buyers tab only (not Company/Catalog too).
   const showFind = Boolean(onAddProspects && onAddLog && section === 'icp');
 
@@ -89,6 +145,51 @@ export default function SettingsView({
         <p className="setup-desk__lede">
           Brief the agent, then find buyers. Leads and Outreach handle what comes next.
         </p>
+        <div className="ws-progress" aria-label="Workspace setup progress">
+          <div className="ws-progress__row">
+            <span className="ws-progress__label">
+              {progress.requiredDone >= progress.requiredTotal
+                ? connectReady
+                  ? 'Workspace ready'
+                  : 'Ready to find buyers — Connect is optional'
+                : `Setup ${progress.requiredDone} of ${progress.requiredTotal} required`}
+            </span>
+            <span className="ws-progress__pct tabular-nums">{progress.percent}%</span>
+          </div>
+          <div
+            className="ws-progress__track"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progress.percent}
+          >
+            <div className="ws-progress__fill" style={{ width: `${progress.percent}%` }} />
+          </div>
+          <ol className="ws-progress__steps">
+            {steps.map(step => (
+              <li
+                key={step.id}
+                className={[
+                  step.complete ? 'is-done' : '',
+                  section === step.id ? 'is-current' : '',
+                  step.optional ? 'is-optional' : '',
+                ].filter(Boolean).join(' ')}
+              >
+                <button type="button" onClick={() => onSectionChange(step.id)}>
+                  {step.complete ? (
+                    <CheckCircle2 className="w-3.5 h-3.5" strokeWidth={2} aria-hidden />
+                  ) : (
+                    <span className="ws-progress__dot" aria-hidden />
+                  )}
+                  <span>
+                    {step.label}
+                    {step.optional ? ' · optional' : ''}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </div>
       </header>
 
       <div className="ws-tabs" role="tablist" aria-label="Workspace sections">
@@ -98,9 +199,15 @@ export default function SettingsView({
             type="button"
             role="tab"
             aria-selected={section === t.id}
-            className={section === t.id ? 'is-active' : ''}
+            className={[
+              section === t.id ? 'is-active' : '',
+              stepComplete[t.id] ? 'is-complete' : '',
+            ].filter(Boolean).join(' ')}
             onClick={() => onSectionChange(t.id)}
           >
+            {stepComplete[t.id] && (
+              <CheckCircle2 className="w-3.5 h-3.5 ws-tabs__check" strokeWidth={2} aria-hidden />
+            )}
             {t.label}
           </button>
         ))}
@@ -117,13 +224,23 @@ export default function SettingsView({
             key={businessInfo.id ?? 'company'}
             businessInfo={businessInfo}
             products={products}
-            onSave={onSaveBusiness}
+            onSave={info => {
+              const wasComplete = isCompanySetupComplete(businessInfo);
+              onSaveBusiness(info);
+              const nowComplete = isCompanySetupComplete(info);
+              if (!wasComplete && nowComplete) advanceAfter('company', true, info);
+            }}
           />
         )}
         {section === 'catalog' && (
           <CatalogSection
             products={products}
-            onSave={onSaveProducts}
+            onSave={nextProducts => {
+              const wasComplete = isCatalogSetupComplete(products, businessInfo);
+              onSaveProducts(nextProducts);
+              const nowComplete = isCatalogSetupComplete(nextProducts, businessInfo);
+              if (!wasComplete && nowComplete) advanceAfter('catalog', true);
+            }}
             companyWebsite={businessInfo.website}
           />
         )}
@@ -140,6 +257,7 @@ export default function SettingsView({
           <IntegrationsSection
             companyId={businessInfo.id}
             onRestoredFromSheets={onRestoredFromSheets}
+            onConnectReadyChange={setConnectReady}
           />
         )}
       </div>
@@ -825,7 +943,7 @@ type SheetsStatus = {
   oauth?: { connected: boolean; email?: string; connectedAt?: string };
 };
 
-function GmailConnectCard() {
+function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) => void }) {
   const [status, setStatus] = useState<{ connected: boolean; email?: string; connectedAt?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
@@ -834,7 +952,11 @@ function GmailConnectCard() {
     setLoading(true);
     try {
       const r = await apiFetch('/api/auth/gmail/status');
-      if (r.ok) setStatus(await r.json());
+      if (r.ok) {
+        const data = await r.json();
+        setStatus(data);
+        onReadyChange?.(Boolean(data?.connected));
+      }
     } catch {
       // ignore
     } finally {
@@ -861,6 +983,7 @@ function GmailConnectCard() {
     if (resp.ok) {
       setStatus({ connected: false, email: '', connectedAt: '' });
       setMsg('Gmail disconnected.');
+      onReadyChange?.(false);
     }
   };
 
@@ -917,6 +1040,7 @@ function GmailConnectCard() {
 function IntegrationsSection({
   companyId,
   onRestoredFromSheets,
+  onConnectReadyChange,
 }: {
   companyId?: string;
   onRestoredFromSheets?: (payload: {
@@ -925,8 +1049,10 @@ function IntegrationsSection({
     prospects?: Prospect[];
     activeBusinessId?: string;
   }) => void | Promise<void>;
+  onConnectReadyChange?: (ready: boolean) => void;
 }) {
   const [status, setStatus] = useState<SheetsStatus | null>(null);
+  const [gmailReady, setGmailReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sheetInput, setSheetInput] = useState('');
   const [connectBusy, setConnectBusy] = useState(false);
@@ -941,6 +1067,11 @@ function IntegrationsSection({
   const [restoreMsg, setRestoreMsg] = useState('');
   const [syncingLeads, setSyncingLeads] = useState(false);
   const [syncLeadsMsg, setSyncLeadsMsg] = useState('');
+
+  const sheetsReady = Boolean(status?.connected);
+  useEffect(() => {
+    onConnectReadyChange?.(gmailReady || sheetsReady);
+  }, [gmailReady, sheetsReady, onConnectReadyChange]);
 
   const load = async () => {
     setLoading(true);
@@ -1092,7 +1223,7 @@ function IntegrationsSection({
   return (
     <div className="space-y-8">
       {/* Gmail card */}
-      <GmailConnectCard />
+      <GmailConnectCard onReadyChange={setGmailReady} />
 
       {/* Google Sheets card */}
       <div className="border border-border bg-panel/80 p-5 space-y-4">

@@ -1,5 +1,20 @@
-import type { BusinessInfo, IdealCustomerProfile } from '../types';
+import type { BusinessInfo, IdealCustomerProfile, Product } from '../types';
 import { emptyBusinessInfo, emptyICP } from '../data/defaults';
+import type { SettingsSection } from './navigation';
+
+const PLACEHOLDER_NAMES = new Set([
+  '',
+  'company',
+  'my company',
+  'new company',
+  'untitled',
+  'untitled company',
+  'business',
+]);
+
+export function isPlaceholderCompanyName(name: string | null | undefined): boolean {
+  return PLACEHOLDER_NAMES.has((name || '').trim().toLowerCase());
+}
 
 export function parseProfileResponse(data: unknown): BusinessInfo {
   if (!data || typeof data !== 'object') return emptyBusinessInfo;
@@ -38,4 +53,72 @@ export function parseIcpResponse(data: unknown): IdealCustomerProfile {
     salesConstraints: Array.isArray(icp.salesConstraints) ? icp.salesConstraints as string[] : [],
     buyingSignals: Array.isArray(icp.buyingSignals) ? icp.buyingSignals as IdealCustomerProfile['buyingSignals'] : emptyICP.buyingSignals,
   };
+}
+
+/** Enough company brief for Find buyers (real name or a usable description). */
+export function isCompanySetupComplete(business: BusinessInfo): boolean {
+  const name = (business.name || '').trim();
+  const description = (business.description || '').trim();
+  if (name && !isPlaceholderCompanyName(name)) return true;
+  return description.length >= 24;
+}
+
+/** Catalog tab: at least one product, or categories already set on the company. */
+export function isCatalogSetupComplete(products: Product[], business: BusinessInfo): boolean {
+  if ((products || []).length > 0) return true;
+  return (business.primaryCategories || []).some(c => (c || '').trim());
+}
+
+/** Buyers tab: at least one buyer type. */
+export function isBuyersSetupComplete(icp: IdealCustomerProfile): boolean {
+  return (icp.targetBuyerTypes || []).some(t => (t || '').trim());
+}
+
+export type WorkspaceStepStatus = {
+  id: SettingsSection;
+  label: string;
+  complete: boolean;
+  optional?: boolean;
+};
+
+export function workspaceSetupSteps(
+  business: BusinessInfo,
+  products: Product[],
+  icp: IdealCustomerProfile,
+  connectReady = false,
+): WorkspaceStepStatus[] {
+  return [
+    { id: 'company', label: 'Company', complete: isCompanySetupComplete(business) },
+    { id: 'catalog', label: 'Catalog', complete: isCatalogSetupComplete(products, business) },
+    { id: 'icp', label: 'Buyers', complete: isBuyersSetupComplete(icp) },
+    { id: 'integrations', label: 'Connect', complete: connectReady, optional: true },
+  ];
+}
+
+export function workspaceSetupProgress(steps: WorkspaceStepStatus[]): {
+  done: number;
+  total: number;
+  percent: number;
+  requiredDone: number;
+  requiredTotal: number;
+} {
+  const required = steps.filter(s => !s.optional);
+  const done = steps.filter(s => s.complete).length;
+  const requiredDone = required.filter(s => s.complete).length;
+  const total = steps.length;
+  const requiredTotal = required.length || 1;
+  return {
+    done,
+    total,
+    percent: Math.round((done / total) * 100),
+    requiredDone,
+    requiredTotal,
+  };
+}
+
+/** Next tab after a successful save — stay on Buyers so Find buyers remains visible. */
+export function nextWorkspaceSection(from: SettingsSection): SettingsSection | null {
+  if (from === 'company') return 'catalog';
+  if (from === 'catalog') return 'icp';
+  return null;
 }
