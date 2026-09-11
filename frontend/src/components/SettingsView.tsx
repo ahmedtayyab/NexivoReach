@@ -15,7 +15,6 @@ import {
   workspaceSetupProgress,
   workspaceSetupSteps,
 } from '../lib/workspace';
-import { brandAssets } from '../lib/brandAssets';
 
 async function apiErrorMessage(resp: Response, fallback: string): Promise<string> {
   const text = await resp.text();
@@ -134,16 +133,9 @@ export default function SettingsView({
     : section === 'catalog' ? 'Continue to Find buyers'
     : null;
 
-  const heroArt =
-    section === 'company' ? brandAssets.workspaceDesk
-    : section === 'integrations' ? brandAssets.integrationsDesk
-    : section === 'catalog' ? brandAssets.workspaceDesk
-    : brandAssets.findBuyers;
-
   return (
     <div className="setup-desk">
       <header className="setup-desk__hero">
-        <img src={heroArt} alt="" className="brand-panel-art brand-panel-art--hero" />
         <p className="setup-desk__step tabular-nums">
           Step {stepNumber} of {steps.length}
         </p>
