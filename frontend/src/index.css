@@ -595,6 +595,11 @@ input:focus, textarea:focus, select:focus {
   border-radius: var(--radius-md);
   box-shadow: none;
 }
+.empty-state--compact {
+  padding: 1.25rem 1rem;
+  border: 0;
+  background: transparent;
+}
 .empty-state__art {
   display: block;
   width: 100%;
@@ -602,6 +607,41 @@ input:focus, textarea:focus, select:focus {
   margin: 0 auto 1.1rem;
   border: 1px solid var(--border-subtle);
   object-fit: cover;
+  border-radius: var(--radius-md);
+  aspect-ratio: 16 / 10;
+}
+.empty-state--compact .empty-state__art {
+  max-width: 200px;
+  margin-bottom: 0.75rem;
+}
+
+.brand-panel-art {
+  display: block;
+  width: 100%;
+  max-height: 140px;
+  object-fit: cover;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  margin-bottom: 0.85rem;
+}
+.brand-panel-art--hero {
+  max-height: 120px;
+  margin-bottom: 1rem;
+}
+
+.notif-empty-state {
+  padding: 0.85rem 1rem 1.1rem;
+  text-align: center;
+}
+.notif-empty-state__art {
+  display: block;
+  width: 100%;
+  max-width: 160px;
+  margin: 0 auto 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  object-fit: cover;
+  aspect-ratio: 1;
 }
 .empty-state__title {
   margin: 0;

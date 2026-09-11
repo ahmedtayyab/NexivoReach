@@ -1,3 +1,5 @@
+import { brandAssets } from '../../lib/brandAssets';
+
 interface Props {
   size?: 'sm' | 'md' | 'lg';
   className?: string;
@@ -16,11 +18,11 @@ export default function BrandLockup({ size = 'sm', className = '', showWordmark 
   return (
     <div className={`flex items-center ${s.gap} ${className}`}>
       <img
-        src="/brand/nr-mark.png"
+        src={brandAssets.mark}
         alt="NexivoReach"
         width={36}
         height={36}
-        className={`${s.mark} rounded-md object-cover shrink-0 shadow-sm ring-1 ring-border/60`}
+        className={`${s.mark} rounded-md object-cover shrink-0 ring-1 ring-border/60`}
       />
       {showWordmark && (
         <span className={`font-display font-semibold text-ink tracking-tight ${s.text}`}>NexivoReach</span>

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Prospect } from '../types';
-import { ChevronDown, ChevronUp, Mail, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, X } from 'lucide-react';
 import { leadRowToneClass, recipientEmail } from '../lib/leadTone';
+import { brandAssets } from '../lib/brandAssets';
 
 interface Props {
   prospects: Prospect[];
@@ -186,7 +187,7 @@ export default function OutreachInboxView({
           </p>
         </div>
         <div className="empty-state nr-enter nr-enter-delay-2">
-          <Mail className="w-7 h-7 text-ink-muted mx-auto mb-3" strokeWidth={1.5} />
+          <img src={brandAssets.emptyOutreach} alt="" className="empty-state__art" />
           <p className="empty-state__title">No drafts yet</p>
           <p className="empty-state__desc">
             Find buyers in Workspace, then use Leads → Prepare outreach. Send ready emails here.

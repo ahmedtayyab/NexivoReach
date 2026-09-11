@@ -38,6 +38,7 @@ import LoginView from './components/LoginView';
 import SuspendedView from './components/SuspendedView';
 import BrandLockup from './components/brand/BrandLockup';
 import { Menu } from 'lucide-react';
+import { brandAssets } from './lib/brandAssets';
 
 const NOTIF_RAIL_KEY = 'nr-notif-rail-open';
 
@@ -737,8 +738,13 @@ export default function App() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-canvas flex items-center justify-center text-ink-muted text-sm">
-        Loading...
+      <div className="min-h-screen bg-canvas flex flex-col items-center justify-center gap-3 text-ink-muted text-sm">
+        <img
+          src={brandAssets.splashMark}
+          alt=""
+          className="w-14 h-14 rounded-lg object-cover ring-1 ring-border"
+        />
+        Loading…
       </div>
     );
   }

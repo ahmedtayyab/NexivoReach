@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product } from '../types';
 import { Loader2 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { brandAssets } from '../lib/brandAssets';
 import PredictiveField from './PredictiveField';
 import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
 
@@ -106,6 +107,9 @@ export default function FindBuyersPanel({
 
   return (
     <div className={`find-buyers ${compact ? 'find-buyers--compact' : ''}`}>
+      {!compact && (
+        <img src={brandAssets.findBuyers} alt="" className="brand-panel-art" />
+      )}
       <div className="find-buyers__head">
         <h3 className="find-buyers__title">Find buyers</h3>
         <p className="find-buyers__desc">

@@ -15,6 +15,7 @@ import {
   workspaceSetupProgress,
   workspaceSetupSteps,
 } from '../lib/workspace';
+import { brandAssets } from '../lib/brandAssets';
 
 async function apiErrorMessage(resp: Response, fallback: string): Promise<string> {
   const text = await resp.text();
@@ -136,6 +137,9 @@ export default function SettingsView({
   return (
     <div className="setup-desk">
       <header className="setup-desk__hero">
+        {section === 'company' && (
+          <img src={brandAssets.workspaceDesk} alt="" className="brand-panel-art brand-panel-art--hero" />
+        )}
         <p className="setup-desk__step tabular-nums">
           Step {stepNumber} of {steps.length}
         </p>
@@ -1269,6 +1273,9 @@ function IntegrationsSection({
 
   return (
     <div className="space-y-5 max-w-xl">
+      {!connectedEnough && (
+        <img src={brandAssets.integrationsDesk} alt="" className="brand-panel-art" />
+      )}
       <div className="border border-border bg-panel p-5 space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>

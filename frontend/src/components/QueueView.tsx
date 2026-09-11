@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
 import { leadRowToneClass } from '../lib/leadTone';
+import { brandAssets } from '../lib/brandAssets';
 
-const EMPTY_QUEUE_IMG = '/brand/empty-queue.jpg';
+const EMPTY_QUEUE_IMG = brandAssets.emptyQueue;
 
 const LEAD_STAGES = [
   'To contact',

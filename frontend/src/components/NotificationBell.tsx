@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Bell, CheckCheck, Loader2, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { brandAssets } from '../lib/brandAssets';
 import type { AuthUser } from '../types';
 
 export type AppNotification = {
@@ -80,7 +81,12 @@ function NotificationList({
   onOpen: (n: AppNotification) => void;
 }) {
   if (items.length === 0) {
-    return <p className="notif-empty">No notifications yet. Account changes and usage alerts show up here.</p>;
+    return (
+      <div className="notif-empty-state">
+        <img src={brandAssets.emptyNotifications} alt="" className="notif-empty-state__art" />
+        <p className="notif-empty">No notifications yet. Account changes and usage alerts show up here.</p>
+      </div>
+    );
   }
   return (
     <ul className="notif-list">

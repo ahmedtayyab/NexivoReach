@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Loader2, LogOut, ShieldAlert } from 'lucide-react';
 import BrandLockup from './brand/BrandLockup';
 import { apiFetch } from '../lib/api';
+import { brandAssets } from '../lib/brandAssets';
 import type { AuthUser } from '../types';
 
 type Ticket = {
@@ -90,7 +91,7 @@ export default function SuspendedView({ user, onLogout }: Props) {
   return (
     <div className="min-h-dvh flex items-center justify-center px-4 sm:px-6 relative overflow-hidden">
       <img
-        src="/brand/login-atmosphere.jpg"
+        src={brandAssets.suspendedAtmosphere}
         alt=""
         className="absolute inset-0 w-full h-full object-cover"
       />

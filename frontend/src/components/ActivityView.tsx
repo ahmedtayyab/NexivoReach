@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { AgentRunLog } from '../types';
+import { brandAssets } from '../lib/brandAssets';
 
 interface Props {
   agentLogs: AgentRunLog[];
@@ -20,6 +21,7 @@ export default function ActivityView({ agentLogs }: Props) {
 
       {agentLogs.length === 0 ? (
         <div className="empty-state">
+          <img src={brandAssets.emptyActivity} alt="" className="empty-state__art" />
           <p className="empty-state__title">No runs yet</p>
           <p className="empty-state__desc">Find buyers from Workspace to populate the operational log.</p>
         </div>

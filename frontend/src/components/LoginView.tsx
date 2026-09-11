@@ -1,4 +1,5 @@
 import BrandLockup from './brand/BrandLockup';
+import { brandAssets } from '../lib/brandAssets';
 
 interface Props {
   error?: string | null;
@@ -8,7 +9,7 @@ export default function LoginView({ error }: Props) {
   return (
     <div className="min-h-dvh flex items-center justify-center px-4 sm:px-6 relative overflow-hidden">
       <img
-        src="/brand/login-atmosphere.jpg"
+        src={brandAssets.loginAtmosphere}
         alt=""
         className="absolute inset-0 w-full h-full object-cover"
       />

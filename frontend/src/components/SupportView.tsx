@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Loader2, LifeBuoy, Send } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { brandAssets } from '../lib/brandAssets';
 
 type Ticket = {
   id: string;
@@ -180,7 +181,11 @@ export default function SupportView() {
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…
             </p>
           ) : tickets.length === 0 ? (
-            <p className="text-[13px] text-ink-muted">No tickets yet.</p>
+            <div className="empty-state empty-state--compact">
+              <img src={brandAssets.emptySupport} alt="" className="empty-state__art" />
+              <p className="empty-state__title">No tickets yet</p>
+              <p className="empty-state__desc">Send a message above when you need help.</p>
+            </div>
           ) : (
             <ul className="support-tickets">
               {tickets.map(t => (
