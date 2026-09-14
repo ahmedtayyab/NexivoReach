@@ -183,7 +183,7 @@ async def run_discovery_agent(
         icp=req.icp,
         business=business_payload,
         exclude_websites=exclude,
-        limit=120,
+        limit=40,
     )
 
     prospects = res.get("prospects") or []
@@ -270,24 +270,13 @@ async def run_discovery_agent(
     if sheets_mod.is_configured() and saved_front:
         background_tasks.add_task(_sync_leads_job, business_id, saved_front)
 
-    # Finish email scrape inside this request for any lead still missing one
-    # (so the user never has to click Find email)
+    # Email fill continues in the background — do not block the hunt response.
     missing_ids = [
         p.get("id") for p in saved_front
         if p.get("id") and p.get("website") and not (p.get("email") or "").strip()
     ]
     if missing_ids:
-        try:
-            await asyncio.wait_for(_auto_fill_contacts_job(missing_ids[:30]), timeout=50.0)
-            with Session(engine) as session:
-                refreshed = []
-                for p in saved_front:
-                    pid = p.get("id")
-                    row = session.get(ProspectRecord, pid) if pid else None
-                    refreshed.append(prospect_to_frontend(row) if row else p)
-                saved_front = refreshed
-        except Exception as exc:
-            log.warning("Inline email auto-fill incomplete: %s", exc)
+        background_tasks.add_task(_auto_fill_contacts_job, missing_ids[:40])
 
     return {
         "prospects": saved_front,

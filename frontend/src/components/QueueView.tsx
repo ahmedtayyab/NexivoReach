@@ -210,10 +210,10 @@ export default function QueueView({
             onChange={e => setPriorityFilter(e.target.value as PriorityFilter)}
           >
             <option value="all">All</option>
-            <option value="priority">Priority</option>
-            <option value="nurture">Nurture</option>
-            <option value="review">Review</option>
-            <option value="low">Low</option>
+            <option value="priority">Strong (Priority)</option>
+            <option value="nurture">Strong (Nurture)</option>
+            <option value="review">Average (Review)</option>
+            <option value="low">Average (Low)</option>
           </select>
         </label>
         {filtersActive && (

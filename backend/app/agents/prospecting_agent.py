@@ -24,14 +24,17 @@ from app.tools.contact_finder import discover_contacts, contacts_from_text
 from app.providers.factory import get_ai_provider
 
 
-FETCH_CAP = 120
-SAVE_CAP = 120
+FETCH_CAP = 80
+SAVE_CAP = 40
+STRONG_SAVE = 20  # amazing / ready to pursue
+AVERAGE_SAVE = 20  # workable / worth a look
 WAVE1_RESULT_CAP = 220
 WAVE2_RESULT_CAP = 140
-ENRICH_CAP = 24  # AI drafts for top fits
-CONTACT_CAP = 120  # emails scraped automatically for (almost) every saved lead
-MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 55
-DEFAULT_HUNT_LIMIT = 120
+ENRICH_CAP = 0  # drafts belong in Outreach — keep Discover fast
+CONTACT_DURING_HUNT = 20  # deep contact crawl for strong fits; rest fill in background
+SCRAPE_CONCURRENCY = 12
+MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 40
+DEFAULT_HUNT_LIMIT = 40
 
 
 def _domain(url: str) -> str:
@@ -60,7 +63,7 @@ class ProspectingAgent:
         icp: Dict[str, Any],
         business: Optional[Dict[str, Any]] = None,
         exclude_websites: Optional[List[str]] = None,
-        limit: int = 80,
+        limit: int = 40,
     ) -> Dict[str, Any]:
         start_time = time.time()
         decisions_log: List[Dict[str, Any]] = []
@@ -218,8 +221,14 @@ class ProspectingAgent:
 
         to_fetch = [c for c in candidates if (c.get("website") or "").strip()][:FETCH_CAP]
         # Homepage-only for speed; deep about/news pages skipped during hunt
+        scrape_sem = asyncio.Semaphore(SCRAPE_CONCURRENCY)
+
+        async def _scrape_one(url: str) -> Any:
+            async with scrape_sem:
+                return await self.web_search.scrape_homepage(url, limit=6000)
+
         pages = await asyncio.gather(
-            *[self.web_search.scrape_homepage(c["website"], limit=6000) for c in to_fetch],
+            *[_scrape_one(c["website"]) for c in to_fetch],
             return_exceptions=True,
         )
         text_by_domain: Dict[str, Dict[str, Any]] = {}
@@ -253,16 +262,16 @@ class ProspectingAgent:
             "toolResultSnippet": f"{sum(1 for v in text_by_domain.values() if v.get('ok'))} live sites",
         })
 
-        # Qualify cheaply first; enrich high-fit leads in parallel afterward.
+        # Qualify the fetch pool, then keep ~20 strong + ~20 average (Google-search-beating shortlist).
         qualified: List[Dict[str, Any]] = []
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
-        save_limit = min(limit, SAVE_CAP)
-        for co in candidates[:SAVE_CAP + 16]:
-            if len(qualified) >= save_limit:
-                break
+        for co in candidates:
             dom = _domain(co.get("website") or "")
             page = text_by_domain.get(dom) or {}
             site_text = page.get("text") or ""
+            # Prefer fetched rows; still qualify SERP-only for the average bucket.
+            if not site_text and dom and dom not in text_by_domain and len(qualified) >= SAVE_CAP * 2:
+                continue
             q = qualify_account(
                 row=co,
                 site_text=site_text,
@@ -285,7 +294,6 @@ class ProspectingAgent:
                 "source": source,
             })
 
-        # Rank before enrich so we spend contact/AI budget on best fits
         def _q_rank(item: Dict[str, Any]) -> tuple:
             q = item["q"]
             intent_rank = {"high": 2, "low": 1, "none": 0}.get(q.get("intent") or "none", 0)
@@ -294,11 +302,48 @@ class ProspectingAgent:
             role_bonus = 1 if primary_buyer and primary_buyer in (
                 f"{item.get('site_text') or ''} {q.get('whyThisProspect') or ''}"
             ).lower() else 0
-            return (pri, role_bonus, loc_bonus, intent_rank, int(q.get("fitScore") or 0))
+            scraped = 1 if (item.get("site_text") or "").strip() else 0
+            return (pri, role_bonus, scraped, loc_bonus, intent_rank, int(q.get("fitScore") or 0))
 
         qualified.sort(key=_q_rank, reverse=True)
-        for i, item in enumerate(qualified):
-            item["want_draft"] = item["outreach_ready"] and i < ENRICH_CAP
+
+        def _is_strong(item: Dict[str, Any]) -> bool:
+            q = item["q"]
+            fit = (q.get("fitSummary") or "").lower()
+            pri = (q.get("priority") or "").lower()
+            return fit == "high" or pri in ("priority", "nurture") or int(q.get("fitScore") or 0) >= 70
+
+        strong = [item for item in qualified if _is_strong(item)][:STRONG_SAVE]
+        strong_ids = {id(item) for item in strong}
+        average = [item for item in qualified if id(item) not in strong_ids][:AVERAGE_SAVE]
+        if len(strong) < STRONG_SAVE and average:
+            need = STRONG_SAVE - len(strong)
+            promoted = average[:need]
+            average = average[need:need + AVERAGE_SAVE]
+            strong.extend(promoted)
+
+        for i, item in enumerate(strong):
+            q = item["q"]
+            if (q.get("priority") or "").lower() not in ("priority", "nurture"):
+                q["priority"] = "nurture" if int(q.get("fitScore") or 0) >= 55 else "review"
+            if (q.get("fitSummary") or "").lower() == "low":
+                q["fitSummary"] = "medium"
+            item["outreach_ready"] = True
+            item["tier"] = "strong"
+            item["want_draft"] = False
+            item["want_contacts"] = i < CONTACT_DURING_HUNT
+        for item in average:
+            q = item["q"]
+            if (q.get("priority") or "").lower() in ("priority", "nurture", "reject"):
+                q["priority"] = "review"
+            elif (q.get("priority") or "").lower() not in ("review", "low"):
+                q["priority"] = "review"
+            item["outreach_ready"] = False
+            item["tier"] = "average"
+            item["want_draft"] = False
+            item["want_contacts"] = False
+
+        qualified = (strong + average)[: min(limit, SAVE_CAP)]
 
         seller_name = (business.get("name") or "Sales Team").strip() or "Sales Team"
         provider = get_ai_provider()
@@ -358,9 +403,37 @@ class ProspectingAgent:
             item["contacts"] = contacts
             item["_contact_hit"] = bool(email or contacts)
 
-        # Phase 1 — emails for every lead (before drafts, so nothing is skipped)
+        async def _seed_contacts_only(item: Dict[str, Any]) -> None:
+            """Use homepage mailto seeds without crawling contact pages."""
+            co = item["co"]
+            page = item["page"]
+            site_text = item.get("site_text") or ""
+            website = (co.get("website") or "").strip()
+            phone = co.get("phone") or ""
+            seed_emails = list(page.get("emails") or co.get("_seed_emails") or [])
+            if page.get("phones") and not phone:
+                phone = (page.get("phones") or [""])[0] or phone
+            contacts: List[Dict[str, Any]] = []
+            email = ""
+            if seed_emails or phone:
+                cheap = contacts_from_text(
+                    site_text, website=website, seed_phone=phone, seed_emails=seed_emails,
+                )
+                contacts = cheap.get("contacts") or []
+                email = cheap.get("email") or ""
+                phone = cheap.get("phone") or phone
+            page.pop("html", None)
+            item["email"] = email
+            item["phone"] = phone
+            item["contacts"] = contacts
+            item["_contact_hit"] = bool(email or contacts)
+
+        # Phase 1 — cheap homepage emails for everyone; deep crawl for strong fits
         if qualified:
-            await asyncio.gather(*[_fill_contacts(item) for item in qualified])
+            await asyncio.gather(*[
+                _fill_contacts(item) if item.get("want_contacts") else _seed_contacts_only(item)
+                for item in qualified
+            ])
 
         async def _enrich(item: Dict[str, Any]) -> Dict[str, Any]:
             co = item["co"]
@@ -494,15 +567,18 @@ class ProspectingAgent:
             "decisions": decisions_log + [{
                 "step": 5,
                 "observation": (
-                    f"Persisting {len(prospects)} qualified accounts. "
-                    f"Contact crawl on {contact_runs} leads; {draft_runs} outreach drafts."
+                    f"Shortlist {len(prospects)} accounts "
+                    f"(~{sum(1 for p in prospects if (p.get('priority') or '').lower() in ('priority', 'nurture'))} strong, "
+                    f"~{sum(1 for p in prospects if (p.get('priority') or '').lower() in ('review', 'low'))} average). "
+                    f"Contact crawl on {contact_runs} strong leads."
                 ),
                 "decision": (
-                    "Emails scraped automatically for every saved lead (homepage + contact pages). "
-                    f"AI drafts for top {ENRICH_CAP}. Human reviews before send."
+                    f"Target mix is ~{STRONG_SAVE} strong + ~{AVERAGE_SAVE} average — "
+                    "ranked shortlist beats raw Google, not a tiny ultra-filtered set. "
+                    "Outreach drafts happen later in Prepare outreach."
                 ),
                 "toolCalled": "LeadPipeline",
-                "toolResultSnippet": f"{len(prospects)} To contact · {draft_runs} drafts",
+                "toolResultSnippet": f"{len(prospects)} To contact · {contact_runs} contact crawls",
             }],
         }
         return {"prospects": prospects, "agent_log": agent_log, "prospect": prospects[0] if prospects else None}

@@ -108,22 +108,20 @@ def qualify_account(
     intent, intent_ev, why_now = _intent(text, url, source_type, site_text)
     evidence.extend(intent_ev)
 
-    # Fit is not intent. Unknown is not medium.
+    # Fit is not intent. Unknown motion is not a rejection — most buyer sites never say "wholesale".
     if icp == "low" or motion == "low":
         fit_summary = "low"
-    elif icp == "unknown" and motion == "unknown":
+    elif icp == "unknown" and motion == "unknown" and offer == "low" and not site_text:
         fit_summary = "low"
     else:
-        # unknown dims pull the summary down toward medium/low, never invent high.
+        # unknown dims stay neutral (medium); never invent high from unknowns alone.
         icp_for_summary = "medium" if icp == "unknown" else icp
-        motion_for_summary = "low" if motion == "unknown" else motion
-        offer_for_summary = "medium" if offer == "unknown" else offer
+        motion_for_summary = "medium" if motion == "unknown" else motion
+        offer_for_summary = "medium" if offer in ("unknown", "low") else offer
         fit_summary = _level_min(icp_for_summary, motion_for_summary)
-        if offer_for_summary == "low" and site_text:
-            if fit_summary == "high":
-                fit_summary = "medium"
-            elif fit_summary == "medium":
-                fit_summary = "low"
+        # Weak catalog overlap should not kill an otherwise medium ICP fit.
+        if offer == "low" and site_text and fit_summary == "high":
+            fit_summary = "medium"
 
     confidence = 0.28 if not site_text else 0.58
     if evidence:
@@ -168,15 +166,23 @@ def qualify_account(
     persist = (
         priority != "reject"
         and fit_summary != "low"
-        and not (source_type == "serp" and icp == "unknown" and motion == "unknown" and offer == "unknown")
+        and not (
+            source_type == "serp"
+            and icp == "unknown"
+            and motion == "unknown"
+            and offer in ("unknown", "low")
+            and not (location or "").strip()
+            and not _primary_buyer_hit(f"{snippet}\n{row.get('title') or ''}", profile)
+        )
     )
-    # SERP-only medium fits with a location string still usable for review queues
+    # Keep a usable average bucket: medium/low priority with a website still worth a human look.
     if (
         not persist
-        and fit_summary == "medium"
+        and fit_summary in ("medium", "high")
         and priority in ("review", "low", "nurture")
-        and (location or "").strip()
+        and (row.get("website") or "").strip()
         and icp != "low"
+        and motion != "low"
     ):
         persist = True
         if priority == "reject":
@@ -210,7 +216,13 @@ def qualify_account(
                 f"{', '.join(profile.places[:2])}."
             )
         elif loc:
-            if places_mentioned(loc, profile.places) is not True:
+            # Soften: unknown place alias is not an automatic reject when homepage evidence exists.
+            mentioned = places_mentioned(loc, profile.places)
+            if mentioned is False or (
+                mentioned is not True
+                and source_type != "homepage"
+                and (row.get("source") or "") != "maps"
+            ):
                 persist = False
                 priority = "reject"
                 why_this = (
@@ -220,7 +232,7 @@ def qualify_account(
         else:
             # No address: require target place in snippet/title only (not full site body)
             geo_hit = _geo_ok(f"{snippet}\n{row.get('title') or ''}", profile.places)
-            if geo_hit is not True:
+            if geo_hit is not True and (row.get("source") or "") != "maps":
                 persist = False
                 priority = "reject"
                 why_this = (
@@ -393,7 +405,8 @@ def _offer_fit(
     if token_hits:
         ev.append(_evidence("offer", f"Weak catalog token overlap ({token_hits[0]}).", token_hits[0], url, source_type, 0.3))
         return "low", ev
-    return "low", ev
+    # No catalog tokens is unknown — not proof of a bad offer fit.
+    return "unknown", ev
 
 
 def _intent(text: str, url: str, source_type: str, site_text: str) -> Tuple[str, List[Dict[str, Any]], str]:

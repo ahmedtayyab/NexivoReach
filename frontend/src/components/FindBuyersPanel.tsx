@@ -91,7 +91,7 @@ export default function FindBuyersPanel({
       setLastFound(found.length);
       setStatusText(
         found.length
-          ? `Added ${found.length} lead${found.length === 1 ? '' : 's'} — review Fit/Intent on Leads.`
+          ? `Added ${found.length} lead${found.length === 1 ? '' : 's'} — filter Priority vs Review on Leads.`
           : 'No accounts this round — try a clearer product, buyer type, or place in the hunt.',
       );
       onComplete?.(found.length);

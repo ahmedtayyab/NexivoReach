@@ -119,15 +119,17 @@ def classify_serp_row(
         elif geo_ok is False and _foreign_geo_conflict(geo_source, target_places):
             reject, entity, reason = True, "wrong_geo", "Geography conflicts with target markets"
         elif strict_geo and geo_ok is not True:
-            # No Maps exemption — Serper local results regularly spill into abutting states
-            reject, entity, reason = True, "wrong_geo", "No evidence this company is in the requested location"
+            # Maps rows with a phone still reach qualify (address checked there).
+            source = (row.get("source") or "").strip().lower()
+            if not (source == "maps" and (row.get("phone") or "").strip()):
+                reject, entity, reason = True, "wrong_geo", "No evidence this company is in the requested location"
 
-    competitor_seed = entity == "manufacturer" and hunting_buyers
+    competitor_seed = entity == "manufacturer" and hunting_buyers and not BUYER_RE.search(blob)
 
     return {
         **row,
         "entity_type": entity,
-        "reject": reject or (entity == "manufacturer" and hunting_buyers),
+        "reject": reject or competitor_seed,
         "reject_reason": reason,
         "competitor_seed": competitor_seed,
         "geo_mentioned": geo_ok,
