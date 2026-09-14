@@ -1,6 +1,5 @@
 /* NexivoReach — premium B2B intelligence workspace.
-   Warm ivory (light) / warm ink (dark), deep type, restrained accent,
-   forest CTAs. Same brand with the lights lowered — no neon, no glow. */
+   Light: warm ivory + forest CTA. Dark: soft graphite (dimmed room, not OLED neon). */
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Syne:wght@600;700&display=swap');
 @import "tailwindcss";
 
@@ -83,70 +82,70 @@
     --shadow-color: rgba(23, 32, 51, 0.14);
   }
 
-  /* Dark mode — warm ink room (same brand as light, lights lowered) */
+  /* Dark — soft graphite for less glare (same CTA green as light) */
   [data-theme="dark"] {
     color-scheme: dark;
 
-    --color-canvas: #141311;
-    --color-surface: #1A1916;
-    --color-panel: #201F1B;
-    --color-panel-elevated: #282622;
-    --color-muted: #2A2824;
-    --color-border: #34322C;
-    --color-border-subtle: #2A2824;
-    --color-ink: #EDEAE4;
-    --color-ink-secondary: #A39E94;
-    --color-ink-muted: #7F7A72;
-    --color-accent: #8A9BB0;
-    --color-accent-hover: #A4B3C4;
+    --color-canvas: #1E1E20;
+    --color-surface: #232326;
+    --color-panel: #28282B;
+    --color-panel-elevated: #2E2E32;
+    --color-muted: #303034;
+    --color-border: #3A3A3E;
+    --color-border-subtle: #323236;
+    --color-ink: #C4C4C2;
+    --color-ink-secondary: #8F8F93;
+    --color-ink-muted: #737378;
+    --color-accent: #7A8699;
+    --color-accent-hover: #93A0B3;
 
-    --bg-app: #141311;
-    --bg-panel: #201F1B;
-    --bg-surface: #1A1916;
-    --sidebar-bg: #181714;
-    --sidebar-active: #2A2824;
-    --border: #34322C;
-    --border-subtle: #2A2824;
-    --panel: #201F1B;
-    --panel-elevated: #282622;
-    --muted: #2A2824;
-    --row-hover: #26241F;
+    --bg-app: #1E1E20;
+    --bg-panel: #28282B;
+    --bg-surface: #232326;
+    --sidebar-bg: #222225;
+    --sidebar-active: #303034;
+    --border: #3A3A3E;
+    --border-subtle: #323236;
+    --panel: #28282B;
+    --panel-elevated: #2E2E32;
+    --muted: #303034;
+    --row-hover: #2C2C30;
 
-    --text-primary: #EDEAE4;
-    --text-secondary: #A39E94;
-    --text-muted: #7F7A72;
-    --text-label: #B0AAA0;
+    /* Soft ink — never near-white on dark (reduces eye strain) */
+    --text-primary: #C4C4C2;
+    --text-secondary: #8F8F93;
+    --text-muted: #737378;
+    --text-label: #9A9A9E;
 
-    --brand: #EDEAE4;
-    --navy: #C8C2B8;
-    --navy-soft: rgba(237, 234, 228, 0.06);
-    --accent: #8A9BB0;
-    --accent-hover: #A4B3C4;
-    --accent-soft: rgba(138, 155, 176, 0.12);
-    --focus-ring: rgba(61, 138, 108, 0.45);
+    --brand: #C4C4C2;
+    --navy: #A8AEB8;
+    --navy-soft: rgba(196, 196, 194, 0.06);
+    --accent: #7A8699;
+    --accent-hover: #93A0B3;
+    --accent-soft: rgba(122, 134, 153, 0.14);
+    --focus-ring: rgba(26, 122, 92, 0.4);
 
-    /* Same family as light CTA — deeper forest, not neon mint */
-    --cta: #2F8F6D;
-    --cta-hover: #3A9F7B;
-    --cta-soft: rgba(47, 143, 109, 0.16);
+    --cta: #1A7A5C;
+    --cta-hover: #1F8A68;
+    --cta-soft: rgba(26, 122, 92, 0.18);
 
-    --brass: #B89968;
-    --brass-text: #D0B584;
-    --brass-bg: rgba(184, 153, 104, 0.14);
-    --amber: #B89968;
-    --amber-hover: #D0B584;
-    --amber-soft: rgba(184, 153, 104, 0.14);
+    --brass: #9A8260;
+    --brass-text: #B59A72;
+    --brass-bg: rgba(154, 130, 96, 0.14);
+    --amber: #9A8260;
+    --amber-hover: #B59A72;
+    --amber-soft: rgba(154, 130, 96, 0.14);
 
-    --green: #3F9B74;
-    --fit-high: #2F8F6D;
-    --fit-mid: #B89968;
-    --fit-low: #C57A7A;
-    --danger: #C57A7A;
-    --info: #8A9BB0;
-    --warning: #B89968;
+    --green: #3F7D62;
+    --fit-high: #1A7A5C;
+    --fit-mid: #9A8260;
+    --fit-low: #A86B6B;
+    --danger: #A86B6B;
+    --info: #7A8699;
+    --warning: #9A8260;
 
-    --mix-base: #201F1B;
-    --shadow-color: rgba(0, 0, 0, 0.4);
+    --mix-base: #28282B;
+    --shadow-color: rgba(0, 0, 0, 0.28);
   }
 
   * { box-sizing: border-box; }
@@ -162,7 +161,6 @@
     line-height: 1.45;
     margin: 0;
     padding: 0;
-    transition: background-color 180ms ease, color 180ms ease;
   }
 
   h1, h2, h3, .font-display {
@@ -657,6 +655,15 @@ input:focus, textarea:focus, select:focus {
   transform: translateY(-1px);
   box-shadow: 0 8px 18px color-mix(in srgb, var(--cta) 28%, transparent);
 }
+[data-theme="dark"] .btn-primary:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+[data-theme="dark"] .nr-soft-pulse,
+[data-theme="dark"] .btn-primary.nr-soft-pulse {
+  animation: none;
+  box-shadow: none;
+}
 .btn-primary:active:not(:disabled) {
   transform: translateY(0);
   box-shadow: none;
@@ -959,6 +966,10 @@ input:focus, textarea:focus, select:focus {
 }
 .find-buyers:hover {
   box-shadow: 0 10px 28px rgba(23, 32, 51, 0.06);
+}
+[data-theme="dark"] .find-buyers:hover {
+  box-shadow: none;
+  border-color: var(--border);
 }
 .find-buyers__head { margin-bottom: 0.85rem; }
 .find-buyers__title {
