@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { Loader2, LifeBuoy, Paperclip, Send, X } from 'lucide-react';
+import { CheckCircle2, Loader2, LifeBuoy, Paperclip, Send, X, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { brandAssets } from '../lib/brandAssets';
+import type { ToastKind } from './ToastHost';
 
 type TicketAttachment = {
   id: string;
@@ -25,8 +26,13 @@ type Ticket = {
   resolvedAt?: string | null;
 };
 
+type Props = {
+  onToast?: (kind: ToastKind, title: string, body?: string) => void;
+};
+
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 2_500_000;
+const SUPPORT_SEEN_KEY = 'nr-support-ticket-seen';
 
 async function apiErrorMessage(resp: Response, fallback: string): Promise<string> {
   const text = await resp.text();
@@ -45,18 +51,42 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function SupportView() {
+function ticketAttentionKey(t: Ticket): string {
+  return `${t.id}:${t.updatedAt || t.createdAt || ''}:${(t.adminReply || '').length}`;
+}
+
+function loadSeenKeys(): Set<string> {
+  try {
+    const raw = localStorage.getItem(SUPPORT_SEEN_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? new Set(parsed.filter(x => typeof x === 'string')) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function persistSeenKeys(ids: Set<string>) {
+  try {
+    localStorage.setItem(SUPPORT_SEEN_KEY, JSON.stringify([...ids].slice(-200)));
+  } catch {
+    // ignore
+  }
+}
+
+export default function SupportView({ onToast }: Props) {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [sendFeedback, setSendFeedback] = useState<'idle' | 'ok' | 'err'>('idle');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [category, setCategory] = useState('general');
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
+  const [seenKeys, setSeenKeys] = useState<Set<string>>(() => loadSeenKeys());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -90,6 +120,17 @@ export default function SupportView() {
 
   const selected = tickets.find(t => t.id === selectedId) || null;
 
+  const markSeen = useCallback((t: Ticket) => {
+    const key = ticketAttentionKey(t);
+    setSeenKeys(prev => {
+      if (prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.add(key);
+      persistSeenKeys(next);
+      return next;
+    });
+  }, []);
+
   const addFiles = (list: FileList | null) => {
     if (!list?.length) return;
     setError('');
@@ -120,8 +161,8 @@ export default function SupportView() {
     e.preventDefault();
     if (!subject.trim() || !body.trim()) return;
     setBusy(true);
-    setMsg('');
     setError('');
+    setSendFeedback('idle');
     try {
       const form = new FormData();
       form.append('subject', subject.trim());
@@ -138,12 +179,18 @@ export default function SupportView() {
       const ticket = (await resp.json()) as Ticket;
       setTickets(prev => [ticket, ...prev]);
       setSelectedId(ticket.id);
+      markSeen(ticket);
       setSubject('');
       setBody('');
       setFiles([]);
-      setMsg('Ticket submitted — we’ll reply in this panel.');
+      setSendFeedback('ok');
+      onToast?.('sent', 'Ticket submitted', 'We’ll reply in this panel.');
+      window.setTimeout(() => setSendFeedback(cur => (cur === 'ok' ? 'idle' : cur)), 2800);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not submit ticket');
+      const message = err instanceof Error ? err.message : 'Could not submit ticket';
+      setError(message);
+      setSendFeedback('err');
+      onToast?.('error', 'Could not submit ticket', message);
     } finally {
       setBusy(false);
     }
@@ -164,11 +211,6 @@ export default function SupportView() {
       {error && (
         <p className="ui-banner ui-banner--warn mb-4" role="alert">
           {error}
-        </p>
-      )}
-      {msg && (
-        <p className="ui-banner ui-banner--ok mb-4" role="status">
-          {msg}
         </p>
       )}
 
@@ -250,10 +292,29 @@ export default function SupportView() {
               )}
             </div>
 
-            <button type="submit" className="btn btn-primary" disabled={busy || !subject.trim() || !body.trim()}>
-              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              {busy ? 'Sending…' : 'Submit ticket'}
+            <button
+              type="submit"
+              className={`btn btn-primary${sendFeedback === 'ok' ? ' is-send-ok' : ''}${
+                sendFeedback === 'err' ? ' is-send-err' : ''
+              }`}
+              disabled={busy || !subject.trim() || !body.trim()}
+            >
+              {busy ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : sendFeedback === 'ok' ? (
+                <CheckCircle2 className="w-3.5 h-3.5" />
+              ) : sendFeedback === 'err' ? (
+                <XCircle className="w-3.5 h-3.5" />
+              ) : (
+                <Send className="w-3.5 h-3.5" />
+              )}
+              {busy ? 'Sending…' : sendFeedback === 'ok' ? 'Submitted' : sendFeedback === 'err' ? 'Failed — retry' : 'Submit ticket'}
             </button>
+            {sendFeedback === 'ok' && (
+              <p className="admin-send-flash is-ok" role="status">
+                Ticket submitted — we’ll reply here.
+              </p>
+            )}
           </form>
         </section>
 
@@ -278,23 +339,36 @@ export default function SupportView() {
             </div>
           ) : (
             <ul className="support-tickets">
-              {tickets.map(t => (
-                <li key={t.id}>
-                  <button
-                    type="button"
-                    className={selectedId === t.id ? 'is-active' : ''}
-                    onClick={() => setSelectedId(t.id)}
-                  >
-                    <span className="support-tickets__subject">{t.subject}</span>
-                    <span className="support-tickets__meta">
-                      <span className={`support-status is-${t.status}`}>{t.status.replace('_', ' ')}</span>
-                      · {t.category}
-                      {(t.attachments?.length || 0) > 0 ? ` · ${t.attachments!.length} image${t.attachments!.length === 1 ? '' : 's'}` : ''}
-                      · {(t.updatedAt || t.createdAt || '').slice(0, 10)}
-                    </span>
-                  </button>
-                </li>
-              ))}
+              {tickets.map(t => {
+                const key = ticketAttentionKey(t);
+                const hasReply = Boolean((t.adminReply || '').trim());
+                const isUnread = hasReply && !seenKeys.has(key);
+                return (
+                  <li key={t.id}>
+                    <button
+                      type="button"
+                      className={`${selectedId === t.id ? 'is-active' : ''}${isUnread ? ' is-unread' : ''}`}
+                      onClick={() => {
+                        setSelectedId(t.id);
+                        markSeen(t);
+                      }}
+                    >
+                      <span className="support-tickets__subject">
+                        {isUnread ? 'New reply · ' : ''}
+                        {t.subject}
+                      </span>
+                      <span className="support-tickets__meta">
+                        <span className={`support-status is-${t.status}`}>{t.status.replace('_', ' ')}</span>
+                        · {t.category}
+                        {(t.attachments?.length || 0) > 0
+                          ? ` · ${t.attachments!.length} image${t.attachments!.length === 1 ? '' : 's'}`
+                          : ''}
+                        · {(t.updatedAt || t.createdAt || '').slice(0, 10)}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
 

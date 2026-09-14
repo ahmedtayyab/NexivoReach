@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { Loader2, LogOut, Paperclip, ShieldAlert, X } from 'lucide-react';
+import { CheckCircle2, Loader2, LogOut, Paperclip, ShieldAlert, X, XCircle } from 'lucide-react';
 import BrandLockup from './brand/BrandLockup';
 import { apiFetch } from '../lib/api';
 import { brandAssets } from '../lib/brandAssets';
 import type { AuthUser } from '../types';
+import type { ToastKind } from './ToastHost';
 
 type TicketAttachment = {
   id: string;
@@ -29,6 +30,7 @@ type Ticket = {
 type Props = {
   user: AuthUser;
   onLogout: () => void;
+  onToast?: (kind: ToastKind, title: string, body?: string) => void;
 };
 
 const MAX_ATTACHMENTS = 4;
@@ -40,11 +42,12 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function SuspendedView({ user, onLogout }: Props) {
+export default function SuspendedView({ user, onLogout, onToast }: Props) {
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [error, setError] = useState('');
+  const [sendFeedback, setSendFeedback] = useState<'idle' | 'ok' | 'err'>('idle');
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
@@ -105,6 +108,7 @@ export default function SuspendedView({ user, onLogout }: Props) {
     setBusy(true);
     setError('');
     setMsg('');
+    setSendFeedback('idle');
     try {
       const form = new FormData();
       form.append('subject', 'Account suspension appeal');
@@ -130,14 +134,19 @@ export default function SuspendedView({ user, onLogout }: Props) {
       const ticket = (await resp.json()) as Ticket;
       setBody('');
       setFiles([]);
-      setMsg(
-        ticket.alreadyOpen
-          ? 'You already have an open appeal — an admin will review it.'
-          : 'Appeal submitted. We’ll review it and restore access if this was a mistake.',
-      );
+      const okMsg = ticket.alreadyOpen
+        ? 'You already have an open appeal — an admin will review it.'
+        : 'Appeal submitted. We’ll review it and restore access if this was a mistake.';
+      setMsg(okMsg);
+      setSendFeedback('ok');
+      onToast?.(ticket.alreadyOpen ? 'info' : 'sent', ticket.alreadyOpen ? 'Appeal already open' : 'Appeal submitted', okMsg);
+      window.setTimeout(() => setSendFeedback(cur => (cur === 'ok' ? 'idle' : cur)), 2800);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not submit appeal');
+      const message = err instanceof Error ? err.message : 'Could not submit appeal';
+      setError(message);
+      setSendFeedback('err');
+      onToast?.('error', 'Could not submit appeal', message);
     } finally {
       setBusy(false);
     }
@@ -240,11 +249,25 @@ export default function SuspendedView({ user, onLogout }: Props) {
 
             <button
               type="submit"
-              className="btn btn-primary w-full justify-center"
+              className={`btn btn-primary w-full justify-center${
+                sendFeedback === 'ok' ? ' is-send-ok' : ''
+              }${sendFeedback === 'err' ? ' is-send-err' : ''}`}
               disabled={busy || !body.trim()}
             >
-              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-              {busy ? 'Sending…' : 'Submit appeal'}
+              {busy ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : sendFeedback === 'ok' ? (
+                <CheckCircle2 className="w-3.5 h-3.5" />
+              ) : sendFeedback === 'err' ? (
+                <XCircle className="w-3.5 h-3.5" />
+              ) : null}
+              {busy
+                ? 'Sending…'
+                : sendFeedback === 'ok'
+                  ? 'Submitted'
+                  : sendFeedback === 'err'
+                    ? 'Failed — retry'
+                    : 'Submit appeal'}
             </button>
           </form>
 

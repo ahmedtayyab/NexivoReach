@@ -677,6 +677,28 @@ input:focus, textarea:focus, select:focus {
   transform: translateY(0);
   box-shadow: none;
 }
+.btn.is-send-ok {
+  animation: nr-pop 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  background: color-mix(in srgb, var(--green) 82%, #0f3d2e) !important;
+  border-color: transparent !important;
+}
+.btn.is-send-err {
+  animation: nr-pop 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  background: color-mix(in srgb, var(--danger, #b4534b) 88%, #3a1512) !important;
+  border-color: transparent !important;
+}
+.admin-send-flash {
+  margin: 0.55rem 0 0;
+  font-size: 12.5px;
+  line-height: 1.35;
+  animation: nr-fade-up 280ms ease both;
+}
+.admin-send-flash.is-ok {
+  color: var(--fit-high, #2f6b4f);
+}
+.admin-send-flash.is-err {
+  color: var(--danger, #b4534b);
+}
 .btn-secondary {
   background: var(--bg-panel);
   color: var(--text-primary);
@@ -2573,7 +2595,18 @@ input:focus, textarea:focus, select:focus {
 }
 .support-tickets li:first-child button { border-top: 0; padding-top: 0; }
 .support-tickets button.is-active .support-tickets__subject { color: var(--accent); }
-.support-tickets__subject { font-size: 13px; font-weight: 530; color: var(--text-primary); }
+.support-tickets button.is-unread .support-tickets__subject {
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+.support-tickets__subject {
+  font-size: 13px;
+  font-weight: 530;
+  color: var(--text-primary);
+  transition: font-size 180ms ease, font-weight 180ms ease, color 180ms ease;
+}
 .support-tickets__meta { font-size: 11.5px; color: var(--text-muted); }
 .support-status { text-transform: capitalize; }
 .support-detail {
@@ -2811,6 +2844,12 @@ input:focus, textarea:focus, select:focus {
   gap: 0.28rem;
 }
 .admin-ticket-list .is-active .admin-ticket__sub { color: var(--accent); }
+.admin-ticket-list button.is-unread .admin-ticket__sub {
+  font-size: 15.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
 .admin-ticket__top {
   display: flex;
   flex-wrap: wrap;
@@ -2818,7 +2857,11 @@ input:focus, textarea:focus, select:focus {
   justify-content: space-between;
   gap: 0.45rem 0.75rem;
 }
-.admin-ticket__sub { font-size: 13px; font-weight: 530; }
+.admin-ticket__sub {
+  font-size: 13px;
+  font-weight: 530;
+  transition: font-size 180ms ease, font-weight 180ms ease, color 180ms ease;
+}
 .admin-ticket__meta { font-size: 11.5px; color: var(--text-muted); }
 .admin-ticket__pills {
   display: inline-flex;

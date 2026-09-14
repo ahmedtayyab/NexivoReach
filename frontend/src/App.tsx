@@ -792,10 +792,14 @@ export default function App() {
 
   if (user?.isSuspended) {
     return (
-      <SuspendedView
-        user={user}
-        onLogout={() => void handleLogout()}
-      />
+      <>
+        <SuspendedView
+          user={user}
+          onLogout={() => void handleLogout()}
+          onToast={pushToast}
+        />
+        <ToastHost toasts={toasts} onDismiss={dismissToast} />
+      </>
     );
   }
 
@@ -888,8 +892,8 @@ export default function App() {
           />
         )}
         {activeRoute === 'activity' && <ActivityView agentLogs={agentLogs} />}
-        {activeRoute === 'admin' && user?.isAdmin && <AdminView />}
-        {activeRoute === 'support' && <SupportView />}
+        {activeRoute === 'admin' && user?.isAdmin && <AdminView onToast={pushToast} />}
+        {activeRoute === 'support' && <SupportView onToast={pushToast} />}
       </main>
 
       <NotificationsRail

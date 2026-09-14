@@ -1,6 +1,32 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Loader2, Shield, UserPlus, Ban, CheckCircle2, RefreshCw } from 'lucide-react';
+import { Loader2, Shield, UserPlus, Ban, CheckCircle2, RefreshCw, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import type { ToastKind } from './ToastHost';
+
+type Props = {
+  onToast?: (kind: ToastKind, title: string, body?: string) => void;
+};
+
+const ADMIN_TICKET_SEEN_KEY = 'nr-admin-ticket-seen';
+
+function loadSeenTicketIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(ADMIN_TICKET_SEEN_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? new Set(parsed.filter(x => typeof x === 'string')) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function persistSeenTicketIds(ids: Set<string>) {
+  try {
+    localStorage.setItem(ADMIN_TICKET_SEEN_KEY, JSON.stringify([...ids].slice(-200)));
+  } catch {
+    // ignore
+  }
+}
 
 type UsageBucket = { hunt: number; extract: number; prepare: number; send: number };
 
@@ -216,7 +242,7 @@ function WeekChart({ series }: { series: Overview['series'] }) {
   );
 }
 
-export default function AdminView() {
+export default function AdminView({ onToast }: Props) {
   const [tab, setTab] = useState<'ops' | 'support'>('ops');
   const [overview, setOverview] = useState<Overview | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -238,6 +264,9 @@ export default function AdminView() {
   const [query, setQuery] = useState('');
   const [userStatusFilter, setUserStatusFilter] = useState<UserStatusFilter>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [seenTicketIds, setSeenTicketIds] = useState<Set<string>>(() => loadSeenTicketIds());
+  const [replyFeedback, setReplyFeedback] = useState<'idle' | 'ok' | 'err'>('idle');
+  const [replyFeedbackText, setReplyFeedbackText] = useState('');
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) {
@@ -394,14 +423,36 @@ export default function AdminView() {
   useEffect(() => {
     if (!selectedTicket) {
       setTicketReply('');
+      setReplyFeedback('idle');
+      setReplyFeedbackText('');
       return;
     }
     setTicketReply(selectedTicket.adminReply || '');
+    setReplyFeedback('idle');
+    setReplyFeedbackText('');
   }, [selectedTicket]);
 
-  const patchTicket = async (id: string, body: Record<string, unknown>) => {
+  const markTicketSeen = useCallback((id: string) => {
+    setSeenTicketIds(prev => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      persistSeenTicketIds(next);
+      return next;
+    });
+  }, []);
+
+  const patchTicket = async (
+    id: string,
+    body: Record<string, unknown>,
+    opts?: { successTitle?: string; successBody?: string; isReply?: boolean },
+  ) => {
     setBusyId(id);
     setError('');
+    if (opts?.isReply) {
+      setReplyFeedback('idle');
+      setReplyFeedbackText('');
+    }
     try {
       const resp = await apiFetch(`/api/admin/tickets/${id}`, {
         method: 'PATCH',
@@ -411,14 +462,28 @@ export default function AdminView() {
       if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Ticket update failed'));
       const updated = (await resp.json()) as SupportTicket;
       setTickets(prev => prev.map(t => (t.id === id ? updated : t)));
-      setOpenTicketCount(
-        prev => {
-          const next = tickets.map(t => (t.id === id ? updated : t));
-          return next.filter(t => t.status === 'open' || t.status === 'in_progress').length || prev;
-        },
-      );
+      setOpenTicketCount(prev => {
+        const next = tickets.map(t => (t.id === id ? updated : t));
+        return next.filter(t => t.status === 'open' || t.status === 'in_progress').length || prev;
+      });
+      const title = opts?.successTitle || 'Ticket updated';
+      const okBody = opts?.successBody;
+      onToast?.(opts?.isReply ? 'sent' : 'ok', title, okBody);
+      if (opts?.isReply) {
+        setReplyFeedback('ok');
+        setReplyFeedbackText(title);
+        window.setTimeout(() => {
+          setReplyFeedback(cur => (cur === 'ok' ? 'idle' : cur));
+        }, 2800);
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ticket update failed');
+      const message = e instanceof Error ? e.message : 'Ticket update failed';
+      setError(message);
+      onToast?.('error', opts?.isReply ? 'Could not send reply' : 'Update failed', message);
+      if (opts?.isReply) {
+        setReplyFeedback('err');
+        setReplyFeedbackText(message);
+      }
     } finally {
       setBusyId('');
     }
@@ -656,12 +721,18 @@ export default function AdminView() {
               <ul className="admin-ticket-list">
                 {filteredTickets.map(t => {
                   const isNew = ticketIsNew(t);
+                  const isUnread = isNew && !seenTicketIds.has(t.id);
                   return (
                     <li key={t.id}>
                       <button
                         type="button"
-                        className={selectedTicketId === t.id ? 'is-active' : ''}
-                        onClick={() => setSelectedTicketId(t.id)}
+                        className={`${selectedTicketId === t.id ? 'is-active' : ''}${
+                          isUnread ? ' is-unread' : ''
+                        }`}
+                        onClick={() => {
+                          setSelectedTicketId(t.id);
+                          markTicketSeen(t.id);
+                        }}
                       >
                         <span className="admin-ticket__top">
                           <span className="admin-ticket__sub">{t.subject}</span>
@@ -728,7 +799,13 @@ export default function AdminView() {
                   <select
                     value={selectedTicket.status}
                     disabled={busyId === selectedTicket.id}
-                    onChange={e => void patchTicket(selectedTicket.id, { status: e.target.value })}
+                    onChange={e =>
+                      void patchTicket(
+                        selectedTicket.id,
+                        { status: e.target.value },
+                        { successTitle: 'Status updated', successBody: statusLabel(e.target.value) },
+                      )
+                    }
                   >
                     <option value="open">Open</option>
                     <option value="in_progress">In progress</option>
@@ -741,7 +818,13 @@ export default function AdminView() {
                   <select
                     value={selectedTicket.priority || 'normal'}
                     disabled={busyId === selectedTicket.id}
-                    onChange={e => void patchTicket(selectedTicket.id, { priority: e.target.value })}
+                    onChange={e =>
+                      void patchTicket(
+                        selectedTicket.id,
+                        { priority: e.target.value },
+                        { successTitle: 'Priority updated', successBody: e.target.value },
+                      )
+                    }
                   >
                     <option value="low">Low</option>
                     <option value="normal">Normal</option>
@@ -759,20 +842,48 @@ export default function AdminView() {
                 </label>
                 <button
                   type="button"
-                  className="btn btn-primary mt-3"
+                  className={`btn btn-primary mt-3${replyFeedback === 'ok' ? ' is-send-ok' : ''}${
+                    replyFeedback === 'err' ? ' is-send-err' : ''
+                  }`}
                   disabled={busyId === selectedTicket.id || !ticketReply.trim()}
                   onClick={() =>
-                    void patchTicket(selectedTicket.id, {
-                      adminReply: ticketReply.trim(),
-                      status: selectedTicket.status === 'open' ? 'in_progress' : selectedTicket.status,
-                    })
+                    void patchTicket(
+                      selectedTicket.id,
+                      {
+                        adminReply: ticketReply.trim(),
+                        status: selectedTicket.status === 'open' ? 'in_progress' : selectedTicket.status,
+                      },
+                      {
+                        successTitle: 'Reply sent',
+                        successBody: 'Customer can see it in Support',
+                        isReply: true,
+                      },
+                    )
                   }
                 >
                   {busyId === selectedTicket.id ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : replyFeedback === 'ok' ? (
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  ) : replyFeedback === 'err' ? (
+                    <XCircle className="w-3.5 h-3.5" />
                   ) : null}
-                  Send reply
+                  {busyId === selectedTicket.id
+                    ? 'Sending…'
+                    : replyFeedback === 'ok'
+                      ? 'Sent'
+                      : replyFeedback === 'err'
+                        ? 'Failed — retry'
+                        : 'Send reply'}
                 </button>
+                {replyFeedback !== 'idle' && replyFeedbackText && (
+                  <p
+                    className={`admin-send-flash ${replyFeedback === 'ok' ? 'is-ok' : 'is-err'}`}
+                    role="status"
+                  >
+                    {replyFeedbackText}
+                  </p>
+                )}
               </div>
             )}
           </section>
