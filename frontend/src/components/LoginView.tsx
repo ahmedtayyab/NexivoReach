@@ -11,24 +11,32 @@ export default function LoginView({ error }: Props) {
       <img
         src={brandAssets.loginAtmosphere}
         alt=""
-        className="absolute inset-0 w-full h-full object-cover"
+        className="absolute inset-0 w-full h-full object-cover nr-kenburns"
+        decoding="async"
+        fetchPriority="high"
       />
-      <div className="absolute inset-0 bg-[#171A21]/40" aria-hidden />
       <div
         className="absolute inset-0"
         style={{
           background:
-            'linear-gradient(115deg, rgba(247,247,245,0.92) 0%, rgba(247,247,245,0.72) 48%, rgba(23,32,51,0.22) 100%)',
+            'linear-gradient(118deg, rgba(247,247,245,0.94) 0%, rgba(247,247,245,0.78) 46%, rgba(23,32,51,0.18) 100%)',
         }}
+        aria-hidden
+      />
+      <div
+        className="absolute -right-16 top-1/4 w-72 h-72 rounded-full opacity-40 pointer-events-none"
+        style={{ background: 'radial-gradient(circle, color-mix(in srgb, var(--cta) 28%, transparent), transparent 70%)' }}
         aria-hidden
       />
 
       <div className="relative w-full max-w-md nr-enter">
         <div className="mb-10 flex justify-center nr-enter nr-enter-delay-1">
-          <BrandLockup size="lg" className="scale-110 origin-center" />
+          <div className="nr-pop rounded-2xl bg-panel/80 border border-border-subtle p-3 backdrop-blur-sm">
+            <BrandLockup size="lg" className="scale-110 origin-center" />
+          </div>
         </div>
 
-        <div className="nr-enter nr-enter-delay-2">
+        <div className="nr-enter nr-enter-delay-2 rounded-xl border border-border bg-panel/90 backdrop-blur-sm p-6 sm:p-7 shadow-[0_20px_50px_rgba(23,32,51,0.08)]">
           <h1 className="font-display text-[1.75rem] sm:text-[2rem] font-bold text-ink leading-tight tracking-tight">
             Sign in
           </h1>
@@ -51,7 +59,7 @@ export default function LoginView({ error }: Props) {
           </a>
         </div>
 
-        <p className="text-[12px] text-ink-muted mt-10">
+        <p className="text-[12.5px] text-ink-muted mt-8 nr-enter nr-enter-delay-3">
           Turn products into qualified buyers.{' '}
           <a href="/privacy.html" className="underline hover:text-ink">
             Privacy

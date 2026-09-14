@@ -295,11 +295,15 @@ export default function QueueView({
 
       {visible.length === 0 ? (
         <div className="empty-state nr-enter nr-enter-delay-3">
-          <img
-            src={EMPTY_QUEUE_IMG}
-            alt=""
-            className="empty-state__art"
-          />
+          <div className="empty-state__art-wrap">
+            <img
+              src={EMPTY_QUEUE_IMG}
+              alt=""
+              className="empty-state__art"
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
           <p className="empty-state__title">No leads match these filters</p>
           <p className="empty-state__desc">
             {filtersActive || filter !== 'All'

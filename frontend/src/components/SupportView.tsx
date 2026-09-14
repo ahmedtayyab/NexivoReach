@@ -181,8 +181,10 @@ export default function SupportView() {
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…
             </p>
           ) : tickets.length === 0 ? (
-            <div className="empty-state empty-state--compact">
-              <img src={brandAssets.emptySupport} alt="" className="empty-state__art" />
+            <div className="empty-state empty-state--compact nr-enter">
+              <div className="empty-state__art-wrap">
+                <img src={brandAssets.emptySupport} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+              </div>
               <p className="empty-state__title">No tickets yet</p>
               <p className="empty-state__desc">Send a message above when you need help.</p>
             </div>

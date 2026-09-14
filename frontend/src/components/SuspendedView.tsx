@@ -93,16 +93,17 @@ export default function SuspendedView({ user, onLogout }: Props) {
       <img
         src={brandAssets.suspendedAtmosphere}
         alt=""
-        className="absolute inset-0 w-full h-full object-cover"
+        className="absolute inset-0 w-full h-full object-cover nr-kenburns"
+        decoding="async"
       />
       <div className="absolute inset-0 bg-canvas/70" aria-hidden />
 
       <div className="relative w-full max-w-lg nr-enter">
-        <div className="mb-8 flex justify-center">
+        <div className="mb-8 flex justify-center nr-pop">
           <BrandLockup size="lg" className="scale-110 origin-center" />
         </div>
 
-        <div className="bg-panel border border-border p-5 sm:p-6">
+        <div className="bg-panel border border-border p-5 sm:p-6 nr-enter nr-enter-delay-1 rounded-xl shadow-[0_20px_50px_rgba(23,32,51,0.08)]">
           <p className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-ink-muted mb-2">
             <ShieldAlert className="w-3.5 h-3.5" /> Account paused
           </p>

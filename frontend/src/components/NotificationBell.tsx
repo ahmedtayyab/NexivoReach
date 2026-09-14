@@ -82,8 +82,10 @@ function NotificationList({
 }) {
   if (items.length === 0) {
     return (
-      <div className="notif-empty-state">
-        <img src={brandAssets.emptyNotifications} alt="" className="notif-empty-state__art" />
+      <div className="notif-empty-state nr-enter">
+        <div className="empty-state__art-wrap" style={{ width: '7.5rem', marginBottom: '0.85rem' }}>
+          <img src={brandAssets.emptyNotifications} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+        </div>
         <p className="notif-empty">No notifications yet. Account changes and usage alerts show up here.</p>
       </div>
     );

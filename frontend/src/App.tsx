@@ -757,9 +757,10 @@ export default function App() {
         <img
           src={brandAssets.splashMark}
           alt=""
-          className="w-14 h-14 rounded-lg object-cover ring-1 ring-border"
+          className="w-14 h-14 rounded-xl object-cover ring-1 ring-border nr-pop"
+          decoding="async"
         />
-        Loading…
+        <span className="nr-enter nr-enter-delay-1">Loading…</span>
       </div>
     );
   }

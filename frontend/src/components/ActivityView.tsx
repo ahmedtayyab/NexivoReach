@@ -20,8 +20,10 @@ export default function ActivityView({ agentLogs }: Props) {
       </div>
 
       {agentLogs.length === 0 ? (
-        <div className="empty-state">
-          <img src={brandAssets.emptyActivity} alt="" className="empty-state__art" />
+        <div className="empty-state nr-enter">
+          <div className="empty-state__art-wrap">
+            <img src={brandAssets.emptyActivity} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+          </div>
           <p className="empty-state__title">No runs yet</p>
           <p className="empty-state__desc">Find buyers from Workspace to populate the operational log.</p>
         </div>

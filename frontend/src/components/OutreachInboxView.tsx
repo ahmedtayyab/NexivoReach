@@ -189,7 +189,9 @@ export default function OutreachInboxView({
           </p>
         </div>
         <div className="empty-state nr-enter nr-enter-delay-2">
-          <img src={brandAssets.emptyOutreach} alt="" className="empty-state__art" />
+          <div className="empty-state__art-wrap">
+            <img src={brandAssets.emptyOutreach} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+          </div>
           <p className="empty-state__title">No drafts yet</p>
           <p className="empty-state__desc">
             Find buyers in Workspace, then use Leads → Prepare outreach. Send ready emails here.
