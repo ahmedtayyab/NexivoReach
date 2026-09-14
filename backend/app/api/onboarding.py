@@ -10,6 +10,7 @@ from app.models.schemas import Business, User
 from app.api.serializers import business_to_frontend
 from app.api.deps import AuthUser, get_current_user, resolve_business_id
 from app.integrations import sheets as sheets_mod
+from app.tools.web_search import WebSearchTool
 
 log = logging.getLogger(__name__)
 
@@ -17,7 +18,8 @@ router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 
 
 class BusinessExtractRequest(BaseModel):
-    description: str
+    description: str = ""
+    website: str = ""
 
 
 class BusinessProfilePayload(BaseModel):
@@ -37,11 +39,42 @@ def _now() -> str:
 @router.post("/extract")
 async def extract_business_profile(req: BusinessExtractRequest, _user: AuthUser = Depends(get_current_user)):
     provider = get_ai_provider()
-    res = await provider.extract_business_profile(req.description)
+    website = (req.website or "").strip()
+    description = (req.description or "").strip()
+    context = description
+    scraped_blurb = ""
+    if website:
+        try:
+            page = await WebSearchTool().scrape_homepage(website, limit=5000)
+            if isinstance(page, dict) and page.get("ok"):
+                scraped_blurb = (page.get("text") or "").strip()
+        except Exception as exc:
+            log.warning("Website scrape for extract failed: %s", exc)
+        context = "\n\n".join(
+            part for part in [
+                f"Company website: {website}",
+                scraped_blurb[:4500] if scraped_blurb else "",
+                description,
+            ] if part
+        )
+    if not context.strip():
+        return {
+            "name": "",
+            "website": website,
+            "description": description,
+            "targetMarkets": [],
+            "primaryCategories": [],
+            "extractedByAi": False,
+        }
+    res = await provider.extract_business_profile(context)
+    out_desc = description
+    if not out_desc and scraped_blurb:
+        # Keep a short editable blurb from the site when user only entered a URL.
+        out_desc = " ".join(scraped_blurb.split())[:420]
     return {
         "name": res.get("name", ""),
-        "website": res.get("website", ""),
-        "description": req.description,
+        "website": res.get("website") or website,
+        "description": out_desc or description,
         "targetMarkets": res.get("target_markets") or res.get("targetMarkets") or [],
         "primaryCategories": res.get("primary_categories") or res.get("primaryCategories") or [],
         "extractedByAi": bool(res.get("extracted_by_ai", res.get("extractedByAi", False))),

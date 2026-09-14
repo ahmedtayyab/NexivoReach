@@ -51,6 +51,11 @@
     --accent-soft: rgba(52, 75, 115, 0.08);
     --focus-ring: rgba(52, 75, 115, 0.35);
 
+    /* Primary CTAs — emerald so actions pop on ivory (not purple SaaS) */
+    --cta: #1A7A5C;
+    --cta-hover: #14634A;
+    --cta-soft: rgba(26, 122, 92, 0.12);
+
     /* Premium accent — use sparingly (AI / insights) */
     --brass: #B08D57;
     --brass-text: #8A6B3F;
@@ -61,6 +66,9 @@
 
     /* Semantic */
     --green: #3F7D62;
+    --fit-high: #1A7A5C;
+    --fit-mid: #B08D57;
+    --fit-low: #B45F5F;
     --danger: #B45F5F;
     --info: #344B73;
     --warning: #B08D57;
@@ -537,15 +545,15 @@ input:focus, textarea:focus, select:focus {
   cursor: not-allowed;
 }
 .btn-primary {
-  background: var(--brand);
+  background: var(--cta);
   color: #FFFFFF;
-  border-color: var(--brand);
+  border-color: var(--cta);
   box-shadow: none;
   font-weight: 600;
 }
 .btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: var(--cta-hover);
+  border-color: var(--cta-hover);
   color: #FFFFFF;
 }
 .btn-secondary {
@@ -719,11 +727,12 @@ input:focus, textarea:focus, select:focus {
 .conn-dot.is-off { background: #9aa19a; }
 
 .find-buyers {
+  position: relative;
   border: 1px solid var(--border);
   background: var(--bg-panel);
   padding: 1.15rem 1.15rem 1.25rem;
   border-radius: 8px;
-  border-left: 3px solid var(--brand);
+  border-left: 4px solid var(--cta);
   box-shadow: none;
 }
 .find-buyers__head { margin-bottom: 0.85rem; }
@@ -1197,20 +1206,20 @@ input:focus, textarea:focus, select:focus {
 }
 .data-table__head {
   display: grid;
-  grid-template-columns: 1.75rem 1.4fr 0.7fr 0.55fr 0.45fr 0.9fr;
+  grid-template-columns: 1.75rem 1.4fr 0.7fr 0.55fr 0.55fr 0.9fr;
   gap: 0.5rem;
-  padding: 0.45rem 0.85rem;
+  padding: 0.55rem 0.85rem;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--muted);
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .data-table__row {
   display: grid;
-  grid-template-columns: 1.75rem 1.4fr 0.7fr 0.55fr 0.45fr 0.9fr;
+  grid-template-columns: 1.75rem 1.4fr 0.7fr 0.55fr 0.55fr 0.9fr;
   gap: 0.5rem;
   align-items: center;
   padding: 0.55rem 0.85rem;
@@ -1267,12 +1276,163 @@ input:focus, textarea:focus, select:focus {
 }
 .field-label {
   display: block;
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-label);
-  margin-bottom: 0.3rem;
+  margin-bottom: 0.35rem;
+}
+
+.fit-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.4rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 4px;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.fit-badge--high {
+  background: color-mix(in srgb, var(--fit-high) 14%, white);
+  color: var(--fit-high);
+}
+.fit-badge--mid {
+  background: color-mix(in srgb, var(--fit-mid) 16%, white);
+  color: var(--brass-text);
+}
+.fit-badge--low {
+  background: color-mix(in srgb, var(--fit-low) 14%, white);
+  color: var(--fit-low);
+}
+
+.website-field {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+.website-field__input {
+  flex: 1;
+  min-width: 0;
+}
+.btn-autofill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--cta) 35%, var(--border));
+  background: var(--cta-soft);
+  color: var(--cta);
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-autofill:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--cta) 18%, white);
+  border-color: var(--cta);
+}
+.btn-autofill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.hunt-builder {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.65rem 0 0.85rem;
+}
+.hunt-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px dashed var(--border);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.hunt-chip:hover {
+  border-color: var(--cta);
+  color: var(--cta);
+  background: var(--cta-soft);
+}
+.hunt-chip.is-on {
+  border-style: solid;
+  border-color: var(--cta);
+  background: var(--cta-soft);
+  color: var(--cta);
+}
+.hunt-chip__key {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.find-buyers {
+  position: relative;
+  border-left-color: var(--cta);
+}
+.find-buyers--primary {
+  border-left-width: 4px;
+}
+.find-buyers__overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.55rem;
+  padding: 1.5rem 1.35rem;
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
+  backdrop-filter: blur(2px);
+  border-radius: inherit;
+}
+.find-buyers__overlay-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.find-buyers__overlay-phase {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+  max-width: 28rem;
+  line-height: 1.45;
+}
+.find-buyers__overlay-track {
+  width: min(100%, 18rem);
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-subtle);
+  overflow: hidden;
+  margin-top: 0.25rem;
+}
+.find-buyers__overlay-fill {
+  height: 100%;
+  background: var(--cta);
+  border-radius: inherit;
+  transition: width 0.9s ease;
+}
+.find-buyers__overlay-eta {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
 }
 
 .nav-item-primary.is-workspace {
@@ -1287,15 +1447,7 @@ input:focus, textarea:focus, select:focus {
   border-color: var(--border-subtle);
   background: var(--muted);
 }
-.find-buyers {
-  border: 1px solid var(--border);
-  background: var(--bg-panel);
-  padding: 1.15rem 1.15rem 1.25rem;
-  border-radius: 8px;
-  border-left: 3px solid var(--brand);
-  box-shadow: none;
-}
-.find-buyers__title { font-size: 1.15rem; color: var(--text-primary); }
+.find-buyers__title { font-size: 1.2rem; color: var(--text-primary); }
 
 /* ── Admin ops desk ──────────────────────────────────────────────────────── */
 .admin-desk { max-width: 64rem; }

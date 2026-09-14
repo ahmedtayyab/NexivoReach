@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog } from '../types';
-import { CheckCircle2, ExternalLink, Loader2, Plus, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, ExternalLink, Loader2, Plus, Trash2, Wand2, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
 import FindBuyersPanel from './FindBuyersPanel';
@@ -335,29 +335,38 @@ function CompanySection({
     };
   }, [name, description, catalogCats]);
 
-  const handleExtract = async () => {
-    if (!description.trim()) return;
+  const handleExtract = async (fromWebsite = false) => {
+    const site = website.trim();
+    const brief = description.trim();
+    if (fromWebsite && !site) return;
+    if (!fromWebsite && !brief && !site) return;
     setExtracting(true);
     setError('');
     try {
       const resp = await apiFetch('/api/onboarding/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description }),
+        body: JSON.stringify({ description: brief, website: site }),
       });
       if (!resp.ok) throw new Error('Extract failed');
       const data = await resp.json();
       if (data.name) setName(data.name);
       if (data.website) setWebsite(data.website);
-      if (Array.isArray(data.targetMarkets)) setMarkets(data.targetMarkets.join(', '));
+      if (data.description && (!brief || fromWebsite)) setDescription(data.description);
+      if (Array.isArray(data.targetMarkets) && data.targetMarkets.length) {
+        setMarkets(data.targetMarkets.join(', '));
+        setShowMore(true);
+      }
       if (Array.isArray(data.primaryCategories) && data.primaryCategories.length) {
         setCategories(data.primaryCategories.join(', '));
+        setShowMore(true);
       } else if (liveCategorySuggestions.length) {
         setCategories(liveCategorySuggestions.slice(0, 6).join(', '));
+        setShowMore(true);
       }
     } catch (e) {
       console.warn(e);
-      setError('Could not extract profile. Fill the fields manually.');
+      setError('Could not auto-fill. Edit the fields manually.');
     } finally {
       setExtracting(false);
     }
@@ -377,34 +386,53 @@ function CompanySection({
   return (
     <div className="space-y-5 max-w-lg">
       <Field label="Company name" value={name} onChange={setName} placeholder="Acme Manufacturing" />
-      <Field label="Website" value={website} onChange={setWebsite} placeholder="https://..." />
       <div>
-        <label className="block text-[12px] font-medium text-ink-secondary mb-1">
-          What you sell <span className="text-ink-muted font-normal">(short description)</span>
-        </label>
-        <div className="flex gap-2 items-start">
-          <textarea
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            rows={3}
-            placeholder="We manufacture industrial valves and sell to water utilities in Germany and the UK…"
-            className="flex-1 border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted resize-none"
+        <label className="field-label">Website</label>
+        <div className="website-field">
+          <input
+            type="text"
+            value={website}
+            onChange={e => setWebsite(e.target.value)}
+            onBlur={() => {
+              const site = website.trim();
+              if (site && !description.trim() && !extracting) {
+                void handleExtract(true);
+              }
+            }}
+            placeholder="https://yoursite.com"
+            className="website-field__input border border-border rounded-md px-3 py-2 text-[13.5px] text-ink-secondary placeholder-ink-muted"
           />
           <button
             type="button"
-            onClick={handleExtract}
-            disabled={extracting || !description.trim()}
-            className="ai-action shrink-0 border border-[color-mix(in_srgb,var(--brass)_25%,var(--border))] px-2.5 py-2"
-            title="Fill markets and categories from the description"
+            onClick={() => void handleExtract(true)}
+            disabled={extracting || !website.trim()}
+            className="btn-autofill"
+            title="Read the website and fill name, description, markets, and categories"
           >
             {extracting ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin ai-action__icon" strokeWidth={1.75} />
+              <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.75} />
             ) : (
-              'Auto-fill'
+              <Wand2 className="w-3.5 h-3.5" strokeWidth={1.75} />
             )}
+            Auto-fill
           </button>
         </div>
-        {error && <p className="text-[12px] mt-1" style={{ color: 'var(--warning)' }}>{error}</p>}
+        <p className="text-[12.5px] text-ink-muted mt-1.5 m-0">
+          Paste your URL, then Auto-fill — you can edit everything afterward.
+        </p>
+      </div>
+      <div>
+        <label className="field-label">
+          What you sell <span className="normal-case tracking-normal font-normal text-ink-muted">(editable)</span>
+        </label>
+        <textarea
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          rows={3}
+          placeholder="We manufacture industrial valves and sell to water utilities in Germany and the UK…"
+          className="w-full border border-border rounded-md px-3 py-2 text-[13.5px] text-ink-secondary placeholder-ink-muted resize-none"
+        />
+        {error && <p className="text-[12.5px] mt-1" style={{ color: 'var(--warning)' }}>{error}</p>}
       </div>
 
       {!showMore ? (
@@ -462,13 +490,13 @@ function CompanySection({
 function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder: string }) {
   return (
     <div>
-      <label className="block text-[12px] font-medium text-ink-secondary mb-1">{label}</label>
+      <label className="field-label">{label}</label>
       <input
         type="text"
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted"
+        className="w-full border border-border rounded-md px-3 py-2 text-[13.5px] text-ink-secondary placeholder-ink-muted"
       />
     </div>
   );

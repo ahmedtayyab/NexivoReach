@@ -463,6 +463,7 @@ export default function App() {
       : 'Send best-fit outreach via Gmail (uses scraped contact emails)?';
     if (!window.confirm(label)) return;
     try {
+      pushToast('info', 'Sending…', 'Resolving recipients and sending via Gmail.');
       const path = mode === 'ready' ? '/api/prospects/send-ready' : '/api/prospects/send-batch';
       const resp = await apiFetch(path, {
         method: 'POST',

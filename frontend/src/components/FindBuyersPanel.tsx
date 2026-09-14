@@ -19,13 +19,19 @@ interface Props {
 }
 
 const HUNT_ETA_SECONDS = 35;
-const HUNT_PHASES = [
-  'Planning search queries…',
-  'Searching the web for matching companies…',
-  'Opening company sites to score Fit…',
-  'Building your ~40-lead shortlist…',
-  'Almost done — ranking strong vs average…',
-];
+
+function buildPhases(query: string, placeHint: string): string[] {
+  const focus = (query || '').trim() || 'matching buyers';
+  const short = focus.length > 48 ? `${focus.slice(0, 48)}…` : focus;
+  const place = placeHint ? ` in ${placeHint}` : '';
+  return [
+    `Planning searches for “${short}”…`,
+    `Scanning Google and maps${place}…`,
+    'Opening company sites to score Fit…',
+    'Filtering strong vs average leads…',
+    'Ranking your shortlist — almost done…',
+  ];
+}
 
 /**
  * Primary product action: describe who to find, then hunt.
@@ -47,8 +53,25 @@ export default function FindBuyersPanel({
   const [lastFound, setLastFound] = useState<number | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [phaseIndex, setPhaseIndex] = useState(0);
+  const [productChip, setProductChip] = useState('');
+  const [buyerChip, setBuyerChip] = useState('');
+  const [placeChip, setPlaceChip] = useState('');
 
   const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
+  const productOptions = useMemo(() => {
+    const fromCatalog = catalogCats.length ? catalogCats : (businessInfo.primaryCategories || []);
+    return fromCatalog.filter(Boolean).slice(0, 6);
+  }, [catalogCats, businessInfo.primaryCategories]);
+  const buyerOptions = useMemo(
+    () => (icp.targetBuyerTypes || []).filter(Boolean).slice(0, 6),
+    [icp.targetBuyerTypes],
+  );
+  const placeOptions = useMemo(() => {
+    const fromIcp = (icp.targetCountries || []).filter(Boolean);
+    const fromBiz = (businessInfo.targetMarkets || []).filter(Boolean);
+    return [...fromIcp, ...fromBiz].filter((v, i, a) => a.indexOf(v) === i).slice(0, 6);
+  }, [icp.targetCountries, businessInfo.targetMarkets]);
+
   const context = useMemo(
     () =>
       [
@@ -75,6 +98,30 @@ export default function FindBuyersPanel({
 
   const ready = Boolean(query.trim()) || hasBrief;
   const canHunt = ready && sheetsConnected;
+  const phases = useMemo(
+    () => buildPhases(query, placeChip || placeOptions[0] || ''),
+    [query, placeChip, placeOptions],
+  );
+
+  const composeFromChips = (nextProduct: string, nextBuyer: string, nextPlace: string) => {
+    const parts = [nextProduct, nextBuyer].filter(Boolean);
+    let sentence = parts.join(' ');
+    if (nextPlace) sentence = sentence ? `${sentence} in ${nextPlace}` : nextPlace;
+    if (sentence) setQuery(sentence);
+  };
+
+  const toggleChip = (
+    kind: 'product' | 'buyer' | 'place',
+    value: string,
+  ) => {
+    const nextProduct = kind === 'product' ? (productChip === value ? '' : value) : productChip;
+    const nextBuyer = kind === 'buyer' ? (buyerChip === value ? '' : value) : buyerChip;
+    const nextPlace = kind === 'place' ? (placeChip === value ? '' : value) : placeChip;
+    if (kind === 'product') setProductChip(nextProduct);
+    if (kind === 'buyer') setBuyerChip(nextBuyer);
+    if (kind === 'place') setPlaceChip(nextPlace);
+    composeFromChips(nextProduct, nextBuyer, nextPlace);
+  };
 
   useEffect(() => {
     if (!isRunning) return;
@@ -82,14 +129,14 @@ export default function FindBuyersPanel({
     setPhaseIndex(0);
     const tick = window.setInterval(() => setElapsedSec(s => s + 1), 1000);
     const phase = window.setInterval(
-      () => setPhaseIndex(i => Math.min(i + 1, HUNT_PHASES.length - 1)),
+      () => setPhaseIndex(i => Math.min(i + 1, phases.length - 1)),
       7000,
     );
     return () => {
       window.clearInterval(tick);
       window.clearInterval(phase);
     };
-  }, [isRunning]);
+  }, [isRunning, phases.length]);
 
   const etaLabel = useMemo(() => {
     if (!isRunning) return '';
@@ -103,7 +150,7 @@ export default function FindBuyersPanel({
   const handleRun = async () => {
     if (!canHunt || isRunning) return;
     setIsRunning(true);
-    setStatusText(HUNT_PHASES[0]);
+    setStatusText(phases[0]);
     setLastFound(null);
     try {
       const resp = await apiFetch('/api/discovery/run', {
@@ -148,8 +195,29 @@ export default function FindBuyersPanel({
     }
   };
 
+  const showBuilder = productOptions.length + buyerOptions.length + placeOptions.length > 0;
+
   return (
     <div className={`find-buyers find-buyers--primary ${compact ? 'find-buyers--compact' : ''}`}>
+      {isRunning && (
+        <div className="find-buyers__overlay" role="status" aria-live="polite">
+          <p className="find-buyers__overlay-title">Finding buyers</p>
+          <p className="find-buyers__overlay-phase inline-flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin shrink-0 text-[var(--cta)]" strokeWidth={1.75} />
+            {phases[phaseIndex]}
+          </p>
+          <div className="find-buyers__overlay-track" aria-hidden="true">
+            <div
+              className="find-buyers__overlay-fill"
+              style={{
+                width: `${Math.min(92, Math.round((elapsedSec / HUNT_ETA_SECONDS) * 100))}%`,
+              }}
+            />
+          </div>
+          <p className="find-buyers__overlay-eta">{etaLabel}</p>
+        </div>
+      )}
+
       {!compact && (
         <div className="find-buyers__head">
           <h3 className="find-buyers__title">Find buyers</h3>
@@ -176,9 +244,61 @@ export default function FindBuyersPanel({
         </p>
       )}
 
+      {showBuilder && (
+        <div className="hunt-builder" aria-label="Build hunt from chips">
+          {productOptions.map(opt => (
+            <button
+              key={`p-${opt}`}
+              type="button"
+              className={`hunt-chip ${productChip === opt ? 'is-on' : ''}`}
+              onClick={() => toggleChip('product', opt)}
+            >
+              <span className="hunt-chip__key">Product</span>
+              {opt}
+            </button>
+          ))}
+          {buyerOptions.map(opt => (
+            <button
+              key={`b-${opt}`}
+              type="button"
+              className={`hunt-chip ${buyerChip === opt ? 'is-on' : ''}`}
+              onClick={() => toggleChip('buyer', opt)}
+            >
+              <span className="hunt-chip__key">Buyer</span>
+              {opt}
+            </button>
+          ))}
+          {placeOptions.map(opt => (
+            <button
+              key={`l-${opt}`}
+              type="button"
+              className={`hunt-chip ${placeChip === opt ? 'is-on' : ''}`}
+              onClick={() => toggleChip('place', opt)}
+            >
+              <span className="hunt-chip__key">Place</span>
+              {opt}
+            </button>
+          ))}
+          {!buyerOptions.length && (
+            <button
+              type="button"
+              className="hunt-chip"
+              onClick={() => {
+                const v = 'importers';
+                setBuyerChip(v);
+                composeFromChips(productChip, v, placeChip);
+              }}
+            >
+              <span className="hunt-chip__key">Buyer</span>
+              importers
+            </button>
+          )}
+        </div>
+      )}
+
       <PredictiveField
         label="What are you looking for?"
-        hint="Example: martial arts belt importers in Nevada. Leave blank to use your company brief."
+        hint="Tap chips above or type freely — e.g. martial arts belt importers in Nevada."
         value={query}
         onChange={setQuery}
         suggestions={suggestions}
@@ -193,23 +313,7 @@ export default function FindBuyersPanel({
 
       <div className="find-buyers__actions">
         <div className="find-buyers__status-block" aria-live="polite">
-          {isRunning ? (
-            <>
-              <p className="find-buyers__status inline-flex items-center gap-2">
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" strokeWidth={1.75} />
-                {HUNT_PHASES[phaseIndex]}
-              </p>
-              <p className="find-buyers__eta">{etaLabel}</p>
-              <div className="find-buyers__eta-track" aria-hidden="true">
-                <div
-                  className="find-buyers__eta-fill"
-                  style={{
-                    width: `${Math.min(92, Math.round((elapsedSec / HUNT_ETA_SECONDS) * 100))}%`,
-                  }}
-                />
-              </div>
-            </>
-          ) : (
+          {!isRunning && (
             <p className="find-buyers__status">
               {statusText ||
                 (lastFound !== null

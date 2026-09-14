@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
 import { leadRowToneClass } from '../lib/leadTone';
 import { brandAssets } from '../lib/brandAssets';
+import { FitScoreBadge } from './FitScoreBadge';
 
 const EMPTY_QUEUE_IMG = brandAssets.emptyQueue;
 
@@ -23,7 +24,7 @@ interface Props {
   onUpdateStage: (id: string, stage: Prospect['stage']) => void;
   onClearLeads?: () => Promise<void> | void;
   onPrepareOutreach?: () => void | Promise<void>;
-  onSendAllReady?: () => void;
+  onSendAllReady?: () => void | Promise<void>;
   onSendSelected?: (ids: string[]) => Promise<void> | void;
   gmailConnected?: boolean;
   onGoWorkspace?: () => void;
@@ -53,6 +54,7 @@ export default function QueueView({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [sendingSelected, setSendingSelected] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  const [sendingBest, setSendingBest] = useState(false);
   const lastRun = agentLogs[0];
   const lastRunLabel = lastRun ? formatRelative(lastRun.timestamp) : null;
 
@@ -141,8 +143,22 @@ export default function QueueView({
           </button>
         )}
         {onSendAllReady && gmailConnected && (
-          <button type="button" onClick={() => onSendAllReady()} className="btn btn-secondary">
-            Send best-fit
+          <button
+            type="button"
+            disabled={sendingBest}
+            onClick={() => {
+              void (async () => {
+                setSendingBest(true);
+                try {
+                  await onSendAllReady();
+                } finally {
+                  setSendingBest(false);
+                }
+              })();
+            }}
+            className="btn btn-primary"
+          >
+            {sendingBest ? 'Sending…' : 'Send best-fit'}
           </button>
         )}
         {onPrepareOutreach && prospects.some(p => !p.outreachDraft && (
@@ -307,13 +323,13 @@ export default function QueueView({
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
-                        <p className="text-[12px] text-ink-muted truncate mt-0.5">
+                        <p className="text-[13px] text-ink-muted truncate mt-0.5">
                           {prospect.location || prospect.website || '—'}
                         </p>
                       </div>
-                      <span className="text-[14px] font-semibold tabular-nums shrink-0">{prospect.fitScore}</span>
+                      <FitScoreBadge score={prospect.fitScore} />
                     </div>
-                    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-[12px] text-ink-muted">
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-[12.5px] text-ink-muted">
                       <span className="capitalize">{prospect.source || 'web'}</span>
                       <span className="capitalize">Intent {prospect.intent || prospect.fitBreakdown?.intent || '—'}</span>
                     </div>
@@ -371,13 +387,15 @@ export default function QueueView({
                     </span>
                     <button type="button" className="text-left min-w-0" onClick={() => onReviewProspect(prospect.id)}>
                       <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
-                      <p className="text-[12px] text-ink-muted truncate mt-px">
+                      <p className="text-[13px] text-ink-muted truncate mt-px">
                         {prospect.location || prospect.website || '—'}
                       </p>
                     </button>
-                    <span className="text-[12px] text-ink-muted capitalize">{prospect.source || 'web'}</span>
-                    <span className="text-[12px] text-ink-muted capitalize">{prospect.intent || prospect.fitBreakdown?.intent || '—'}</span>
-                    <span className="text-[13px] font-semibold text-right tabular-nums">{prospect.fitScore}</span>
+                    <span className="text-[13px] text-ink-muted capitalize">{prospect.source || 'web'}</span>
+                    <span className="text-[13px] text-ink-muted capitalize">{prospect.intent || prospect.fitBreakdown?.intent || '—'}</span>
+                    <span className="text-right justify-self-end">
+                      <FitScoreBadge score={prospect.fitScore} />
+                    </span>
                     <select
                       value={normalizeStage(prospect.stage)}
                       onChange={e => onUpdateStage(prospect.id, e.target.value as Prospect['stage'])}
