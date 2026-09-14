@@ -9,7 +9,6 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
 from sqlmodel import Session, col, select
 
 from app.api.deps import AuthUser, get_current_user, get_session_user
@@ -28,13 +27,6 @@ VALID_PRIORITY = {"low", "normal", "high"}
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-class TicketCreate(BaseModel):
-    subject: str = Field(min_length=1, max_length=200)
-    body: str = Field(min_length=1, max_length=5000)
-    category: str = "general"
-    priority: str = "normal"
 
 
 def _attachments_meta(row: SupportTicket) -> list:
@@ -99,16 +91,14 @@ async def create_ticket(
     subject: str = Form(...),
     body: str = Form(...),
     category: str = Form("general"),
-    priority: str = Form("normal"),
     files: List[UploadFile] | None = File(None),
     user: AuthUser = Depends(get_current_user),
 ):
     category_n = (category or "general").strip().lower()
-    priority_n = (priority or "normal").strip().lower()
     if category_n not in VALID_CATEGORY:
         raise HTTPException(status_code=400, detail="Invalid category")
-    if priority_n not in VALID_PRIORITY:
-        raise HTTPException(status_code=400, detail="Invalid priority")
+    # Priority is admin-only; clients always start at normal.
+    priority_n = "normal"
     subject_n = (subject or "").strip()
     body_n = (body or "").strip()
     if not subject_n or not body_n:
@@ -155,32 +145,23 @@ async def create_ticket(
         return serialize_ticket(row, email=user.email, name=user.name)
 
 
-class AppealCreate(BaseModel):
-    body: str = Field(min_length=1, max_length=5000)
-    subject: str = Field(default="Account suspension appeal", max_length=200)
-
-
 @router.post("/appeal")
-def create_appeal(payload: AppealCreate, user: AuthUser = Depends(get_session_user)):
+async def create_appeal(
+    body: str = Form(...),
+    subject: str = Form("Account suspension appeal"),
+    files: List[UploadFile] | None = File(None),
+    user: AuthUser = Depends(get_session_user),
+):
     """Suspended users may submit an appeal without full app access."""
-    subject = (payload.subject or "Account suspension appeal").strip() or "Account suspension appeal"
-    body = payload.body.strip()
-    if not body:
+    subject_n = (subject or "Account suspension appeal").strip() or "Account suspension appeal"
+    body_n = (body or "").strip()
+    if not body_n:
         raise HTTPException(status_code=400, detail="Please explain what happened")
 
-    now = _now()
-    row = SupportTicket(
-        id=f"tkt-{uuid4().hex[:12]}",
-        user_id=user.id,
-        subject=subject[:200],
-        body=body[:5000],
-        status="open",
-        priority="high",
-        category="appeal",
-        attachments=[],
-        created_at=now,
-        updated_at=now,
-    )
+    file_list = [f for f in (files or []) if f and (f.filename or "").strip()]
+    if len(file_list) > att_mod.MAX_FILES:
+        raise HTTPException(status_code=400, detail=f"At most {att_mod.MAX_FILES} images allowed")
+
     with Session(engine) as session:
         open_appeals = session.exec(
             select(SupportTicket).where(
@@ -194,6 +175,28 @@ def create_appeal(payload: AppealCreate, user: AuthUser = Depends(get_session_us
                 **serialize_ticket(existing, email=user.email, name=user.name),
                 "alreadyOpen": True,
             }
+
+        now = _now()
+        ticket_id = f"tkt-{uuid4().hex[:12]}"
+        try:
+            attachments = await att_mod.save_uploads(ticket_id, file_list)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Could not save attachments: {exc}") from exc
+
+        row = SupportTicket(
+            id=ticket_id,
+            user_id=user.id,
+            subject=subject_n[:200],
+            body=body_n[:5000],
+            status="open",
+            priority="high",
+            category="appeal",
+            attachments=attachments,
+            created_at=now,
+            updated_at=now,
+        )
         session.add(row)
         session.commit()
         session.refresh(row)

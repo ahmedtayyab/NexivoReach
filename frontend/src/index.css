@@ -2443,8 +2443,13 @@ input:focus, textarea:focus, select:focus {
 }
 .support-form__row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 0.65rem;
+}
+@media (min-width: 480px) {
+  .support-form__row:has(label + label) {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 .support-attach {
   display: grid;
@@ -2688,6 +2693,49 @@ input:focus, textarea:focus, select:focus {
   }
 }
 
+.admin-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.55rem 0.75rem;
+  margin: 0 0 0.85rem;
+}
+.admin-filter-bar__field {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 8.5rem;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.admin-filter-bar__field select {
+  min-width: 10rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  padding: 0.4rem 0.55rem;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.admin-filter-bar__clear {
+  align-self: flex-end;
+  min-height: 2.05rem;
+  padding: 0.35rem 0.7rem;
+  font-size: 12.5px;
+}
+.admin-filter-bar__meta {
+  margin: 0;
+  align-self: center;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
 .admin-ticket-filters {
   display: flex;
   flex-direction: column;
@@ -2745,6 +2793,12 @@ input:focus, textarea:focus, select:focus {
 .admin-ticket-chip.is-pri-high.is-active { background: #8A5550; }
 .admin-ticket-chip.is-pri-normal.is-active { background: #5A6570; }
 .admin-ticket-chip.is-pri-low.is-active { background: #6B6B6B; }
+.admin-ticket-chip.is-user-all.is-active { background: color-mix(in srgb, var(--text-secondary) 78%, #000); }
+.admin-ticket-chip.is-user-active.is-active { background: #4A6B4E; }
+.admin-ticket-chip.is-user-suspended.is-active { background: #8A5550; }
+.admin-ticket-chip.is-user-admin.is-active { background: #344B73; }
+.admin-ticket-chip.is-user-unlimited.is-active { background: #3F6B62; }
+.admin-ticket-chip.is-user-active_today.is-active { background: #3D6B8A; }
 
 .admin-ticket-list { list-style: none; margin: 0; padding: 0; }
 .admin-ticket-list li + li { border-top: 1px solid var(--border-subtle); }

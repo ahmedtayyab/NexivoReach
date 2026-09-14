@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { Loader2, LogOut, ShieldAlert } from 'lucide-react';
+import { Loader2, LogOut, Paperclip, ShieldAlert, X } from 'lucide-react';
 import BrandLockup from './brand/BrandLockup';
 import { apiFetch } from '../lib/api';
 import { brandAssets } from '../lib/brandAssets';
 import type { AuthUser } from '../types';
+
+type TicketAttachment = {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  url: string;
+};
 
 type Ticket = {
   id: string;
@@ -12,6 +20,7 @@ type Ticket = {
   status: string;
   category: string;
   adminReply?: string;
+  attachments?: TicketAttachment[];
   createdAt: string;
   updatedAt: string;
   alreadyOpen?: boolean;
@@ -22,12 +31,23 @@ type Props = {
   onLogout: () => void;
 };
 
+const MAX_ATTACHMENTS = 4;
+const MAX_ATTACHMENT_BYTES = 2_500_000;
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function SuspendedView({ user, onLogout }: Props) {
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [error, setError] = useState('');
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [files, setFiles] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -45,6 +65,40 @@ export default function SuspendedView({ user, onLogout }: Props) {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const urls = files.map(f => URL.createObjectURL(f));
+    setPreviews(urls);
+    return () => {
+      urls.forEach(u => URL.revokeObjectURL(u));
+    };
+  }, [files]);
+
+  const addFiles = (list: FileList | null) => {
+    if (!list?.length) return;
+    setError('');
+    const next = [...files];
+    for (const file of Array.from(list)) {
+      if (!file.type.startsWith('image/')) {
+        setError('Only image files are allowed (PNG, JPEG, WebP, GIF).');
+        continue;
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        setError(`Each image must be under ${formatBytes(MAX_ATTACHMENT_BYTES)}.`);
+        continue;
+      }
+      if (next.length >= MAX_ATTACHMENTS) {
+        setError(`You can attach up to ${MAX_ATTACHMENTS} images.`);
+        break;
+      }
+      next.push(file);
+    }
+    setFiles(next);
+  };
+
+  const removeFile = (idx: number) => {
+    setFiles(prev => prev.filter((_, i) => i !== idx));
+  };
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!body.trim()) return;
@@ -52,13 +106,15 @@ export default function SuspendedView({ user, onLogout }: Props) {
     setError('');
     setMsg('');
     try {
+      const form = new FormData();
+      form.append('subject', 'Account suspension appeal');
+      form.append('body', body.trim());
+      for (const file of files) {
+        form.append('files', file);
+      }
       const resp = await apiFetch('/api/support/appeal', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          subject: 'Account suspension appeal',
-          body: body.trim(),
-        }),
+        body: form,
       });
       if (!resp.ok) {
         const text = await resp.text();
@@ -73,6 +129,7 @@ export default function SuspendedView({ user, onLogout }: Props) {
       }
       const ticket = (await resp.json()) as Ticket;
       setBody('');
+      setFiles([]);
       setMsg(
         ticket.alreadyOpen
           ? 'You already have an open appeal — an admin will review it.'
@@ -140,6 +197,47 @@ export default function SuspendedView({ user, onLogout }: Props) {
                 className="mt-1.5 w-full border border-border bg-panel-elevated px-3 py-2 text-[13px] text-ink"
               />
             </label>
+
+            <div className="support-attach">
+              <div className="support-attach__head">
+                <span>
+                  <Paperclip className="w-3.5 h-3.5 inline-block mr-1" />
+                  Screenshots / images
+                </span>
+                <span className="support-attach__hint">
+                  Up to {MAX_ATTACHMENTS} · {formatBytes(MAX_ATTACHMENT_BYTES)} each
+                </span>
+              </div>
+              <label className="support-attach__pick">
+                <input
+                  type="file"
+                  accept="image/*,image/jpeg,image/png,image/webp,image/gif"
+                  multiple
+                  onChange={e => {
+                    addFiles(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+                Add images
+              </label>
+              {files.length > 0 && (
+                <ul className="support-attach__list">
+                  {files.map((file, idx) => (
+                    <li key={`${file.name}-${idx}`}>
+                      <img src={previews[idx]} alt="" />
+                      <div>
+                        <span className="support-attach__name">{file.name}</span>
+                        <span className="support-attach__size">{formatBytes(file.size)}</span>
+                      </div>
+                      <button type="button" aria-label="Remove image" onClick={() => removeFile(idx)}>
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
             <button
               type="submit"
               className="btn btn-primary w-full justify-center"
@@ -157,6 +255,16 @@ export default function SuspendedView({ user, onLogout }: Props) {
               <p className="text-[12px] text-ink-muted mt-0.5 capitalize">
                 {latest.status.replace('_', ' ')} · {(latest.updatedAt || latest.createdAt || '').slice(0, 10)}
               </p>
+              {(latest.attachments?.length || 0) > 0 && (
+                <div className="support-detail__atts mt-3">
+                  {latest.attachments!.map(a => (
+                    <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="support-detail__att">
+                      <img src={a.url} alt={a.name} loading="lazy" />
+                      <span>{a.name}</span>
+                    </a>
+                  ))}
+                </div>
+              )}
               {latest.adminReply ? (
                 <div className="mt-3 p-3 border border-border-subtle bg-canvas">
                   <strong className="block text-[11px] uppercase tracking-[0.08em] text-ink-muted mb-1">

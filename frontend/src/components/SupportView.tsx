@@ -55,7 +55,6 @@ export default function SupportView() {
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [category, setCategory] = useState('general');
-  const [priority, setPriority] = useState('normal');
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
 
@@ -128,7 +127,6 @@ export default function SupportView() {
       form.append('subject', subject.trim());
       form.append('body', body.trim());
       form.append('category', category);
-      form.append('priority', priority);
       for (const file of files) {
         form.append('files', file);
       }
@@ -199,14 +197,6 @@ export default function SupportView() {
                   <option value="appeal">Appeal / suspension</option>
                 </select>
               </label>
-              <label>
-                Priority
-                <select value={priority} onChange={e => setPriority(e.target.value)}>
-                  <option value="low">Low</option>
-                  <option value="normal">Normal</option>
-                  <option value="high">High</option>
-                </select>
-              </label>
             </div>
             <label>
               Details
@@ -233,7 +223,7 @@ export default function SupportView() {
               <label className="support-attach__pick">
                 <input
                   type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  accept="image/*,image/jpeg,image/png,image/webp,image/gif"
                   multiple
                   onChange={e => {
                     addFiles(e.target.files);
@@ -312,7 +302,7 @@ export default function SupportView() {
             <div className="support-detail">
               <h3>{selected.subject}</h3>
               <p className="support-detail__meta">
-                {selected.status.replace('_', ' ')} · {selected.priority} · {selected.category}
+                {selected.status.replace('_', ' ')} · {selected.category}
               </p>
               <p className="support-detail__body">{selected.body}</p>
               {(selected.attachments?.length || 0) > 0 && (

@@ -92,6 +92,7 @@ type SupportTicket = {
 type TicketStatusFilter = 'all' | 'new' | 'open' | 'in_progress' | 'resolved' | 'closed';
 type TicketCategoryFilter = 'all' | 'general' | 'billing' | 'limits' | 'bug' | 'appeal';
 type TicketPriorityFilter = 'all' | 'high' | 'normal' | 'low';
+type UserStatusFilter = 'all' | 'active' | 'suspended' | 'admin' | 'unlimited' | 'active_today';
 
 const TICKET_STATUS_FILTERS: { id: TicketStatusFilter; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -116,6 +117,15 @@ const TICKET_PRIORITY_FILTERS: { id: TicketPriorityFilter; label: string }[] = [
   { id: 'high', label: 'High' },
   { id: 'normal', label: 'Normal' },
   { id: 'low', label: 'Low' },
+];
+
+const USER_STATUS_FILTERS: { id: UserStatusFilter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'active', label: 'Active' },
+  { id: 'suspended', label: 'Suspended' },
+  { id: 'admin', label: 'Admins' },
+  { id: 'unlimited', label: 'No caps' },
+  { id: 'active_today', label: 'Active today' },
 ];
 
 function ticketIsNew(t: SupportTicket): boolean {
@@ -226,6 +236,7 @@ export default function AdminView() {
   const [inviteNote, setInviteNote] = useState('');
   const [inviteMsg, setInviteMsg] = useState('');
   const [query, setQuery] = useState('');
+  const [userStatusFilter, setUserStatusFilter] = useState<UserStatusFilter>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
@@ -280,18 +291,62 @@ export default function AdminView() {
     return () => window.clearInterval(id);
   }, [load]);
 
+  const userFilterCounts = useMemo(() => {
+    const counts: Record<UserStatusFilter, number> = {
+      all: users.length,
+      active: 0,
+      suspended: 0,
+      admin: 0,
+      unlimited: 0,
+      active_today: 0,
+    };
+    for (const u of users) {
+      if (u.isSuspended) counts.suspended += 1;
+      else counts.active += 1;
+      if (u.isAdmin) counts.admin += 1;
+      if (u.usageUnlimited || u.isAdmin) counts.unlimited += 1;
+      const used =
+        (u.usageToday?.used?.hunt || 0) +
+        (u.usageToday?.used?.extract || 0) +
+        (u.usageToday?.used?.prepare || 0) +
+        (u.usageToday?.used?.send || 0);
+      if (used > 0) counts.active_today += 1;
+    }
+    return counts;
+  }, [users]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter(
-      u =>
+    return users.filter(u => {
+      if (userStatusFilter === 'active' && u.isSuspended) return false;
+      if (userStatusFilter === 'suspended' && !u.isSuspended) return false;
+      if (userStatusFilter === 'admin' && !u.isAdmin) return false;
+      if (userStatusFilter === 'unlimited' && !(u.usageUnlimited || u.isAdmin)) return false;
+      if (userStatusFilter === 'active_today') {
+        const used =
+          (u.usageToday?.used?.hunt || 0) +
+          (u.usageToday?.used?.extract || 0) +
+          (u.usageToday?.used?.prepare || 0) +
+          (u.usageToday?.used?.send || 0);
+        if (used <= 0) return false;
+      }
+      if (!q) return true;
+      return (
         u.email.toLowerCase().includes(q) ||
         (u.name || '').toLowerCase().includes(q) ||
-        (u.plan || '').toLowerCase().includes(q),
-    );
-  }, [users, query]);
+        (u.plan || '').toLowerCase().includes(q)
+      );
+    });
+  }, [users, query, userStatusFilter]);
 
   const selected = users.find(u => u.id === selectedId) || null;
+
+  useEffect(() => {
+    if (selectedId && !filtered.some(u => u.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [filtered, selectedId]);
+
   const selectedTicket = tickets.find(t => t.id === selectedTicketId) || null;
 
   const ticketFilterCounts = useMemo(() => {
@@ -536,50 +591,61 @@ export default function AdminView() {
               </span>
             </div>
 
-            <div className="admin-ticket-filters" aria-label="Filter tickets">
-              <div className="admin-ticket-filters__row" role="group" aria-label="Status">
-                {TICKET_STATUS_FILTERS.map(f => (
-                  <button
-                    key={f.id}
-                    type="button"
-                    className={`admin-ticket-chip is-status-${f.id} ${
-                      ticketStatusFilter === f.id ? 'is-active' : ''
-                    }`}
-                    onClick={() => setTicketStatusFilter(f.id)}
-                  >
-                    {f.label}
-                    <span className="admin-ticket-chip__count">{ticketFilterCounts[f.id]}</span>
-                  </button>
-                ))}
-              </div>
-              <div className="admin-ticket-filters__row" role="group" aria-label="Category">
-                {TICKET_CATEGORY_FILTERS.map(f => (
-                  <button
-                    key={f.id}
-                    type="button"
-                    className={`admin-ticket-chip is-cat-${f.id} ${
-                      ticketCategoryFilter === f.id ? 'is-active' : ''
-                    }`}
-                    onClick={() => setTicketCategoryFilter(f.id)}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
-              <div className="admin-ticket-filters__row" role="group" aria-label="Priority">
-                {TICKET_PRIORITY_FILTERS.map(f => (
-                  <button
-                    key={f.id}
-                    type="button"
-                    className={`admin-ticket-chip is-pri-${f.id} ${
-                      ticketPriorityFilter === f.id ? 'is-active' : ''
-                    }`}
-                    onClick={() => setTicketPriorityFilter(f.id)}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
+            <div className="admin-filter-bar" aria-label="Filter tickets">
+              <label className="admin-filter-bar__field">
+                <span>Status</span>
+                <select
+                  value={ticketStatusFilter}
+                  onChange={e => setTicketStatusFilter(e.target.value as TicketStatusFilter)}
+                >
+                  {TICKET_STATUS_FILTERS.map(f => (
+                    <option key={f.id} value={f.id}>
+                      {f.label} ({ticketFilterCounts[f.id]})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="admin-filter-bar__field">
+                <span>Type</span>
+                <select
+                  value={ticketCategoryFilter}
+                  onChange={e => setTicketCategoryFilter(e.target.value as TicketCategoryFilter)}
+                >
+                  {TICKET_CATEGORY_FILTERS.map(f => (
+                    <option key={f.id} value={f.id}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="admin-filter-bar__field">
+                <span>Priority</span>
+                <select
+                  value={ticketPriorityFilter}
+                  onChange={e => setTicketPriorityFilter(e.target.value as TicketPriorityFilter)}
+                >
+                  {TICKET_PRIORITY_FILTERS.map(f => (
+                    <option key={f.id} value={f.id}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {(ticketStatusFilter !== 'all' ||
+                ticketCategoryFilter !== 'all' ||
+                ticketPriorityFilter !== 'all') && (
+                <button
+                  type="button"
+                  className="btn btn-secondary admin-filter-bar__clear"
+                  onClick={() => {
+                    setTicketStatusFilter('all');
+                    setTicketCategoryFilter('all');
+                    setTicketPriorityFilter('all');
+                  }}
+                >
+                  Clear filters
+                </button>
+              )}
             </div>
 
             {tickets.length === 0 ? (
@@ -668,6 +734,18 @@ export default function AdminView() {
                     <option value="in_progress">In progress</option>
                     <option value="resolved">Resolved</option>
                     <option value="closed">Closed</option>
+                  </select>
+                </label>
+                <label>
+                  Priority
+                  <select
+                    value={selectedTicket.priority || 'normal'}
+                    disabled={busyId === selectedTicket.id}
+                    onChange={e => void patchTicket(selectedTicket.id, { priority: e.target.value })}
+                  >
+                    <option value="low">Low</option>
+                    <option value="normal">Normal</option>
+                    <option value="high">High</option>
                   </select>
                 </label>
                 <label>
@@ -785,6 +863,34 @@ export default function AdminView() {
               className="admin-search"
             />
           </div>
+          <div className="admin-filter-bar" aria-label="Filter users">
+            <label className="admin-filter-bar__field">
+              <span>Status</span>
+              <select
+                value={userStatusFilter}
+                onChange={e => setUserStatusFilter(e.target.value as UserStatusFilter)}
+              >
+                {USER_STATUS_FILTERS.map(f => (
+                  <option key={f.id} value={f.id}>
+                    {f.label} ({userFilterCounts[f.id]})
+                  </option>
+                ))}
+              </select>
+            </label>
+            {userStatusFilter !== 'all' && (
+              <button
+                type="button"
+                className="btn btn-secondary admin-filter-bar__clear"
+                onClick={() => setUserStatusFilter('all')}
+              >
+                Clear filter
+              </button>
+            )}
+            <p className="admin-filter-bar__meta">
+              Showing {filtered.length}
+              {filtered.length !== users.length ? ` of ${users.length}` : ''} users
+            </p>
+          </div>
           <div className="admin-table-wrap">
             <table className="admin-table">
               <thead>
@@ -796,7 +902,14 @@ export default function AdminView() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(u => {
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="text-[13px] text-ink-muted py-4">
+                      No users match these filters.
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map(u => {
                   const used =
                     u.usageToday.used.hunt +
                     u.usageToday.used.extract +
@@ -839,7 +952,8 @@ export default function AdminView() {
                       </td>
                     </tr>
                   );
-                })}
+                })
+                )}
               </tbody>
             </table>
           </div>
