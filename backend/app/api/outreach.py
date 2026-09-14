@@ -419,7 +419,7 @@ async def _send_one_gmail(
     if not subj or not body_text:
         raise HTTPException(status_code=400, detail=f"Incomplete draft for {row.company_name}")
 
-    from app.agents.outreach_strategy import format_outreach_body
+    from app.agents.outreach_strategy import format_outreach_body, sanitize_outreach_draft
 
     seller = ""
     try:
@@ -428,11 +428,14 @@ async def _send_one_gmail(
         seller = (getattr(biz, "name", None) or "").strip() if biz else ""
     except Exception:
         seller = ""
-    body_text = format_outreach_body(
-        body_text,
+    cleaned = sanitize_outreach_draft(
+        {"subject": subj, "body": body_text},
         company_name=row.company_name or "",
-        seller_name=seller,
+        seller_name=seller or getattr(db_user, "name", None) or "",
+        first_touch=not str(subj).lower().startswith("re:"),
     )
+    subj = cleaned["subject"]
+    body_text = cleaned["body"]
 
     sent = await gmail_mod.send_email(
         session,
@@ -440,6 +443,7 @@ async def _send_one_gmail(
         to=to_addr,
         subject=subj,
         body=body_text,
+        from_name=seller or getattr(db_user, "name", None) or "",
     )
     draft["toEmail"] = to_addr
     draft["subject"] = subj

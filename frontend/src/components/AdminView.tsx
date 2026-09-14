@@ -88,6 +88,44 @@ type SupportTicket = {
   resolvedAt?: string | null;
 };
 
+type TicketStatusFilter = 'all' | 'new' | 'open' | 'in_progress' | 'resolved' | 'closed';
+type TicketCategoryFilter = 'all' | 'general' | 'billing' | 'limits' | 'bug' | 'appeal';
+type TicketPriorityFilter = 'all' | 'high' | 'normal' | 'low';
+
+const TICKET_STATUS_FILTERS: { id: TicketStatusFilter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'new', label: 'New' },
+  { id: 'open', label: 'Open' },
+  { id: 'in_progress', label: 'In progress' },
+  { id: 'resolved', label: 'Resolved' },
+  { id: 'closed', label: 'Closed' },
+];
+
+const TICKET_CATEGORY_FILTERS: { id: TicketCategoryFilter; label: string }[] = [
+  { id: 'all', label: 'All types' },
+  { id: 'general', label: 'General' },
+  { id: 'billing', label: 'Billing' },
+  { id: 'limits', label: 'Limits' },
+  { id: 'bug', label: 'Bug' },
+  { id: 'appeal', label: 'Appeal' },
+];
+
+const TICKET_PRIORITY_FILTERS: { id: TicketPriorityFilter; label: string }[] = [
+  { id: 'all', label: 'Any priority' },
+  { id: 'high', label: 'High' },
+  { id: 'normal', label: 'Normal' },
+  { id: 'low', label: 'Low' },
+];
+
+function ticketIsNew(t: SupportTicket): boolean {
+  return t.status === 'open' && !(t.adminReply || '').trim();
+}
+
+function statusLabel(status: string): string {
+  if (status === 'in_progress') return 'In progress';
+  return status.replace(/_/g, ' ');
+}
+
 async function apiErrorMessage(resp: Response, fallback: string): Promise<string> {
   const text = await resp.text();
   try {
@@ -176,6 +214,9 @@ export default function AdminView() {
   const [openTicketCount, setOpenTicketCount] = useState(0);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [ticketReply, setTicketReply] = useState('');
+  const [ticketStatusFilter, setTicketStatusFilter] = useState<TicketStatusFilter>('all');
+  const [ticketCategoryFilter, setTicketCategoryFilter] = useState<TicketCategoryFilter>('all');
+  const [ticketPriorityFilter, setTicketPriorityFilter] = useState<TicketPriorityFilter>('all');
   const [inviteOnly, setInviteOnly] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -251,6 +292,48 @@ export default function AdminView() {
 
   const selected = users.find(u => u.id === selectedId) || null;
   const selectedTicket = tickets.find(t => t.id === selectedTicketId) || null;
+
+  const ticketFilterCounts = useMemo(() => {
+    const counts: Record<TicketStatusFilter, number> = {
+      all: tickets.length,
+      new: 0,
+      open: 0,
+      in_progress: 0,
+      resolved: 0,
+      closed: 0,
+    };
+    for (const t of tickets) {
+      if (ticketIsNew(t)) counts.new += 1;
+      if (t.status === 'open') counts.open += 1;
+      else if (t.status === 'in_progress') counts.in_progress += 1;
+      else if (t.status === 'resolved') counts.resolved += 1;
+      else if (t.status === 'closed') counts.closed += 1;
+    }
+    return counts;
+  }, [tickets]);
+
+  const filteredTickets = useMemo(() => {
+    return tickets.filter(t => {
+      if (ticketStatusFilter === 'new') {
+        if (!ticketIsNew(t)) return false;
+      } else if (ticketStatusFilter !== 'all' && t.status !== ticketStatusFilter) {
+        return false;
+      }
+      if (ticketCategoryFilter !== 'all' && (t.category || 'general') !== ticketCategoryFilter) {
+        return false;
+      }
+      if (ticketPriorityFilter !== 'all' && (t.priority || 'normal') !== ticketPriorityFilter) {
+        return false;
+      }
+      return true;
+    });
+  }, [tickets, ticketStatusFilter, ticketCategoryFilter, ticketPriorityFilter]);
+
+  useEffect(() => {
+    if (selectedTicketId && !filteredTickets.some(t => t.id === selectedTicketId)) {
+      setSelectedTicketId(null);
+    }
+  }, [filteredTickets, selectedTicketId]);
 
   useEffect(() => {
     if (!selectedTicket) {
@@ -412,17 +495,31 @@ export default function AdminView() {
         </p>
       )}
 
-      <div className="admin-tabs" role="tablist">
-        <button type="button" role="tab" className={tab === 'ops' ? 'is-active' : ''} onClick={() => setTab('ops')}>
+      <div className="admin-tabs" role="tablist" aria-label="Admin sections">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'ops'}
+          className={`admin-tabs__btn ${tab === 'ops' ? 'is-active' : ''}`}
+          onClick={() => setTab('ops')}
+        >
           Ops
         </button>
         <button
           type="button"
           role="tab"
-          className={tab === 'support' ? 'is-active' : ''}
+          aria-selected={tab === 'support'}
+          className={`admin-tabs__btn ${tab === 'support' ? 'is-active' : ''} ${
+            openTicketCount > 0 ? 'has-attention' : ''
+          }`}
           onClick={() => setTab('support')}
         >
-          Support{openTicketCount > 0 ? ` (${openTicketCount})` : ''}
+          Support
+          {openTicketCount > 0 && (
+            <span className="admin-tabs__badge" aria-label={`${openTicketCount} open tickets`}>
+              {openTicketCount > 99 ? '99+' : openTicketCount}
+            </span>
+          )}
         </button>
       </div>
 
@@ -431,27 +528,96 @@ export default function AdminView() {
           <section className="admin-panel admin-panel--stretch">
             <div className="admin-panel__head">
               <h2>Tickets</h2>
-              <span className="text-[12px] text-ink-muted">{openTicketCount} open</span>
+              <span className="text-[12px] text-ink-muted">
+                {filteredTickets.length}
+                {filteredTickets.length !== tickets.length ? ` of ${tickets.length}` : ''} ·{' '}
+                {openTicketCount} needing attention
+              </span>
             </div>
+
+            <div className="admin-ticket-filters" aria-label="Filter tickets">
+              <div className="admin-ticket-filters__row" role="group" aria-label="Status">
+                {TICKET_STATUS_FILTERS.map(f => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className={`admin-ticket-chip is-status-${f.id} ${
+                      ticketStatusFilter === f.id ? 'is-active' : ''
+                    }`}
+                    onClick={() => setTicketStatusFilter(f.id)}
+                  >
+                    {f.label}
+                    <span className="admin-ticket-chip__count">{ticketFilterCounts[f.id]}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="admin-ticket-filters__row" role="group" aria-label="Category">
+                {TICKET_CATEGORY_FILTERS.map(f => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className={`admin-ticket-chip is-cat-${f.id} ${
+                      ticketCategoryFilter === f.id ? 'is-active' : ''
+                    }`}
+                    onClick={() => setTicketCategoryFilter(f.id)}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+              <div className="admin-ticket-filters__row" role="group" aria-label="Priority">
+                {TICKET_PRIORITY_FILTERS.map(f => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className={`admin-ticket-chip is-pri-${f.id} ${
+                      ticketPriorityFilter === f.id ? 'is-active' : ''
+                    }`}
+                    onClick={() => setTicketPriorityFilter(f.id)}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {tickets.length === 0 ? (
               <p className="text-[13px] text-ink-muted">No support tickets yet.</p>
+            ) : filteredTickets.length === 0 ? (
+              <p className="text-[13px] text-ink-muted">No tickets match these filters.</p>
             ) : (
               <ul className="admin-ticket-list">
-                {tickets.map(t => (
-                  <li key={t.id}>
-                    <button
-                      type="button"
-                      className={selectedTicketId === t.id ? 'is-active' : ''}
-                      onClick={() => setSelectedTicketId(t.id)}
-                    >
-                      <span className="admin-ticket__sub">{t.subject}</span>
-                      <span className="admin-ticket__meta">
-                        {t.name || t.email || t.userId} · {t.status.replace('_', ' ')} · {t.category} ·{' '}
-                        {(t.updatedAt || t.createdAt || '').slice(0, 10)}
-                      </span>
-                    </button>
-                  </li>
-                ))}
+                {filteredTickets.map(t => {
+                  const isNew = ticketIsNew(t);
+                  return (
+                    <li key={t.id}>
+                      <button
+                        type="button"
+                        className={selectedTicketId === t.id ? 'is-active' : ''}
+                        onClick={() => setSelectedTicketId(t.id)}
+                      >
+                        <span className="admin-ticket__top">
+                          <span className="admin-ticket__sub">{t.subject}</span>
+                          <span className="admin-ticket__pills">
+                            {isNew && <span className="admin-ticket-pill is-new">New</span>}
+                            <span className={`admin-ticket-pill is-status-${t.status}`}>
+                              {statusLabel(t.status)}
+                            </span>
+                            <span className={`admin-ticket-pill is-cat-${t.category || 'general'}`}>
+                              {t.category || 'general'}
+                            </span>
+                            {(t.priority || 'normal') === 'high' && (
+                              <span className="admin-ticket-pill is-pri-high">High</span>
+                            )}
+                          </span>
+                        </span>
+                        <span className="admin-ticket__meta">
+                          {t.name || t.email || t.userId} · {(t.updatedAt || t.createdAt || '').slice(0, 10)}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </section>
@@ -460,9 +626,21 @@ export default function AdminView() {
               <p className="text-[13px] text-ink-muted">Select a ticket to reply.</p>
             ) : (
               <div className="admin-ticket-detail">
+                <div className="admin-ticket__pills mb-2">
+                  {ticketIsNew(selectedTicket) && <span className="admin-ticket-pill is-new">New</span>}
+                  <span className={`admin-ticket-pill is-status-${selectedTicket.status}`}>
+                    {statusLabel(selectedTicket.status)}
+                  </span>
+                  <span className={`admin-ticket-pill is-cat-${selectedTicket.category || 'general'}`}>
+                    {selectedTicket.category || 'general'}
+                  </span>
+                  <span className={`admin-ticket-pill is-pri-${selectedTicket.priority || 'normal'}`}>
+                    {(selectedTicket.priority || 'normal')} priority
+                  </span>
+                </div>
                 <h2 className="text-[15px] font-medium mb-1">{selectedTicket.subject}</h2>
                 <p className="text-[12px] text-ink-muted mb-3">
-                  {selectedTicket.email || selectedTicket.userId} · {selectedTicket.priority} priority
+                  {selectedTicket.email || selectedTicket.userId}
                 </p>
                 <p className="text-[13.5px] text-ink-secondary whitespace-pre-wrap mb-3">{selectedTicket.body}</p>
                 <label>

@@ -28,7 +28,9 @@ async def test_follow_up_silence_bump():
         reply_summary="",
         seller_name="Alwasi",
     )
-    assert "silence" in draft["personalizedReason"].lower() or "bump" in draft["body"].lower()
+    assert "silence" in draft["personalizedReason"].lower() or "following up" in draft["body"].lower()
+    assert "got buried" not in draft["body"].lower()
+    assert "circling back" not in draft["body"].lower()
 
 
 def test_gmail_status_disconnected():

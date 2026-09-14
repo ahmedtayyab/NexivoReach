@@ -7,6 +7,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
+from email.utils import formataddr
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -174,12 +175,20 @@ async def get_valid_access_token(session: Session, user: User) -> str:
     )
 
 
-def _mime_message(*, to: str, subject: str, body: str, from_email: str = "") -> str:
+def _mime_message(
+    *,
+    to: str,
+    subject: str,
+    body: str,
+    from_email: str = "",
+    from_name: str = "",
+) -> str:
     msg = MIMEText(body or "", "plain", "utf-8")
     msg["To"] = to
     msg["Subject"] = subject or "(no subject)"
     if from_email:
-        msg["From"] = from_email
+        name = (from_name or "").strip()
+        msg["From"] = formataddr((name, from_email)) if name else from_email
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
     return raw
 
@@ -191,6 +200,7 @@ async def send_email(
     to: str,
     subject: str,
     body: str,
+    from_name: str = "",
 ) -> Dict[str, str]:
     if not to.strip():
         raise RuntimeError("No recipient email on this lead")
@@ -205,6 +215,7 @@ async def send_email(
         subject=subject,
         body=body,
         from_email=getattr(user, "gmail_email", None) or "",
+        from_name=from_name or getattr(user, "name", None) or "",
     )
     async with httpx.AsyncClient(timeout=30.0) as client:
         res = await client.post(

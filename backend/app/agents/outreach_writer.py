@@ -9,9 +9,9 @@ from app.agents.outreach_strategy import (
     build_follow_up_prompt,
     build_generation_prompt,
     build_outreach_brief,
-    format_outreach_body,
     heuristic_quality_check,
     render_fallback_email,
+    sanitize_outreach_draft,
 )
 from app.providers.json_util import parse_json_payload
 import logging
@@ -22,11 +22,6 @@ log = logging.getLogger(__name__)
 def _normalize_draft(parsed: Dict[str, Any], brief: Dict[str, Any]) -> Dict[str, Any]:
     subject = (parsed.get("subject") or "").strip()
     body = (parsed.get("body") or "").strip()
-    body = format_outreach_body(
-        body,
-        company_name=str(brief.get("company_name") or ""),
-        seller_name=str(brief.get("seller_name") or ""),
-    )
     reason = (parsed.get("personalizedReason") or "").strip() or brief_to_personalized_reason(brief)
     candidates = parsed.get("subjectCandidates") or []
     if isinstance(candidates, list):
@@ -35,7 +30,7 @@ def _normalize_draft(parsed: Dict[str, Any], brief: Dict[str, Any]) -> Dict[str,
         candidates = []
     if not subject and candidates:
         subject = candidates[0]
-    return {
+    draft = {
         "subject": subject[:140],
         "body": body,
         "personalizedReason": reason[:400],
@@ -51,6 +46,12 @@ def _normalize_draft(parsed: Dict[str, Any], brief: Dict[str, Any]) -> Dict[str,
             "angle": brief.get("angle") or "",
         },
     }
+    return sanitize_outreach_draft(
+        draft,
+        company_name=str(brief.get("company_name") or ""),
+        seller_name=str(brief.get("seller_name") or ""),
+        first_touch=True,
+    )
 
 
 def _llm_generate(provider: Any, prompt: str) -> Optional[Dict[str, Any]]:
@@ -128,6 +129,14 @@ async def compose_personalized_outreach(
 
     if not draft or not (draft.get("body") or "").strip():
         draft = render_fallback_email(brief)
+    else:
+        # Final pass even when QC passed — strip residual promo patterns
+        draft = sanitize_outreach_draft(
+            draft,
+            company_name=str(brief.get("company_name") or ""),
+            seller_name=str(brief.get("seller_name") or ""),
+            first_touch=True,
+        )
 
     # Ensure rationale always present
     if not draft.get("outreachRationale"):
@@ -157,22 +166,25 @@ async def compose_follow_up_outreach(
     )
     parsed = _llm_generate(provider, prompt)
     if isinstance(parsed, dict) and parsed.get("subject") and parsed.get("body"):
-        return {
+        is_reply = bool((reply_summary or "").strip())
+        draft = {
             "subject": str(parsed["subject"])[:140],
-            "body": format_outreach_body(
-                str(parsed["body"]).strip(),
-                company_name=company_name,
-                seller_name=seller_name,
-            ),
+            "body": str(parsed["body"]).strip(),
             "personalizedReason": (
                 str(parsed.get("personalizedReason") or "").strip()
                 or (
                     "Follow-up drafted from their reply."
-                    if (reply_summary or "").strip()
+                    if is_reply
                     else "Follow-up after silence (no reply logged yet)."
                 )
             ),
         }
+        return sanitize_outreach_draft(
+            draft,
+            company_name=company_name,
+            seller_name=seller_name,
+            first_touch=False,
+        )
 
     # Provider-native fallback
     if hasattr(provider, "generate_follow_up_outreach"):

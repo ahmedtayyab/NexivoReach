@@ -4,8 +4,58 @@ from app.agents.outreach_strategy import (
     format_outreach_body,
     heuristic_quality_check,
     render_fallback_email,
+    sanitize_outreach_draft,
+    sanitize_subject,
 )
 from app.providers.fallback import FallbackProvider
+
+
+def test_sanitize_subject_strips_fake_re_and_promo():
+    cleaned = sanitize_subject("Re: FREE hoodies!!!")
+    assert not cleaned.lower().startswith("re:")
+    assert "free" not in cleaned.lower()
+    assert "!!!" not in cleaned
+    assert "hoodies" in cleaned.lower()
+    assert not sanitize_subject("Re: Note for Acme").lower().startswith("re:")
+    assert len(sanitize_subject("A" * 100)) <= 70
+
+
+def test_sanitize_draft_removes_links_and_spam_phrases():
+    dirty = {
+        "subject": "Re: URGENT guaranteed offer!!!",
+        "body": (
+            "Hi Acme team,\n\n"
+            "Click here for our exclusive offer and buy now: https://spam.example/deal\n\n"
+            "Also see https://spam.example/2 — act now!!!\n\n"
+            "Best regards,\nSeller"
+        ),
+    }
+    clean = sanitize_outreach_draft(dirty, company_name="Acme", seller_name="Seller", first_touch=True)
+    assert not clean["subject"].lower().startswith("re:")
+    assert "urgent" not in clean["subject"].lower()
+    assert "http" not in clean["body"].lower()
+    assert "click here" not in clean["body"].lower()
+    assert "buy now" not in clean["body"].lower()
+    assert clean["body"].count("!") <= 1
+
+
+def test_qc_flags_spam_subject():
+    brief = build_outreach_brief(company_name="Acme", why_prospect="Possible distributor.", seller_name="Seller")
+    bad = {
+        "subject": "FREE LIMITED TIME OFFER!!!",
+        "body": (
+            "Hi Acme team,\n\n"
+            "We supply apparel and can support wholesalers with steady availability "
+            "when demand fluctuates across seasons and channels.\n\n"
+            "Teams in this category often look for a practical shortlist before "
+            "opening a full supplier process.\n\n"
+            "Would it be useful if I sent a few relevant options?\n\n"
+            "Best regards,\nSeller"
+        ),
+    }
+    ok, issues = heuristic_quality_check(bad, brief)
+    assert ok is False
+    assert any("spam" in i for i in issues)
 
 
 def test_format_outreach_body_breaks_wall_of_text():

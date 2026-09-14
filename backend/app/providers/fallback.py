@@ -212,10 +212,12 @@ class FallbackProvider(AIProvider):
         seller_name: str = "Sales Team",
     ) -> Dict[str, Any]:
         sender = seller_name or "Sales Team"
-        subj = prior_subject or f"Following up — {company_name}"
-        if not subj.lower().startswith("re:"):
-            subj = f"Re: {subj}"
+        from app.agents.outreach_strategy import sanitize_outreach_draft
+
         if reply_summary.strip():
+            subj = prior_subject or f"Your note — {company_name}"
+            if not subj.lower().startswith("re:"):
+                subj = f"Re: {subj}"
             body = (
                 f"Hi {company_name} team,\n\n"
                 f"Thanks for getting back to me — noting your point about "
@@ -227,24 +229,35 @@ class FallbackProvider(AIProvider):
             )
             reason = "Follow-up drafted from their reply."
         else:
+            # Real follow-up thread: Re: is OK. Avoid "got buried" spam tropes.
+            subj = prior_subject or f"Quick question for {company_name}"
+            if not subj.lower().startswith("re:"):
+                subj = f"Re: {subj}"
             snippet = (why_prospect or "").strip()[:220]
             body = (
                 f"Hi {company_name} team,\n\n"
-                f"Circling back in case this got buried. "
+                f"Following up briefly on my earlier note"
             )
             if snippet:
-                body += f"{snippet}\n\n"
+                body += f" — {snippet}"
             body += (
+                ".\n\n"
                 "Happy to send a concise one-pager with the most relevant options "
                 "if that would be useful.\n\n"
                 f"Best regards,\n{sender}"
             )
             reason = "Follow-up after silence (no reply logged yet)."
-        return {
+        draft = {
             "subject": subj[:140],
             "body": body,
             "personalizedReason": reason,
         }
+        return sanitize_outreach_draft(
+            draft,
+            company_name=company_name,
+            seller_name=sender,
+            first_touch=False,
+        )
 
 
 def _guess_category(name: str) -> str:

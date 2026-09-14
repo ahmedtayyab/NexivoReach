@@ -52,6 +52,39 @@ AI_CLICHES = (
     "unlock", "transform your", "robust solution",
 )
 
+# Phrases that commonly trip spam / promo filters on cold B2B mail
+SPAMMY_PHRASES = (
+    r"\bact\s+now\b",
+    r"\blimited[- ]time\b",
+    r"\bbuy\s+now\b",
+    r"\bclick\s+here\b",
+    r"\bfree\s+(quote|trial|gift|money|offer)\b",
+    r"\b100%\s+(free|guaranteed|guarantee)\b",
+    r"\bmoney[- ]back\b",
+    r"\bno\s+obligation\b",
+    r"\brisk[- ]free\b",
+    r"\bexclusive\s+offer\b",
+    r"\bmake\s+money\b",
+    r"\bearn\s+\$\b",
+    r"\bdouble\s+your\b",
+    r"\border\s+now\b",
+    r"\bspecial\s+promotion\b",
+    r"\blowest\s+price\b",
+    r"\bguaranteed\b",
+    r"\burgent\b",
+    r"\b!!!+",
+    r"\$\$\$+",
+    r"\bas\s+seen\s+on\b",
+    r"\bwinner\b",
+    r"\bcongratulations[,!]?\s+you\b",
+)
+
+SPAMMY_SUBJECT_PHRASES = (
+    r"\b(free|urgent|act now|limited time|!!!|\$\$\$|guaranteed|exclusive offer|buy now)\b",
+    r"^(re|fw|fwd)\s*:",
+)
+
+_URL_RE = re.compile(r"https?://[^\s<>\")\]]+", re.I)
 _SIGN_OFF_RE = re.compile(
     r"(?is)^(.*?)(?:\n+)((?:best regards|kind regards|regards|best|thanks|thank you|sincerely|"
     r"warm regards|cheers)[,!]?\s*\n+.+)\s*$"
@@ -135,6 +168,127 @@ def format_outreach_body(
     if sign_off:
         parts.append(sign_off)
     return "\n\n".join(p for p in parts if p).strip() + "\n"
+
+
+def sanitize_subject(subject: str, *, first_touch: bool = True) -> str:
+    """Strip clickbait / fake-thread patterns that land cold mail in spam."""
+    s = (subject or "").strip()
+    s = re.sub(r"\s+", " ", s)
+    if first_touch:
+        # Fake Re:/Fwd: on first touch is a classic spam filter trigger
+        s = re.sub(r"^(re|fw|fwd)\s*:\s*", "", s, flags=re.I).strip()
+    s = s.replace("!!!", "").replace("!!", "")
+    s = re.sub(r"!{2,}", "!", s)
+    s = re.sub(r"\$+", "", s)
+    # Soften common promo openers
+    for pat, repl in (
+        (r"\b(free|urgent|act now|limited time|guaranteed|exclusive offer|buy now)\b", ""),
+        (r"\bamazing opportunity\b", "quick note"),
+        (r"\bdon't miss\b", ""),
+    ):
+        s = re.sub(pat, repl, s, flags=re.I)
+    s = re.sub(r"\s{2,}", " ", s).strip(" -–—|,")
+    # ALL CAPS subjects look promotional
+    letters = [c for c in s if c.isalpha()]
+    if letters and sum(1 for c in letters if c.isupper()) / len(letters) > 0.7 and len(letters) > 6:
+        s = s.capitalize() if s.isupper() else s.title()
+    if len(s) > 70:
+        # Prefer a clean cut at a word boundary
+        cut = s[:67].rsplit(" ", 1)[0].rstrip(" -–,")
+        s = cut or s[:70]
+    return s.strip() or "Quick question"
+
+
+def sanitize_outreach_body(
+    body: str,
+    *,
+    company_name: str = "",
+    seller_name: str = "",
+    first_touch: bool = True,
+) -> str:
+    """Reduce spam-filter risk while keeping the message readable and useful."""
+    text = format_outreach_body(
+        body,
+        company_name=company_name,
+        seller_name=seller_name,
+    )
+    # Soften spammy phrases without gutting the email
+    replacements = (
+        (r"\bact\s+now\b", "when you have a moment"),
+        (r"\bbuy\s+now\b", "take a look"),
+        (r"\bclick\s+here\b", "let me know"),
+        (r"\blimited[- ]time\b", "if useful"),
+        (r"\bexclusive\s+offer\b", "option"),
+        (r"\bguaranteed\b", "reliable"),
+        (r"\burgent\b", "timely"),
+        (r"\bno\s+obligation\b", ""),
+        (r"\brisk[- ]free\b", ""),
+        (r"\bfree\s+(quote|trial|gift|offer)\b", r"\1"),
+        (r"\b100%\s+(free|guaranteed|guarantee)\b", ""),
+        (r"\border\s+now\b", "review"),
+        (r"\bspecial\s+promotion\b", "option"),
+        (r"\bas\s+seen\s+on\b", ""),
+        (r"\bcircling back in case this got buried\b", "Following up briefly"),
+        (r"\bjust checking in[!.,]?\b", "Following up,"),
+    )
+    for pat, repl in replacements:
+        text = re.sub(pat, repl, text, flags=re.I)
+
+    # First-touch cold mail: drop outbound links (tracking/promo URLs hurt inbox rate)
+    if first_touch:
+        text = _URL_RE.sub("", text)
+
+    text = re.sub(r"!{2,}", "!", text)
+    text = re.sub(r"\$\$+", "", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    # At most one exclamation in the whole body
+    if text.count("!") > 1:
+        kept = False
+        chars: List[str] = []
+        for ch in text:
+            if ch == "!":
+                if not kept:
+                    chars.append("!")
+                    kept = True
+                else:
+                    chars.append(".")
+            else:
+                chars.append(ch)
+        text = "".join(chars)
+
+    return format_outreach_body(
+        text.strip(),
+        company_name=company_name,
+        seller_name=seller_name,
+    )
+
+
+def sanitize_outreach_draft(
+    draft: Dict[str, Any],
+    *,
+    company_name: str = "",
+    seller_name: str = "",
+    first_touch: bool = True,
+) -> Dict[str, Any]:
+    """Apply subject + body deliverability cleanup to a draft dict."""
+    out = dict(draft or {})
+    company = company_name or str(out.get("companyName") or "")
+    seller = seller_name or ""
+    out["subject"] = sanitize_subject(str(out.get("subject") or ""), first_touch=first_touch)
+    out["body"] = sanitize_outreach_body(
+        str(out.get("body") or ""),
+        company_name=company,
+        seller_name=seller,
+        first_touch=first_touch,
+    )
+    cands = out.get("subjectCandidates")
+    if isinstance(cands, list):
+        out["subjectCandidates"] = [
+            sanitize_subject(str(c), first_touch=first_touch) for c in cands if str(c).strip()
+        ][:3]
+    return out
 
 
 def _group_sentences_into_paragraphs(sentences: List[str]) -> List[str]:
@@ -534,6 +688,12 @@ HARD RULES
 - Do not use Tier-4 fluff (founded year, "leading company") as the main hook.
 - Do not sound like an AI template or mass mailer.
 - No emoji, no exclamation spam, no jargon (synergy, revolutionize, game-changing, cutting-edge, leverage, seamless).
+- DELIVERABILITY (critical): write like a short note from a real person, not a promo blast.
+  - Subject: plain, specific, under ~60 characters. Never use Re:/Fwd: on a first email. No ALL CAPS, no "FREE", "urgent", "act now", "limited time", "guaranteed", or "!!!".
+  - Body: zero or at most one URL — prefer none on first touch (offer to send details instead of linking).
+  - No "click here", "buy now", "order now", "exclusive offer", money claims, or fake urgency.
+  - At most one "!" in the whole email. Prefer periods.
+  - One soft question CTA — not a hard sell.
 - If confidence is low, stay conservative and avoid fake urgency.
 - Sign off as {seller}.
 """
@@ -559,12 +719,13 @@ Reply summary: {(reply_summary or "")[:500] or "(none)"}
 Context: {(why_prospect or "")[:400]}
 
 Rules:
-- Subject should be Re: if not already.
+- Subject should be Re: only if this is a real follow-up to a prior thread — keep it calm, no ALL CAPS or promo words.
 - 80–140 words. One clear CTA.
 - Use blank lines between greeting, each short paragraph, CTA, and sign-off — never one dense block.
 - Prefer "Hi {company_name} team," over bare "Hello,".
 - If they replied, address their point first; do not re-pitch blindly.
-- If silence, briefly restate relevance without guilt or pressure.
+- If silence, briefly restate relevance without guilt, pressure, or "circling back / got buried" clichés.
+- No links unless essential; no "click here", urgency, or guarantees.
 - No AI clichés. Sign as {seller_name}.
 """
 
@@ -587,6 +748,7 @@ def heuristic_quality_check(draft: Dict[str, Any], brief: Dict[str, Any]) -> Tup
         issues.append("too_long")
 
     low = body.lower()
+    subj_low = subject.lower()
     for opener in BANNED_OPENERS:
         if low.lstrip().startswith(opener) or f"\n{opener}" in low[:120]:
             issues.append(f"banned_opener:{opener}")
@@ -595,6 +757,32 @@ def heuristic_quality_check(draft: Dict[str, Any], brief: Dict[str, Any]) -> Tup
     for cliche in AI_CLICHES:
         if cliche in low:
             issues.append(f"cliche:{cliche}")
+
+    for pat in SPAMMY_PHRASES:
+        if re.search(pat, low):
+            issues.append(f"spam_phrase:{pat}")
+            break
+
+    for pat in SPAMMY_SUBJECT_PHRASES:
+        if re.search(pat, subj_low):
+            issues.append("spam_subject")
+            break
+
+    letters = [c for c in subject if c.isalpha()]
+    if letters and sum(1 for c in letters if c.isupper()) / len(letters) > 0.75 and len(letters) > 6:
+        issues.append("spam_subject_caps")
+
+    if subject.count("!") > 0 or "!!!" in subject:
+        issues.append("spam_subject_punct")
+
+    url_count = len(_URL_RE.findall(body))
+    if url_count > 1:
+        issues.append("too_many_links")
+    if url_count >= 1 and brief.get("signal_confidence") == "low":
+        issues.append("link_on_cold_mail")
+
+    if body.count("!") > 2:
+        issues.append("exclaim_spam")
 
     if body.count("?") > 2:
         issues.append("multiple_ctas")
@@ -615,27 +803,21 @@ def heuristic_quality_check(draft: Dict[str, Any], brief: Dict[str, Any]) -> Tup
             if not (brief.get("why_now") or "").strip():
                 issues.append("fabricated_timing")
 
-    product = (brief.get("matched_product") or "").lower()
-    if product and product not in low and product.split()[0] not in low:
-        # Soft — product name optional if category referenced
-        pass
-
-    major = {
-        "missing_subject", "missing_body", "banned_opener", "fabricated_timing",
-        "too_short", "multiple_ctas", "wall_of_text",
-    }
-    failed_major = any(
-        i in major or i.startswith("banned_opener") or i.startswith("fabricated")
-        for i in issues
-    )
-    # too_short is major; cliche alone is not
-    ok = not failed_major and "too_short" not in issues
-    # Recalculate: banned and fabricated and missing and too_short and multiple_ctas fail
     hard_fail = False
     for i in issues:
-        if i in ("missing_subject", "missing_body", "too_short", "multiple_ctas", "fabricated_timing"):
+        if i in (
+            "missing_subject",
+            "missing_body",
+            "too_short",
+            "multiple_ctas",
+            "fabricated_timing",
+            "spam_subject",
+            "spam_subject_caps",
+            "too_many_links",
+            "exclaim_spam",
+        ):
             hard_fail = True
-        if i.startswith("banned_opener"):
+        if i.startswith("banned_opener") or i.startswith("spam_phrase"):
             hard_fail = True
     return (not hard_fail), issues
 
@@ -688,21 +870,20 @@ def render_fallback_email(brief: Dict[str, Any]) -> Dict[str, Any]:
         f"{cta}\n\n"
         f"Best regards,\n{seller}"
     )
-    body = format_outreach_body(body, company_name=company, seller_name=seller)
 
-    # Subject candidates
+    # Subject candidates — plain, specific, non-promotional
     subjects = []
-    if brief.get("angle") == "expansion" and product:
-        subjects.append(f"{product} for your growth plans")
-    if product and company:
-        subjects.append(f"{product} for {company}")
+    if brief.get("angle") == "expansion" and product and product != "our products":
+        subjects.append(f"{product} for multi-site sourcing")
+    if product and product != "our products" and company:
+        subjects.append(f"{product} — note for {company}")
     if brief.get("angle") == "procurement":
-        subjects.append(f"Sourcing options for {company}")
+        subjects.append(f"Supplier options for {company}")
     subjects.append(f"Quick question for {company}")
     subjects = list(dict.fromkeys(s for s in subjects if s))[:3]
-    subject = subjects[0] if subjects else f"Introduction — {seller}"
+    subject = subjects[0] if subjects else f"Note for {company}"
 
-    return {
+    draft = {
         "subject": subject[:140],
         "body": body,
         "personalizedReason": brief_to_personalized_reason(brief),
@@ -718,3 +899,9 @@ def render_fallback_email(brief: Dict[str, Any]) -> Dict[str, Any]:
             "angle": brief.get("angle") or "",
         },
     }
+    return sanitize_outreach_draft(
+        draft,
+        company_name=company,
+        seller_name=seller,
+        first_touch=True,
+    )
