@@ -1,4 +1,5 @@
 import asyncio
+import gzip
 import html as html_lib
 import logging
 import re
@@ -15,19 +16,21 @@ from app.config import settings
 log = logging.getLogger(__name__)
 
 # Shared hosts (CSF/LFD, Imunify360) auto-ban IPs that burst. Stay under their radar.
-CATALOG_CONCURRENCY = 4
-CATALOG_BATCH_PAUSE = 0.4
+CATALOG_CONCURRENCY = 5
+CATALOG_BATCH_PAUSE = 0.35
 CATALOG_LIMITS = httpx.Limits(max_connections=CATALOG_CONCURRENCY, max_keepalive_connections=CATALOG_CONCURRENCY)
-CATALOG_MAX_PRODUCTS = 1500
-CATALOG_MAX_LISTING_PAGES = 120
-CATALOG_TIME_BUDGET_SEC = 180.0
+CATALOG_MAX_PRODUCTS = 5000
+CATALOG_MAX_LISTING_PAGES = 250
+CATALOG_TIME_BUDGET_SEC = 300.0
 CATALOG_WP_REST_MAX_PAGES = max(1, CATALOG_MAX_PRODUCTS // 100)
-# If Shopify/WP returns fewer than this, still run the HTML cascade to fill gaps.
-CATALOG_API_MIN_TRUST = 15
-CATALOG_SITEMAP_NEST_LIMIT = 60
-CATALOG_LISTING_SEED_CAP = 80
-CATALOG_PAGINATION_CAP = 12
-CATALOG_LINK_HARVEST_IF_BELOW = 12
+# Only skip the HTML cascade when a platform API already returned a sizable catalog.
+CATALOG_API_MIN_TRUST = 100
+CATALOG_SITEMAP_NEST_LIMIT = 120
+CATALOG_LISTING_SEED_CAP = 120
+CATALOG_PAGINATION_CAP = 80
+CATALOG_EMPTY_PAGE_STREAK = 3  # stop a listing branch after N consecutive empty pages
+CATALOG_LINK_HARVEST_IF_BELOW = 10_000  # always union link harvest with card parse
+CATALOG_MAX_PAGE_PROBE = 60  # synthesize page URLs up to this when UI reveals max page
 
 
 SKIP_DOMAINS = {
@@ -562,23 +565,22 @@ class WebSearchTool:
             return [], []
         pages: List[tuple[str, str]] = []
         products: List[Dict[str, Any]] = []
-        seen_names: set[str] = set()
+        seen_urls: set[str] = set()
         budget = _CatalogBudget()
 
         def _merge(items: List[Dict[str, Any]]) -> int:
+            """Dedupe by product URL only — repeated titles are normal across variants."""
             added = 0
             for item in items:
                 if budget.stop():
                     break
-                key = (item.get("productUrl") or item.get("name") or "").strip().lower()
-                name_key = (item.get("name") or "").strip().lower()
-                if not key or key in seen_names:
+                url_key = (item.get("productUrl") or "").strip().lower().rstrip("/")
+                if not url_key:
+                    # Fall back to name only when no URL exists
+                    url_key = f"name:{(item.get('name') or '').strip().lower()}"
+                if not url_key or url_key in seen_urls or url_key == "name:":
                     continue
-                if name_key and name_key in seen_names:
-                    continue
-                seen_names.add(key)
-                if name_key:
-                    seen_names.add(name_key)
+                seen_urls.add(url_key)
                 products.append(item)
                 budget.product_count += 1
                 added += 1
@@ -597,7 +599,7 @@ class WebSearchTool:
                     pages.append(
                         (urljoin(url, "/products.json"), f"Shopify products.json: {len(shopify_products)}")
                     )
-                    # Trust a healthy API catalog; thin results still get the HTML cascade.
+                    # Healthy Shopify API already paginated to exhaustion — skip HTML.
                     if len(products) >= CATALOG_API_MIN_TRUST or budget.stop():
                         self.catalog_truncated = budget.truncated
                         log.info(
@@ -610,9 +612,22 @@ class WebSearchTool:
                         url, len(products),
                     )
 
-                # 2) WordPress / WooCommerce REST (Alwasi-style)
+                # 2) WooCommerce Store API + WordPress REST
+                store_products = await _fetch_wc_store_products(fetcher, url, budget)
+                if store_products:
+                    _merge(store_products)
+                    pages.append(
+                        (urljoin(url, "/wp-json/wc/store/v1/products"), f"Woo Store API: {len(store_products)}")
+                    )
+                    if len(products) >= CATALOG_API_MIN_TRUST or budget.stop():
+                        self.catalog_truncated = budget.truncated
+                        log.info(
+                            "scrape_shop_catalog(%s): Woo Store API returned %d products truncated=%s",
+                            url, len(products), budget.truncated,
+                        )
+                        return pages, products
+
                 rest_products, _rest_err = await _fetch_wp_rest_products(fetcher, url, budget)
-                # Missing/failed REST must fall through — do not abort the HTML cascade.
                 if rest_products:
                     _merge(rest_products)
                     pages.append(
@@ -630,13 +645,12 @@ class WebSearchTool:
                         url, len(products),
                     )
 
-                # 3) Homepage + sitemap product URLs + paginated listing pages
+                # 3) Homepage + robots/sitemap product URLs + paginated listing pages
                 try:
                     first = await fetcher.get(url)
                 except Exception as exc:
                     log.warning("scrape_shop_catalog(%s): homepage fetch failed: %r", url, exc)
                     self.last_catalog_error = _connect_error_kind(exc)
-                    # Keep any products already merged from a thin API response
                     return pages, products
                 if first.status_code != 200 or not first.text:
                     log.warning(
@@ -651,6 +665,7 @@ class WebSearchTool:
                 pages.append((start_url, _html_to_text(html)))
                 budget.page_count += 1
                 _merge(_shop_products(html, start_url, set()))
+                _merge(_jsonld_products(html, start_url))
 
                 # Sitemap product URLs (name-from-slug; no PDP fetch)
                 if not budget.stop():
@@ -662,13 +677,12 @@ class WebSearchTool:
                 # Listing / collection / category pages with pagination
                 if not budget.stop():
                     listing_seeds = _augment_listing_seeds(_listing_page_urls(html, start_url), start_url)
-                    # Homepage itself is often page 1 of the shop — keep crawling its pagination.
                     home_key = start_url.split("#")[0].rstrip("/").lower()
                     if not any(s.split("#")[0].rstrip("/").lower() == home_key for s in listing_seeds):
                         if _pagination_urls(html, start_url) or len(_shop_products(html, start_url, set())) >= 3:
                             listing_seeds = [start_url, *listing_seeds]
                     await _crawl_listing_pages(
-                        fetcher, listing_seeds, pages, _merge, budget, seen_names
+                        fetcher, listing_seeds, pages, _merge, budget, seen_urls
                     )
 
                 self.catalog_truncated = budget.truncated
@@ -929,55 +943,207 @@ def _wp_rest_rows_to_products(rows: list, site_url: str) -> List[Dict[str, Any]]
     return out
 
 
+async def _fetch_wc_store_products(
+    fetcher: "_CatalogFetcher",
+    site_url: str,
+    budget: _CatalogBudget,
+) -> List[Dict[str, Any]]:
+    """Paginate WooCommerce Store API when publicly exposed (no auth required on many shops)."""
+    parsed = urlparse(site_url)
+    root = f"{parsed.scheme}://{parsed.netloc}"
+    endpoint = f"{root}/wp-json/wc/store/v1/products"
+    products: List[Dict[str, Any]] = []
+    page = 1
+    try:
+        while not budget.stop():
+            res = await fetcher.get(endpoint, params={"per_page": 100, "page": page})
+            if res.status_code != 200:
+                if page == 1:
+                    log.info("Woo Store API %s: status=%s", endpoint, res.status_code)
+                break
+            try:
+                rows = res.json()
+            except Exception:
+                break
+            if not isinstance(rows, list) or not rows:
+                break
+            for raw in rows:
+                if not isinstance(raw, dict):
+                    continue
+                name = BeautifulSoup(str(raw.get("name") or ""), "html.parser").get_text(" ", strip=True)
+                if not name:
+                    continue
+                permalink = (raw.get("permalink") or "").strip() or site_url
+                prices = raw.get("prices") if isinstance(raw.get("prices"), dict) else {}
+                price = ""
+                if prices:
+                    amount = prices.get("price") or prices.get("regular_price") or ""
+                    currency = prices.get("currency_code") or prices.get("currency_symbol") or ""
+                    if amount:
+                        try:
+                            price = f"{currency} {float(amount) / 100:.2f}".strip()
+                        except (TypeError, ValueError):
+                            price = f"{currency} {amount}".strip()
+                images = raw.get("images") if isinstance(raw.get("images"), list) else []
+                image_url = ""
+                if images and isinstance(images[0], dict):
+                    image_url = (images[0].get("src") or "").strip()
+                slug = (raw.get("slug") or "").strip()
+                display = f"{name} ({slug})" if slug and slug.lower() not in name.lower() else name
+                products.append({
+                    "name": display[:90],
+                    "category": _category_from_url(permalink),
+                    "description": name[:180],
+                    "productUrl": permalink,
+                    "imageUrl": image_url,
+                    "price": price[:40],
+                    "source_url": site_url,
+                })
+                if len(products) >= budget.max_products:
+                    budget.truncated = True
+                    break
+            if len(rows) < 100:
+                break
+            page += 1
+            await asyncio.sleep(CATALOG_BATCH_PAUSE)
+    except Exception as exc:
+        log.info("Woo Store API %s: failed: %r", endpoint, exc)
+        return []
+    return products[: budget.max_products]
+
+
+async def _robots_sitemap_urls(fetcher: "_CatalogFetcher", site_url: str) -> List[str]:
+    """Read Sitemap: directives from robots.txt — the most reliable discovery entry point."""
+    parsed = urlparse(site_url)
+    root = f"{parsed.scheme}://{parsed.netloc}"
+    robots_url = f"{root}/robots.txt"
+    out: List[str] = []
+    try:
+        res = await fetcher.get(robots_url)
+    except Exception:
+        return []
+    if res.status_code != 200 or not (res.text or "").strip():
+        return []
+    for line in (res.text or "").splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#"):
+            continue
+        if raw.lower().startswith("sitemap:"):
+            loc = raw.split(":", 1)[1].strip()
+            if loc:
+                out.append(loc)
+    return out
+
+
 async def _fetch_sitemap_product_urls(
     fetcher: "_CatalogFetcher",
     site_url: str,
     budget: _CatalogBudget,
 ) -> List[str]:
-    """Collect same-host product URLs from sitemap.xml (and one level of nested indexes)."""
+    """Collect same-host product URLs from robots.txt sitemaps + common sitemap paths."""
     parsed = urlparse(site_url)
     root = f"{parsed.scheme}://{parsed.netloc}"
-    seeds = [
-        f"{root}/sitemap.xml",
-        f"{root}/sitemap_index.xml",
-        f"{root}/product-sitemap.xml",
-        f"{root}/sitemap_products_1.xml",
-    ]
+    seeds = await _robots_sitemap_urls(fetcher, site_url)
+    for path in (
+        "/sitemap.xml",
+        "/sitemap_index.xml",
+        "/wp-sitemap.xml",
+        "/sitemap-index.xml",
+        "/product-sitemap.xml",
+        "/product_sitemap.xml",
+        "/sitemap_products_1.xml",
+        "/sitemap-products.xml",
+        "/sitemap/sitemap.xml",
+    ):
+        candidate = f"{root}{path}"
+        if candidate not in seeds:
+            seeds.append(candidate)
+
     found: List[str] = []
     seen: set[str] = set()
     nested: List[str] = []
+    visited_sitemaps: set[str] = set()
 
-    async def _load(sm_url: str) -> tuple[List[str], List[str]]:
+    async def _load(sm_url: str) -> tuple[List[str], List[str], bool]:
+        """Returns locs, children, is_product_sitemap."""
         try:
             res = await fetcher.get(sm_url)
         except Exception:
-            return [], []
-        if res.status_code != 200 or not (res.text or "").strip():
-            return [], []
-        return _parse_sitemap_xml(res.text, root)
+            return [], [], False
+        if res.status_code != 200:
+            return [], [], False
+        body = res.content or b""
+        text = ""
+        lower_url = sm_url.lower()
+        ctype = (res.headers.get("content-type") or "").lower()
+        if lower_url.endswith(".gz") or "gzip" in ctype or body[:2] == b"\x1f\x8b":
+            try:
+                text = gzip.decompress(body).decode("utf-8", errors="ignore")
+            except Exception:
+                try:
+                    text = (res.text or "")
+                except Exception:
+                    return [], [], False
+        else:
+            text = res.text or ""
+        if not text.strip():
+            return [], [], False
+        locs, children = _parse_sitemap_xml(text, root)
+        is_product_sm = bool(
+            re.search(r"product", sm_url, re.I)
+            or re.search(r"product", text[:2000], re.I)
+        )
+        return locs, children, is_product_sm
 
     for seed in seeds:
         if budget.stop() or len(found) >= budget.room():
             break
-        locs, children = await _load(seed)
+        key = seed.split("#")[0].rstrip("/").lower()
+        if key in visited_sitemaps:
+            continue
+        visited_sitemaps.add(key)
+        locs, children, is_product_sm = await _load(seed)
         for loc in locs:
-            if loc not in seen and _looks_like_product_url(loc):
-                seen.add(loc)
-                found.append(loc)
+            if loc in seen:
+                continue
+            if is_product_sm:
+                if _looks_like_non_product_url(loc):
+                    continue
+            elif not _looks_like_product_url(loc):
+                continue
+            seen.add(loc)
+            found.append(loc)
         for child in children:
-            if child not in nested:
+            if child in nested:
+                continue
+            if re.search(r"product", child, re.I):
+                nested.insert(0, child)
+            else:
                 nested.append(child)
 
     for child in nested[:CATALOG_SITEMAP_NEST_LIMIT]:
         if budget.stop() or len(found) >= budget.room():
             break
-        locs, _ = await _load(child)
+        key = child.split("#")[0].rstrip("/").lower()
+        if key in visited_sitemaps:
+            continue
+        visited_sitemaps.add(key)
+        locs, grandkids, is_product_sm = await _load(child)
         for loc in locs:
-            if loc not in seen and _looks_like_product_url(loc):
-                seen.add(loc)
-                found.append(loc)
-                if len(found) >= budget.room():
-                    break
+            if loc in seen:
+                continue
+            if is_product_sm or re.search(r"product", child, re.I):
+                if _looks_like_non_product_url(loc):
+                    continue
+            elif not _looks_like_product_url(loc):
+                continue
+            seen.add(loc)
+            found.append(loc)
+            if len(found) >= budget.room():
+                break
+        for gk in grandkids:
+            if gk not in nested and len(nested) < CATALOG_SITEMAP_NEST_LIMIT * 2:
+                nested.append(gk)
         await asyncio.sleep(CATALOG_BATCH_PAUSE)
 
     return found[: budget.room() or CATALOG_MAX_PRODUCTS]
@@ -987,11 +1153,17 @@ def _parse_sitemap_xml(xml_text: str, root: str) -> tuple[List[str], List[str]]:
     locs: List[str] = []
     children: List[str] = []
     try:
-        # Strip default namespaces so local tags resolve
         cleaned = re.sub(r'\sxmlns="[^"]+"', "", xml_text or "", count=1)
         root_el = ET.fromstring(cleaned)
     except ET.ParseError:
-        return [], []
+        # Fallback: regex locs when XML is messy
+        for m in re.finditer(r"<loc>\s*([^<\s]+)\s*</loc>", xml_text or "", re.I):
+            loc = m.group(1).strip()
+            if loc.lower().endswith((".xml", ".xml.gz")):
+                children.append(loc)
+            elif _registrable_domain(loc) == _registrable_domain(root):
+                locs.append(loc.split("#")[0].rstrip("/") or loc)
+        return locs, children
     tag = (root_el.tag or "").lower()
     if tag.endswith("sitemapindex"):
         for sm in root_el.findall("sitemap"):
@@ -1006,23 +1178,119 @@ def _parse_sitemap_xml(xml_text: str, root: str) -> tuple[List[str], List[str]]:
     return locs, children
 
 
-def _looks_like_product_url(url: str) -> bool:
+def _looks_like_non_product_url(url: str) -> bool:
     path = (urlparse(url).path or "").lower()
     if not path or path in {"/", ""}:
-        return False
-    if any(skip in path for skip in ("/cart", "/checkout", "/account", "/blogs/", "/pages/", "/collections/")):
-        # collections are listings, not products
+        return True
+    skip = (
+        "/cart", "/checkout", "/account", "/blogs/", "/blog/", "/pages/",
+        "/collections/", "/product-category/", "/cart/", "/wp-admin",
+        "/tag/", "/author/", "/search", "/wishlist", "/compare",
+    )
+    if any(s in path for s in skip):
+        # Shopify PDP under collections is still a product
         if "/products/" in path:
-            return True
+            return False
+        return True
+    if path.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf", ".css", ".js")):
+        return True
+    return False
+
+
+def _looks_like_product_url(url: str) -> bool:
+    path = (urlparse(url).path or "").lower()
+    if _looks_like_non_product_url(url) and "/products/" not in path:
         return False
     return bool(
         re.search(r"/products?/[^/]+", path)
         or "/product/" in path
-        or re.search(r"/shop/[^/]+", path)
+        or re.search(r"/shop/[^/]+/[^/]+", path)
+        or re.search(r"/shop/[^/]+/?$", path)
         or re.search(r"/item/[^/]+", path)
         or re.search(r"/p/[^/]+", path)
         or re.search(r"/goods/[^/]+", path)
+        or re.search(r"/catalog/product", path)
+        or re.search(r"/dp/[A-Z0-9]+", path, re.I)
+        or re.search(r"/p-[^/]+", path)
+        or re.search(r"/\d{4,}/?$", path)  # numeric product ids
     )
+
+
+def _jsonld_products(html: str, site_url: str) -> List[Dict[str, Any]]:
+    """Extract Product / ItemList entries from JSON-LD blocks."""
+    import json
+
+    soup = BeautifulSoup(html or "", "html.parser")
+    out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _add(name: str, link: str, image: str = "", price: str = "") -> None:
+        name = (name or "").strip()
+        link = (link or "").strip()
+        if not name:
+            return
+        key = (link or name).lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append({
+            "name": name[:90],
+            "category": _category_from_url(link or site_url),
+            "description": name[:180],
+            "productUrl": link or site_url,
+            "imageUrl": image or "",
+            "price": (price or "")[:40],
+            "source_url": site_url,
+        })
+
+    for script in soup.select('script[type="application/ld+json"]'):
+        raw = script.string or script.get_text() or ""
+        if not raw.strip():
+            continue
+        try:
+            data = json.loads(raw)
+        except Exception:
+            continue
+        stack = data if isinstance(data, list) else [data]
+        while stack:
+            node = stack.pop(0)
+            if isinstance(node, list):
+                stack.extend(node)
+                continue
+            if not isinstance(node, dict):
+                continue
+            typ = node.get("@type") or ""
+            types = typ if isinstance(typ, list) else [typ]
+            types_l = [str(t).lower() for t in types]
+            if "product" in types_l:
+                offers = node.get("offers")
+                price = ""
+                if isinstance(offers, dict):
+                    price = str(offers.get("price") or "")
+                elif isinstance(offers, list) and offers and isinstance(offers[0], dict):
+                    price = str(offers[0].get("price") or "")
+                image = node.get("image")
+                if isinstance(image, list):
+                    image = image[0] if image else ""
+                if isinstance(image, dict):
+                    image = image.get("url") or ""
+                _add(
+                    str(node.get("name") or ""),
+                    str(node.get("url") or node.get("@id") or ""),
+                    str(image or ""),
+                    price,
+                )
+            if "itemlist" in types_l:
+                for el in node.get("itemListElement") or []:
+                    if isinstance(el, dict):
+                        item = el.get("item") if isinstance(el.get("item"), dict) else el
+                        if isinstance(item, dict):
+                            stack.append(item)
+            for key in ("@graph", "mainEntity", "hasOfferCatalog"):
+                child = node.get(key)
+                if child:
+                    stack.append(child)
+    return out
 
 
 def _product_from_url(product_url: str, site_url: str) -> Dict[str, Any]:
@@ -1069,11 +1337,16 @@ def _augment_listing_seeds(seeds: List[str], site_url: str) -> List[str]:
         f"{root}/store/",
         f"{root}/products",
         f"{root}/products/",
+        f"{root}/collections",
         f"{root}/collections/all",
         f"{root}/catalog",
         f"{root}/catalog/",
         f"{root}/all-products",
         f"{root}/product-category",
+        f"{root}/categories",
+        f"{root}/category",
+        f"{root}/shop/page/1/",
+        f"{root}/shop/?orderby=menu_order",
     )
     out = list(seeds)
     seen = {u.split("#")[0].rstrip("/").lower() for u in out}
@@ -1091,11 +1364,20 @@ async def _crawl_listing_pages(
     pages: List[tuple[str, str]],
     merge_fn,
     budget: _CatalogBudget,
-    _seen_names: set[str],
+    _seen_urls: set[str],
 ) -> None:
     """Fetch listing pages and follow pagination until budget is exhausted."""
     queue: List[str] = list(seeds)
     visited: set[str] = set()
+    empty_streak_by_branch: dict[str, int] = {}
+
+    def _branch_key(u: str) -> str:
+        parsed = urlparse(u)
+        path = re.sub(r"/page/\d+/?$", "/", (parsed.path or "/"))
+        qs = parse_qs(parsed.query)
+        qs.pop("page", None)
+        qs.pop("paged", None)
+        return f"{parsed.netloc}{path}?{urlencode({k: qs[k] for k in sorted(qs)}, doseq=True)}"
 
     while queue and not budget.stop():
         batch = []
@@ -1118,6 +1400,7 @@ async def _crawl_listing_pages(
                     return "", "", [], []
                 page_url = _CatalogFetcher.final_url(res, u)
                 found = _shop_products(res.text, page_url, set())
+                found.extend(_jsonld_products(res.text, page_url))
                 nexts = _pagination_urls(res.text, page_url)
                 return page_url, _html_to_text(res.text, limit=16000), found, nexts
             except Exception:
@@ -1131,8 +1414,14 @@ async def _crawl_listing_pages(
                 pages.append((page_url, text))
                 budget.page_count += 1
             added = merge_fn(found)
-            # Only enqueue next pages when this page contributed products (or first listing)
+            branch = _branch_key(page_url or "")
             if added or found:
+                empty_streak_by_branch[branch] = 0
+            else:
+                empty_streak_by_branch[branch] = empty_streak_by_branch.get(branch, 0) + 1
+            # Keep paginating through a few empty pages (lazy themes / wrong selector
+            # on page 1), then stop that listing branch.
+            if empty_streak_by_branch.get(branch, 0) <= CATALOG_EMPTY_PAGE_STREAK:
                 for nxt in nexts:
                     nk = nxt.split("#")[0].rstrip("/").lower()
                     if nk not in visited:
@@ -1204,42 +1493,90 @@ def _pagination_urls(html: str, page_url: str) -> List[str]:
         if href and href.startswith(("http", "/", "?")):
             _add(href)
 
+    # Highest page number visible in links / labels / "Page X of Y"
+    max_page = 1
+    for anchor in soup.select("a[href*='page'], a[href*='paged'], .page-numbers, .pagination a, nav a"):
+        href = (anchor.get("href") or "").strip()
+        label = (anchor.get_text(" ", strip=True) or "").strip()
+        for pattern in (r"[?&]page=(\d+)", r"[?&]paged=(\d+)", r"/page/(\d+)"):
+            m = re.search(pattern, href, re.I)
+            if m:
+                max_page = max(max_page, int(m.group(1)))
+        if re.fullmatch(r"\d+", label):
+            max_page = max(max_page, int(label))
+    of_match = re.search(
+        r"(?:page\s+)?(\d+)\s*(?:of|/)\s*(\d+)",
+        soup.get_text(" ", strip=True)[:2500],
+        re.I,
+    )
+    if of_match:
+        max_page = max(max_page, int(of_match.group(2)))
+    max_page = min(max_page, CATALOG_MAX_PAGE_PROBE)
+
+    def _page_url(n: int) -> None:
+        """Build listing URL for page N using the current URL's pagination style."""
+        if n <= 1:
+            return
+        p = urlparse(page_url)
+        path = p.path or "/"
+        qs_now = parse_qs(p.query)
+        if "paged" in qs_now or soup.select(".woocommerce-pagination, .page-numbers"):
+            qs_paged = dict(qs_now)
+            qs_paged.pop("page", None)
+            qs_paged["paged"] = [str(n)]
+            _add(urlunparse(p._replace(query=urlencode(qs_paged, doseq=True))))
+        if "page" in qs_now or not re.search(r"/page/\d+", path):
+            qs_page = dict(qs_now)
+            qs_page.pop("paged", None)
+            qs_page["page"] = [str(n)]
+            _add(urlunparse(p._replace(query=urlencode(qs_page, doseq=True))))
+        if re.search(r"/page/\d+/?$", path):
+            nxt_path = re.sub(r"/page/\d+/?$", f"/page/{n}/", path)
+            _add(urlunparse(p._replace(path=nxt_path)))
+        else:
+            base = page_url if page_url.endswith("/") else page_url + "/"
+            _add(urljoin(base, f"page/{n}/"))
+
     # Synthetic next page when current URL already has a page marker
     parsed = urlparse(page_url)
     qs = parse_qs(parsed.query)
+    try:
+        cur_page = int((qs.get("page") or qs.get("paged") or ["1"])[0])
+    except ValueError:
+        cur_page = 1
+    path_m = re.search(r"/page/(\d+)/?$", parsed.path or "")
+    if path_m:
+        cur_page = max(cur_page, int(path_m.group(1)))
+
     if "page" in qs:
-        try:
-            cur = int((qs.get("page") or ["1"])[0])
-        except ValueError:
-            cur = 1
-        qs["page"] = [str(cur + 1)]
-        synthetic = urlunparse(parsed._replace(query=urlencode(qs, doseq=True)))
-        _add(synthetic)
+        qs_next = dict(qs)
+        qs_next["page"] = [str(cur_page + 1)]
+        _add(urlunparse(parsed._replace(query=urlencode(qs_next, doseq=True))))
     elif "paged" in qs:
-        try:
-            cur = int((qs.get("paged") or ["1"])[0])
-        except ValueError:
-            cur = 1
-        qs["paged"] = [str(cur + 1)]
-        synthetic = urlunparse(parsed._replace(query=urlencode(qs, doseq=True)))
-        _add(synthetic)
-    else:
-        m = re.search(r"/page/(\d+)/?$", parsed.path or "")
-        if m:
-            nxt_path = re.sub(r"/page/\d+/?$", f"/page/{int(m.group(1)) + 1}/", parsed.path)
-            _add(urlunparse(parsed._replace(path=nxt_path)))
-        elif soup.select(
-            "li.product, .product-card, .product-item, .product-grid-item, "
-            ".grid__item a[href*='/products/'], .wc-block-grid__product, [data-product-id]"
-        ):
-            # First listing page often has no page in URL — try common page-2 patterns
-            _add(urljoin(page_url if page_url.endswith("/") else page_url + "/", "page/2/"))
-            q2 = dict(parse_qs(parsed.query))
-            q2["page"] = ["2"]
-            _add(urlunparse(parsed._replace(query=urlencode(q2, doseq=True))))
-            q3 = dict(parse_qs(parsed.query))
-            q3["paged"] = ["2"]
-            _add(urlunparse(parsed._replace(query=urlencode(q3, doseq=True))))
+        qs_next = dict(qs)
+        qs_next["paged"] = [str(cur_page + 1)]
+        _add(urlunparse(parsed._replace(query=urlencode(qs_next, doseq=True))))
+    elif path_m:
+        nxt_path = re.sub(r"/page/\d+/?$", f"/page/{cur_page + 1}/", parsed.path)
+        _add(urlunparse(parsed._replace(path=nxt_path)))
+    elif soup.select(
+        "li.product, .product-card, .product-item, .product-grid-item, "
+        ".grid__item a[href*='/products/'], .wc-block-grid__product, [data-product-id]"
+    ):
+        # First listing page often has no page in URL — try common page-2 patterns
+        _add(urljoin(page_url if page_url.endswith("/") else page_url + "/", "page/2/"))
+        q2 = dict(qs)
+        q2["page"] = ["2"]
+        _add(urlunparse(parsed._replace(query=urlencode(q2, doseq=True))))
+        q3 = dict(qs)
+        q3["paged"] = ["2"]
+        _add(urlunparse(parsed._replace(query=urlencode(q3, doseq=True))))
+
+    # When the UI exposes "… 48", enqueue a window of page URLs so we do not
+    # depend solely on clicking Next one page at a time.
+    if max_page > 2:
+        for n in range(cur_page + 1, max_page + 1):
+            _page_url(n)
 
     return found[:CATALOG_PAGINATION_CAP]
 
@@ -1379,18 +1716,16 @@ def _shop_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
     )
 
     def _append(name: str, href: str, blob: str, image_url: str, price: str) -> None:
-        name = re.split(r"\s*Art\s*#", name, maxsplit=1)[0].strip()
+        name = re.split(r"\s*(?:Art\s*#|SKU\s*[:#]?)\s*", name, maxsplit=1, flags=re.I)[0].strip()
         if not name or name.lower() in {"read more", "view product", "quick view", "sale"}:
             return
-        sku_match = re.search(r"(AWE[-\s]?\d+)", blob, re.I)
-        sku = sku_match.group(1).upper().replace(" ", "-") if sku_match else ""
-        display = f"{name} ({sku})" if sku else name
-        key = (href or display).lower()
-        if key in seen or len(display) < 3:
+        # Prefer URL for uniqueness; titles often repeat across color/size variants
+        key = (href or name).lower().rstrip("/")
+        if key in seen or len(name) < 3:
             return
         seen.add(key)
         products.append({
-            "name": display[:90],
+            "name": name[:90],
             "category": category,
             "description": (blob or name)[:180],
             "productUrl": href or page_url,
@@ -1404,6 +1739,8 @@ def _shop_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
             card.select_one("a[href*='/product/']")
             or card.select_one("a[href*='/products/']")
             or card.select_one("a[href*='/item/']")
+            or card.select_one("a[href*='/p/']")
+            or card.select_one("a[href*='/goods/']")
             or card.select_one("a[href*='/shop/']")
             or card.select_one("a[href]")
         )
@@ -1446,7 +1783,8 @@ def _shop_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
     # Generic product-link harvest when theme cards were sparse/partial
     if len(products) < CATALOG_LINK_HARVEST_IF_BELOW:
         for anchor in soup.select(
-            "a[href*='/products/'], a[href*='/product/'], a[href*='/item/'], a[href*='/shop/']"
+            "a[href*='/products/'], a[href*='/product/'], a[href*='/item/'], "
+            "a[href*='/shop/'], a[href*='/p/'], a[href*='/goods/'], a[href*='/catalog/']"
         ):
             href = urljoin(page_url, (anchor.get("href") or "").strip())
             path = (urlparse(href).path or "").lower()

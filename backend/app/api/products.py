@@ -124,15 +124,15 @@ async def extract_products_from_url(
     seen = set()
     for raw in shop_products + fallback_products:
         item = normalize_extracted_product(raw, len(merged))
-        # Prefer product URL for uniqueness (many Woo titles repeat)
-        key = (item.get("productUrl") or item.get("name") or "").strip().lower()
+        # Dedupe by product URL only — catalog titles often repeat across variants
+        url_key = (item.get("productUrl") or "").strip().lower().rstrip("/")
         name_key = (item.get("name") or "").strip().lower()
-        if not name_key:
+        if not name_key and not url_key:
             continue
-        if key in seen or name_key in seen:
+        key = url_key or f"name:{name_key}"
+        if key in seen:
             continue
         seen.add(key)
-        seen.add(name_key)
         merged.append(item)
     reach_error = getattr(scraper, "last_catalog_error", "")
     truncated = bool(getattr(scraper, "catalog_truncated", False))

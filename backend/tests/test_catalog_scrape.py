@@ -238,6 +238,25 @@ def test_pagination_urls_synthetic_paged_from_first_page():
     assert any("page=2" in u for u in urls)
 
 
+def test_pagination_urls_max_page_window():
+    html = """
+    <html><body>
+    <ul class="products">
+      <li class="product"><a href="/product/a/"><h2>A</h2></a></li>
+    </ul>
+    <nav class="woocommerce-pagination">
+      <a class="page-numbers" href="/shop/page/1/">1</a>
+      <a class="page-numbers" href="/shop/page/2/">2</a>
+      <a class="page-numbers" href="/shop/page/12/">12</a>
+      <a class="next page-numbers" href="/shop/page/2/">Next</a>
+    </nav>
+    </body></html>
+    """
+    urls = _pagination_urls(html, "https://shop.test/shop/")
+    assert any("/page/12/" in u for u in urls)
+    assert any("/page/5/" in u for u in urls)
+
+
 def test_shop_products_woo_cards():
     found = _shop_products(LISTING_PAGE_1, "https://shop.test/shop/", set())
     assert {p["name"] for p in found} == {"Alpha Widget", "Beta Widget"}
