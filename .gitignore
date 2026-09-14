@@ -23,6 +23,9 @@ Thumbs.db
 Gemini_Generated_Image_*.jpeg
 Gemini_Generated_Image_*.jpg
 
+# Support ticket uploads (screenshots)
+backend/data/support_uploads/
+
 # Private / internal docs (keep local only)
 docs/INTERNAL_PROJECT_BRIEF.md
 docs/INTERNAL*

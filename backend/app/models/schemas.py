@@ -175,6 +175,7 @@ class SupportTicket(SQLModel, table=True):
     priority: str = "normal"  # low | normal | high
     category: str = "general"  # general | billing | limits | bug
     admin_reply: str = ""
+    attachments: list = Field(default=[], sa_type=JSON)  # [{id, name, mime, size}]
     created_at: str = ""
     updated_at: str = ""
     resolved_at: Optional[str] = None

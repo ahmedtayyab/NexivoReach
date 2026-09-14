@@ -83,6 +83,7 @@ type SupportTicket = {
   priority: string;
   category: string;
   adminReply?: string;
+  attachments?: { id: string; name: string; mime: string; size: number; url: string }[];
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string | null;
@@ -613,6 +614,9 @@ export default function AdminView() {
                         </span>
                         <span className="admin-ticket__meta">
                           {t.name || t.email || t.userId} · {(t.updatedAt || t.createdAt || '').slice(0, 10)}
+                          {(t.attachments?.length || 0) > 0
+                            ? ` · ${t.attachments!.length} image${t.attachments!.length === 1 ? '' : 's'}`
+                            : ''}
                         </span>
                       </button>
                     </li>
@@ -643,6 +647,16 @@ export default function AdminView() {
                   {selectedTicket.email || selectedTicket.userId}
                 </p>
                 <p className="text-[13.5px] text-ink-secondary whitespace-pre-wrap mb-3">{selectedTicket.body}</p>
+                {(selectedTicket.attachments?.length || 0) > 0 && (
+                  <div className="support-detail__atts mb-3">
+                    {selectedTicket.attachments!.map(a => (
+                      <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="support-detail__att">
+                        <img src={a.url} alt={a.name} loading="lazy" />
+                        <span>{a.name}</span>
+                      </a>
+                    ))}
+                  </div>
+                )}
                 <label>
                   Status
                   <select

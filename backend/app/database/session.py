@@ -25,9 +25,25 @@ def init_db():
     _ensure_user_sheets_oauth_columns()
     _ensure_business_sheets_columns()
     _ensure_user_access_columns()
+    _ensure_support_ticket_attachments_column()
     if _backend == "sqlite":
         _ensure_sqlite_columns()
         _migrate_multi_company()
+
+
+def _ensure_support_ticket_attachments_column():
+    """JSON attachments metadata on support_ticket."""
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE support_ticket ADD COLUMN attachments JSON"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            try:
+                conn.execute(text("ALTER TABLE support_ticket ADD COLUMN attachments TEXT"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
 
 
 def _ensure_user_access_columns():

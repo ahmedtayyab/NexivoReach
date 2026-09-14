@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { Loader2, LifeBuoy, Send } from 'lucide-react';
+import { Loader2, LifeBuoy, Paperclip, Send, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { brandAssets } from '../lib/brandAssets';
+
+type TicketAttachment = {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  url: string;
+};
 
 type Ticket = {
   id: string;
@@ -11,10 +19,14 @@ type Ticket = {
   priority: string;
   category: string;
   adminReply?: string;
+  attachments?: TicketAttachment[];
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string | null;
 };
+
+const MAX_ATTACHMENTS = 4;
+const MAX_ATTACHMENT_BYTES = 2_500_000;
 
 async function apiErrorMessage(resp: Response, fallback: string): Promise<string> {
   const text = await resp.text();
@@ -25,6 +37,12 @@ async function apiErrorMessage(resp: Response, fallback: string): Promise<string
     // plain
   }
   return text.trim() || fallback;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export default function SupportView() {
@@ -38,6 +56,8 @@ export default function SupportView() {
   const [body, setBody] = useState('');
   const [category, setCategory] = useState('general');
   const [priority, setPriority] = useState('normal');
+  const [files, setFiles] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -61,7 +81,41 @@ export default function SupportView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- initial load only
   }, []);
 
+  useEffect(() => {
+    const urls = files.map(f => URL.createObjectURL(f));
+    setPreviews(urls);
+    return () => {
+      urls.forEach(u => URL.revokeObjectURL(u));
+    };
+  }, [files]);
+
   const selected = tickets.find(t => t.id === selectedId) || null;
+
+  const addFiles = (list: FileList | null) => {
+    if (!list?.length) return;
+    setError('');
+    const next = [...files];
+    for (const file of Array.from(list)) {
+      if (!file.type.startsWith('image/')) {
+        setError('Only image files are allowed (PNG, JPEG, WebP, GIF).');
+        continue;
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        setError(`Each image must be under ${formatBytes(MAX_ATTACHMENT_BYTES)}.`);
+        continue;
+      }
+      if (next.length >= MAX_ATTACHMENTS) {
+        setError(`You can attach up to ${MAX_ATTACHMENTS} images.`);
+        break;
+      }
+      next.push(file);
+    }
+    setFiles(next);
+  };
+
+  const removeFile = (idx: number) => {
+    setFiles(prev => prev.filter((_, i) => i !== idx));
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -70,15 +124,17 @@ export default function SupportView() {
     setMsg('');
     setError('');
     try {
+      const form = new FormData();
+      form.append('subject', subject.trim());
+      form.append('body', body.trim());
+      form.append('category', category);
+      form.append('priority', priority);
+      for (const file of files) {
+        form.append('files', file);
+      }
       const resp = await apiFetch('/api/support/tickets', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          subject: subject.trim(),
-          body: body.trim(),
-          category,
-          priority,
-        }),
+        body: form,
       });
       if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Could not submit ticket'));
       const ticket = (await resp.json()) as Ticket;
@@ -86,6 +142,7 @@ export default function SupportView() {
       setSelectedId(ticket.id);
       setSubject('');
       setBody('');
+      setFiles([]);
       setMsg('Ticket submitted — we’ll reply in this panel.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not submit ticket');
@@ -162,6 +219,47 @@ export default function SupportView() {
                 required
               />
             </label>
+
+            <div className="support-attach">
+              <div className="support-attach__head">
+                <span>
+                  <Paperclip className="w-3.5 h-3.5 inline-block mr-1" />
+                  Screenshots / images
+                </span>
+                <span className="support-attach__hint">
+                  Up to {MAX_ATTACHMENTS} · {formatBytes(MAX_ATTACHMENT_BYTES)} each
+                </span>
+              </div>
+              <label className="support-attach__pick">
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  multiple
+                  onChange={e => {
+                    addFiles(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+                Add images
+              </label>
+              {files.length > 0 && (
+                <ul className="support-attach__list">
+                  {files.map((file, idx) => (
+                    <li key={`${file.name}-${idx}`}>
+                      <img src={previews[idx]} alt="" />
+                      <div>
+                        <span className="support-attach__name">{file.name}</span>
+                        <span className="support-attach__size">{formatBytes(file.size)}</span>
+                      </div>
+                      <button type="button" aria-label="Remove image" onClick={() => removeFile(idx)}>
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
             <button type="submit" className="btn btn-primary" disabled={busy || !subject.trim() || !body.trim()}>
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               {busy ? 'Sending…' : 'Submit ticket'}
@@ -200,7 +298,9 @@ export default function SupportView() {
                     <span className="support-tickets__subject">{t.subject}</span>
                     <span className="support-tickets__meta">
                       <span className={`support-status is-${t.status}`}>{t.status.replace('_', ' ')}</span>
-                      · {t.category} · {(t.updatedAt || t.createdAt || '').slice(0, 10)}
+                      · {t.category}
+                      {(t.attachments?.length || 0) > 0 ? ` · ${t.attachments!.length} image${t.attachments!.length === 1 ? '' : 's'}` : ''}
+                      · {(t.updatedAt || t.createdAt || '').slice(0, 10)}
                     </span>
                   </button>
                 </li>
@@ -215,6 +315,16 @@ export default function SupportView() {
                 {selected.status.replace('_', ' ')} · {selected.priority} · {selected.category}
               </p>
               <p className="support-detail__body">{selected.body}</p>
+              {(selected.attachments?.length || 0) > 0 && (
+                <div className="support-detail__atts">
+                  {selected.attachments!.map(a => (
+                    <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="support-detail__att">
+                      <img src={a.url} alt={a.name} loading="lazy" />
+                      <span>{a.name}</span>
+                    </a>
+                  ))}
+                </div>
+              )}
               {selected.adminReply ? (
                 <div className="support-detail__reply">
                   <strong>Support reply</strong>
