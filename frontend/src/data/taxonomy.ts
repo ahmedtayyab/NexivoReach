@@ -34,6 +34,22 @@ export const MARKET_SUGGESTIONS = [
   'South Africa',
 ];
 
+/** Full country search list for “which countries do you sell to”. */
+export const COUNTRY_LIST = [
+  ...MARKET_SUGGESTIONS,
+  'Afghanistan', 'Albania', 'Algeria', 'Argentina', 'Armenia', 'Austria', 'Azerbaijan',
+  'Bahrain', 'Bangladesh', 'Belarus', 'Belgium', 'Bolivia', 'Bosnia and Herzegovina',
+  'Brazil', 'Bulgaria', 'Cambodia', 'Chile', 'China', 'Colombia', 'Costa Rica', 'Croatia',
+  'Czech Republic', 'Denmark', 'Dominican Republic', 'Ecuador', 'Egypt', 'Estonia',
+  'Ethiopia', 'Finland', 'Georgia', 'Ghana', 'Greece', 'Hong Kong', 'Hungary', 'Iceland',
+  'Indonesia', 'Iran', 'Iraq', 'Ireland', 'Israel', 'Italy', 'Japan', 'Jordan', 'Kazakhstan',
+  'Kenya', 'Kuwait', 'Latvia', 'Lebanon', 'Lithuania', 'Luxembourg', 'Mexico', 'Morocco',
+  'Nepal', 'New Zealand', 'Nigeria', 'Norway', 'Oman', 'Peru', 'Philippines', 'Poland',
+  'Portugal', 'Romania', 'Russia', 'Serbia', 'Slovakia', 'Slovenia', 'South Korea', 'Spain',
+  'Sri Lanka', 'Sweden', 'Switzerland', 'Taiwan', 'Thailand', 'Tunisia', 'Ukraine',
+  'Uruguay', 'Uzbekistan', 'Venezuela', 'Vietnam', 'Yemen',
+];
+
 export const INDUSTRY_PACKS: IndustryPack[] = [
   {
     id: 'sportswear',
@@ -206,10 +222,13 @@ export function toggleCsvValue(current: string, value: string): string {
   return next.join(', ');
 }
 
+export function csvItems(current: string): string[] {
+  return current.split(',').map(item => item.trim()).filter(Boolean);
+}
+
 export function csvIncludes(current: string, value: string): boolean {
-  return current
-    .split(',')
-    .map(item => item.trim().toLowerCase())
+  return csvItems(current)
+    .map(item => item.toLowerCase())
     .includes(value.toLowerCase());
 }
 
@@ -273,7 +292,7 @@ export function suggestionsForField(
   const packs = matchIndustryPacks(context, catalogCategories);
   if (field === 'markets') {
     const fromPacks = packs.flatMap(p => p.markets);
-    return uniquePreserve([...fromPacks, ...MARKET_SUGGESTIONS]).slice(0, 16);
+    return uniquePreserve([...fromPacks, ...COUNTRY_LIST]);
   }
   if (field === 'categories') {
     // Prefer matched pack categories over stale catalog labels when packs fire
@@ -298,12 +317,26 @@ export function suggestionsForField(
   return uniquePreserve([...fromPacks, ...fallback]).slice(0, 8);
 }
 
-export function filterMatches(pool: string[], query: string, limit = 8): string[] {
+export function filterMatches(
+  pool: string[],
+  query: string,
+  limit = 8,
+  opts?: { prefixFirst?: boolean },
+): string[] {
   const q = query.trim().toLowerCase();
   if (!q) return pool.slice(0, limit);
-  return pool
-    .filter(item => item.toLowerCase().includes(q))
-    .slice(0, limit);
+  const scored = pool
+    .map(item => {
+      const low = item.toLowerCase();
+      let score = 0;
+      if (low.startsWith(q)) score = 3;
+      else if (low.split(/[\s&,/-]+/).some(part => part.startsWith(q))) score = 2;
+      else if (low.includes(q)) score = opts?.prefixFirst ? 0 : 1;
+      return { item, score };
+    })
+    .filter(row => row.score > 0)
+    .sort((a, b) => b.score - a.score || a.item.localeCompare(b.item));
+  return scored.slice(0, limit).map(row => row.item);
 }
 
 /** Labels that are nav/page junk, not product categories. */

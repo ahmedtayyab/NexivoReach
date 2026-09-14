@@ -1,8 +1,8 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import { Loader2, Sparkles } from 'lucide-react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Loader2, Sparkles, X } from 'lucide-react';
 import {
-  activeToken,
   csvIncludes,
+  csvItems,
   filterMatches,
   toggleCsvValue,
 } from '../data/taxonomy';
@@ -26,11 +26,22 @@ interface Props {
   single?: boolean;
   /** Hide the suggested-scan list once the user has typed a query */
   hideSuggestionsWhenFilled?: boolean;
+  /**
+   * none — search/typeahead only (countries)
+   * rotate — keep ~5 unselected suggestions; selected move to tags
+   * pool — classic static chip row (buyers)
+   */
+  chipDisplay?: 'none' | 'rotate' | 'pool';
+  /** Prefer names that start with the typed query (P → Pakistan) */
+  prefixSearch?: boolean;
+  /** Show selected values as removable tags above the input */
+  selectedAsTags?: boolean;
+  /** How many rotating suggestion chips to show */
+  rotateCount?: number;
 }
 
 /**
- * Predictive field = typeahead dropdown (as you type) + clickable chips.
- * Optional "Suggest for me" uses light AI when taxonomy is not enough.
+ * Predictive field = typeahead + optional chips / removable selected tags.
  */
 export default function PredictiveField({
   label,
@@ -42,17 +53,30 @@ export default function PredictiveField({
   aiContext,
   single = false,
   hideSuggestionsWhenFilled = false,
+  chipDisplay = 'pool',
+  prefixSearch = false,
+  selectedAsTags = false,
+  rotateCount = 5,
 }: Props) {
   const listId = useId();
   const wrapRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
+  const [query, setQuery] = useState('');
 
-  const token = single ? value.trim() : activeToken(value);
-  const matches = filterMatches(suggestions, token, 8).filter(
-    item => single || !csvIncludes(value, item),
-  );
+  const selected = useMemo(() => (single ? [] : csvItems(value)), [single, value]);
+  const useSearchBox = selectedAsTags && !single;
+  const token = single ? value.trim() : useSearchBox ? query.trim() : activeTokenFallback(value);
+
+  const matches = filterMatches(suggestions, token, prefixSearch ? 10 : 8, {
+    prefixFirst: prefixSearch,
+  }).filter(item => single || !csvIncludes(value, item));
+
+  const rotateChips = useMemo(() => {
+    if (chipDisplay !== 'rotate') return [];
+    return suggestions.filter(item => !csvIncludes(value, item)).slice(0, rotateCount);
+  }, [chipDisplay, suggestions, value, rotateCount]);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -62,21 +86,29 @@ export default function PredictiveField({
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
-  const pick = (item: string) => {
+  const addItem = (item: string) => {
+    const clean = item.trim();
+    if (!clean) return;
     if (single) {
-      onChange(item);
-    } else {
-      // Replace the incomplete last token with the chosen suggestion
-      const parts = value.split(',').map(s => s.trim()).filter(Boolean);
-      const incomplete = activeToken(value);
-      const base = incomplete
-        ? parts.slice(0, -1)
-        : parts;
-      const withoutDup = base.filter(p => p.toLowerCase() !== item.toLowerCase());
-      onChange([...withoutDup, item].join(', '));
+      onChange(clean);
+      setOpen(false);
+      return;
     }
+    if (csvIncludes(value, clean)) {
+      setQuery('');
+      setOpen(false);
+      return;
+    }
+    onChange([...selected, clean].join(', '));
+    setQuery('');
     setOpen(false);
   };
+
+  const removeItem = (item: string) => {
+    onChange(toggleCsvValue(value, item));
+  };
+
+  const pick = (item: string) => addItem(item);
 
   const handleSuggestAi = async () => {
     if (!aiContext || aiLoading) return;
@@ -102,8 +134,13 @@ export default function PredictiveField({
       if (single) {
         onChange(items[0]);
       } else if (aiContext.field === 'categories' && (aiContext.description || '').trim()) {
-        // Replace stale chips — description is the source of truth for category suggest
         onChange(items.slice(0, 6).join(', '));
+      } else if (aiContext.field === 'markets') {
+        const next = [...selected];
+        for (const item of items.slice(0, 6)) {
+          if (!next.some(s => s.toLowerCase() === item.toLowerCase())) next.push(item);
+        }
+        onChange(next.join(', '));
       } else {
         let next = value;
         for (const item of items.slice(0, 6)) {
@@ -112,9 +149,22 @@ export default function PredictiveField({
         onChange(next);
       }
     } catch {
-      setAiError('Could not fetch AI suggestions. Use the chips below.');
+      setAiError('Could not fetch AI suggestions.');
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const onSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (matches[0]) {
+        pick(matches[0]);
+      } else if (token.length > 1) {
+        addItem(token);
+      }
+    } else if (e.key === 'Backspace' && !query && selected.length) {
+      removeItem(selected[selected.length - 1]);
     }
   };
 
@@ -140,6 +190,23 @@ export default function PredictiveField({
       </div>
       {hint && <p className="text-[12px] text-ink-muted mb-2">{hint}</p>}
 
+      {selectedAsTags && selected.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {selected.map(item => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => removeItem(item)}
+              className="inline-flex items-center gap-1 max-w-full px-2 py-1 rounded-md text-[12px] border border-border bg-muted text-ink"
+              title="Remove"
+            >
+              <span className="truncate">{item}</span>
+              <X className="w-3 h-3 shrink-0 text-ink-muted" strokeWidth={2} />
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="relative">
         {single ? (
           <textarea
@@ -154,6 +221,22 @@ export default function PredictiveField({
             className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted resize-none"
             aria-autocomplete="list"
             aria-controls={listId}
+          />
+        ) : useSearchBox ? (
+          <input
+            type="text"
+            value={query}
+            onChange={e => {
+              setQuery(e.target.value);
+              setOpen(true);
+            }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={onSearchKeyDown}
+            placeholder={placeholder}
+            className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted"
+            aria-autocomplete="list"
+            aria-controls={listId}
+            autoComplete="off"
           />
         ) : (
           <input
@@ -196,17 +279,17 @@ export default function PredictiveField({
 
       {aiError && <p className="text-[12px] mt-1" style={{ color: 'var(--warning)' }}>{aiError}</p>}
 
-      {!single && (
+      {!single && chipDisplay === 'pool' && (
         <div className="flex flex-wrap gap-1.5 mt-2">
           {suggestions.slice(0, 12).map(item => {
-            const selected = csvIncludes(value, item);
+            const selectedChip = csvIncludes(value, item);
             return (
               <button
                 key={item}
                 type="button"
                 onClick={() => onChange(toggleCsvValue(value, item))}
                 className={`px-2 py-1 rounded-md text-[12px] border transition-colors ${
-                  selected
+                  selectedChip
                     ? 'bg-[var(--sidebar-active)] text-[var(--brand)] border-[var(--brand)]'
                     : 'bg-panel border-border text-ink-secondary hover:border-ink-muted'
                 }`}
@@ -215,6 +298,24 @@ export default function PredictiveField({
               </button>
             );
           })}
+        </div>
+      )}
+
+      {!single && chipDisplay === 'rotate' && rotateChips.length > 0 && (
+        <div className="mt-2">
+          <p className="text-[11px] text-ink-muted mb-1.5">Suggestions</p>
+          <div className="flex flex-wrap gap-1.5">
+            {rotateChips.map(item => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => addItem(item)}
+                className="px-2 py-1 rounded-md text-[12px] border border-border bg-panel text-ink-secondary hover:border-ink-muted hover:text-ink transition-colors"
+              >
+                {item}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -237,4 +338,9 @@ export default function PredictiveField({
       )}
     </div>
   );
+}
+
+function activeTokenFallback(value: string): string {
+  const parts = value.split(',');
+  return (parts[parts.length - 1] || '').trim();
 }

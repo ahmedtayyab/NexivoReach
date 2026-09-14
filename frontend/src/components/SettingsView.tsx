@@ -7,6 +7,7 @@ import FindBuyersPanel from './FindBuyersPanel';
 import { useConfirm } from './ConfirmDialog';
 import {
   categoriesFromProducts,
+  isUsefulChipLabel,
   suggestionsForField,
 } from '../data/taxonomy';
 import type { SettingsSection } from '../lib/navigation';
@@ -292,11 +293,12 @@ function CompanySection({
     const seen = new Set<string>();
     const out: string[] = [];
     for (const item of [...liveCategorySuggestions, ...catalogCats, ...local]) {
-      const key = item.trim().toLowerCase();
-      if (!key || seen.has(key)) continue;
+      const trimmed = item.trim();
+      const key = trimmed.toLowerCase();
+      if (!key || seen.has(key) || !isUsefulChipLabel(trimmed)) continue;
       seen.add(key);
-      out.push(item.trim());
-      if (out.length >= 16) break;
+      out.push(trimmed);
+      if (out.length >= 24) break;
     }
     return out;
   }, [liveCategorySuggestions, catalogCats, suggestionContext]);
@@ -447,12 +449,15 @@ function CompanySection({
       ) : (
         <div className="space-y-4 pt-1 border-t border-border-subtle">
           <PredictiveField
-            label="Where we sell"
-            hint="Optional. Buyers reuse this unless you override later."
+            label="Which countries do you sell to?"
+            hint="Type to search and add multiple countries. Selected ones are saved."
             value={markets}
             onChange={setMarkets}
             suggestions={marketSuggestions}
-            placeholder="United States, United Kingdom, UAE"
+            placeholder="Start typing a country — e.g. P for Pakistan"
+            chipDisplay="none"
+            selectedAsTags
+            prefixSearch
             aiContext={{
               field: 'markets',
               description,
@@ -464,12 +469,15 @@ function CompanySection({
             hint={
               categorySuggesting
                 ? 'Inferring categories…'
-                : 'Optional. Helps Find buyers if you skip the product catalog.'
+                : 'Pick a few suggestions, or type your own. Selected ones stay saved.'
             }
             value={categories}
             onChange={setCategories}
             suggestions={categorySuggestions}
-            placeholder="e.g. Sportswear, Industrial Equipment"
+            placeholder="e.g. Sportswear, Gaming Chairs"
+            chipDisplay="rotate"
+            selectedAsTags
+            rotateCount={5}
             aiContext={{
               field: 'categories',
               description,
@@ -956,12 +964,15 @@ function ICPSection({
       </label>
       {!sameAsMarkets && (
         <PredictiveField
-          label="Where to look"
-          hint="Only if different from company markets."
+          label="Which countries should we hunt in?"
+          hint="Only if different from company markets. Type to search."
           value={countries}
           onChange={setCountries}
           suggestions={countrySuggestions}
-          placeholder="United Arab Emirates, Germany"
+          placeholder="Start typing a country — e.g. P for Pakistan"
+          chipDisplay="none"
+          selectedAsTags
+          prefixSearch
           aiContext={{
             field: 'markets',
             description: businessInfo.description,
