@@ -21,19 +21,52 @@ GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 GMAIL_SCOPES = f"{GMAIL_SEND_SCOPE} {GMAIL_READONLY_SCOPE}"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
+TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
+
+
+def access_token_scopes(access_token: str) -> set[str]:
+    """Return OAuth scopes granted to this access token (empty on failure)."""
+    token = (access_token or "").strip()
+    if not token:
+        return set()
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            res = client.get(TOKENINFO_URL, params={"access_token": token})
+            if res.status_code >= 400:
+                return set()
+            scope = (res.json() or {}).get("scope") or ""
+            return {s for s in scope.split() if s}
+    except Exception as exc:
+        log.warning("tokeninfo failed: %r", exc)
+        return set()
+
+
+def has_send_scope(access_token: str) -> bool:
+    return GMAIL_SEND_SCOPE in access_token_scopes(access_token)
 
 
 def is_connected(user: User) -> bool:
     return bool((getattr(user, "gmail_refresh_token", None) or "").strip())
 
 
-def status_payload(user: User) -> Dict[str, Any]:
+def status_payload(user: User, *, verify_send: bool = False) -> Dict[str, Any]:
     connected = is_connected(user)
+    needs_reconnect = False
+    if connected and verify_send:
+        token = (getattr(user, "gmail_access_token", None) or "").strip()
+        # Only flag when tokeninfo succeeds and send is clearly missing.
+        # Expired tokens return empty scopes — leave those for the send path.
+        if token:
+            scopes = access_token_scopes(token)
+            if scopes and GMAIL_SEND_SCOPE not in scopes:
+                needs_reconnect = True
     return {
         "connected": connected,
         "email": (getattr(user, "gmail_email", None) or "") if connected else "",
         "connectedAt": (getattr(user, "gmail_connected_at", None) or "") if connected else "",
+        "needsReconnect": needs_reconnect,
+        "canSend": bool(connected and not needs_reconnect),
     }
 
 
@@ -87,36 +120,58 @@ async def get_valid_access_token(session: Session, user: User) -> str:
     token = (getattr(user, "gmail_access_token", None) or "").strip()
     expiry = _expiry_dt(getattr(user, "gmail_token_expiry", None))
     now = datetime.now(timezone.utc)
-    if token and expiry and expiry > now + timedelta(minutes=1):
+    # Prefer a still-fresh access token. If expiry is unknown, use the access
+    # token before refreshing — a dead refresh must not block a usable token.
+    if token and (expiry is None or expiry > now + timedelta(minutes=1)):
         return token
+
     refresh = (getattr(user, "gmail_refresh_token", None) or "").strip()
-    if not refresh:
+    sheets_refresh = (getattr(user, "sheets_refresh_token", None) or "").strip()
+    candidates: List[str] = []
+    for rt in (refresh, sheets_refresh):
+        if rt and rt not in candidates:
+            candidates.append(rt)
+    if not candidates:
         raise RuntimeError("Gmail is not connected. Connect Gmail in Settings → Integrations.")
+
+    last_detail = ""
     async with httpx.AsyncClient(timeout=20.0) as client:
-        res = await client.post(
-            TOKEN_URL,
-            data={
-                "client_id": settings.GOOGLE_CLIENT_ID,
-                "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                "refresh_token": refresh,
-                "grant_type": "refresh_token",
-            },
-        )
-        if res.status_code >= 400:
-            raise RuntimeError(f"Gmail token refresh failed ({res.status_code})")
-        data = res.json()
-        access = data.get("access_token") or ""
-        if not access:
-            raise RuntimeError("Gmail token refresh returned no access token")
-        store_tokens(
-            session,
-            user,
-            access_token=access,
-            refresh_token=None,
-            expires_in=int(data.get("expires_in") or 3600),
-            email=getattr(user, "gmail_email", None) or "",
-        )
-        return access
+        for rt in candidates:
+            res = await client.post(
+                TOKEN_URL,
+                data={
+                    "client_id": settings.GOOGLE_CLIENT_ID,
+                    "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                    "refresh_token": rt,
+                    "grant_type": "refresh_token",
+                },
+            )
+            if res.status_code >= 400:
+                last_detail = (res.text or "")[:240]
+                log.warning("Gmail token refresh failed (%s): %s", res.status_code, last_detail)
+                continue
+            data = res.json()
+            access = data.get("access_token") or ""
+            if not access:
+                last_detail = "empty access_token"
+                continue
+            # Persist refreshed access; keep whichever refresh token worked.
+            store_tokens(
+                session,
+                user,
+                access_token=access,
+                refresh_token=rt if rt != refresh else None,
+                expires_in=int(data.get("expires_in") or 3600),
+                email=getattr(user, "gmail_email", None) or "",
+            )
+            return access
+
+    # Refresh token is revoked/expired — drop Gmail so UI stops saying "Connected".
+    clear_tokens(session, user)
+    raise RuntimeError(
+        "Gmail login expired or was revoked. "
+        "Workspace → Connect: Disconnect Gmail, then Connect Gmail again."
+    )
 
 
 def _mime_message(*, to: str, subject: str, body: str, from_email: str = "") -> str:
@@ -140,6 +195,11 @@ async def send_email(
     if not to.strip():
         raise RuntimeError("No recipient email on this lead")
     access = await get_valid_access_token(session, user)
+    if not has_send_scope(access):
+        raise RuntimeError(
+            "Gmail permission missing (send scope). "
+            "Open Connect → Disconnect Gmail → Connect Gmail again and allow send access."
+        )
     raw = _mime_message(
         to=to.strip(),
         subject=subject,
@@ -153,7 +213,16 @@ async def send_email(
             json={"raw": raw},
         )
         if res.status_code >= 400:
-            raise RuntimeError(f"Gmail send failed ({res.status_code}): {res.text[:200]}")
+            detail = (res.text or "")[:400]
+            low = detail.lower()
+            if res.status_code == 403 and (
+                "insufficient" in low or "insufficient authentication scopes" in low or "access_denied" in low
+            ):
+                raise RuntimeError(
+                    "Gmail permission missing (send scope). "
+                    "Open Connect → Disconnect Gmail → Connect Gmail again and allow send access."
+                )
+            raise RuntimeError(f"Gmail send failed ({res.status_code}): {detail[:200]}")
         data = res.json()
         return {
             "messageId": data.get("id") or "",

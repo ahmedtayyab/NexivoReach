@@ -18,7 +18,7 @@ interface Props {
   onGoConnect?: () => void;
 }
 
-const HUNT_ETA_SECONDS = 35;
+const HUNT_PHASE_SECONDS = [0, 12, 28, 45, 70];
 
 function buildPhases(query: string, placeHint: string): string[] {
   const focus = (query || '').trim() || 'matching buyers';
@@ -26,10 +26,10 @@ function buildPhases(query: string, placeHint: string): string[] {
   const place = placeHint ? ` in ${placeHint}` : '';
   return [
     `Planning searches for “${short}”…`,
-    `Scanning Google and maps${place}…`,
-    'Opening company sites to score Fit…',
-    'Filtering strong vs average leads…',
-    'Ranking your shortlist — almost done…',
+    `Searching the web${place}…`,
+    'Opening company sites…',
+    'Scoring Fit on live pages…',
+    'Building your shortlist…',
   ];
 }
 
@@ -94,23 +94,36 @@ export default function FindBuyersPanel({
     setElapsedSec(0);
     setPhaseIndex(0);
     const tick = window.setInterval(() => setElapsedSec(s => s + 1), 1000);
-    const phase = window.setInterval(
-      () => setPhaseIndex(i => Math.min(i + 1, phases.length - 1)),
-      7000,
-    );
-    return () => {
-      window.clearInterval(tick);
-      window.clearInterval(phase);
-    };
-  }, [isRunning, phases.length]);
+    return () => window.clearInterval(tick);
+  }, [isRunning]);
 
-  const etaLabel = useMemo(() => {
-    if (!isRunning) return '';
-    const remaining = Math.max(5, HUNT_ETA_SECONDS - elapsedSec);
-    if (elapsedSec < HUNT_ETA_SECONDS) {
-      return `About ${remaining}s left · usually under a minute`;
+  useEffect(() => {
+    if (!isRunning) return;
+    let idx = 0;
+    for (let i = HUNT_PHASE_SECONDS.length - 1; i >= 0; i -= 1) {
+      if (elapsedSec >= HUNT_PHASE_SECONDS[i]) {
+        idx = i;
+        break;
+      }
     }
-    return 'Taking a bit longer than usual — still working…';
+    setPhaseIndex(Math.min(idx, phases.length - 1));
+  }, [isRunning, elapsedSec, phases.length]);
+
+  const progressLabel = useMemo(() => {
+    if (!isRunning) return '';
+    if (elapsedSec < 45) return `Working · ${elapsedSec}s elapsed`;
+    if (elapsedSec < 90) return `Still hunting · ${elapsedSec}s — often finishes around a minute`;
+    return `Still working · ${elapsedSec}s — large markets take longer`;
+  }, [isRunning, elapsedSec]);
+
+  // Indeterminate-feeling bar: climbs quickly early, then slows (never claims a fake deadline)
+  const progressPct = useMemo(() => {
+    if (!isRunning) return 0;
+    const t = elapsedSec;
+    if (t <= 20) return Math.round(12 + t * 2.2);
+    if (t <= 50) return Math.round(56 + (t - 20) * 0.7);
+    if (t <= 90) return Math.round(77 + (t - 50) * 0.3);
+    return Math.min(94, 89 + Math.floor((t - 90) / 15));
   }, [isRunning, elapsedSec]);
 
   const handleRun = async () => {
@@ -174,11 +187,11 @@ export default function FindBuyersPanel({
             <div
               className="find-buyers__overlay-fill"
               style={{
-                width: `${Math.min(92, Math.round((elapsedSec / HUNT_ETA_SECONDS) * 100))}%`,
+                width: `${progressPct}%`,
               }}
             />
           </div>
-          <p className="find-buyers__overlay-eta">{etaLabel}</p>
+          <p className="find-buyers__overlay-eta">{progressLabel}</p>
         </div>
       )}
 
@@ -242,7 +255,7 @@ export default function FindBuyersPanel({
               {statusText ||
                 (lastFound !== null
                   ? `Last run added ${lastFound} lead${lastFound === 1 ? '' : 's'}.`
-                  : 'Typical hunt: about 30–45 seconds.')}
+                  : 'Usually under a minute for ~20–40 leads.')}
             </p>
           )}
         </div>

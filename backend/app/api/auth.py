@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 from uuid import uuid4
+import logging
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -30,6 +31,7 @@ from app.integrations import sheets_oauth as sheets_oauth_mod
 from app.services import access as access_mod
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+log = logging.getLogger(__name__)
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -57,7 +59,11 @@ def _user_payload(user, usage: dict | None = None) -> dict:
         "isSuspended": suspended,
         "plan": plan,
         "usage": usage,
-        "gmail": gmail_mod.status_payload(user) if isinstance(user, User) else {"connected": False, "email": "", "connectedAt": ""},
+        "gmail": (
+            gmail_mod.status_payload(user, verify_send=True)
+            if isinstance(user, User)
+            else {"connected": False, "email": "", "connectedAt": "", "needsReconnect": False, "canSend": False}
+        ),
         "sheets": sheets_oauth_mod.status_payload(user) if isinstance(user, User) else {"connected": False, "email": "", "connectedAt": ""},
     }
 
@@ -176,8 +182,8 @@ def gmail_connect(request: Request, user: AuthUser = Depends(get_current_user)):
         "scope": f"openid email profile {gmail_mod.GMAIL_SCOPES}",
         "state": state,
         "access_type": "offline",
+        # Force a full consent so Google returns a fresh refresh_token.
         "prompt": "consent",
-        "include_granted_scopes": "true",
     }
     response = RedirectResponse(f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
     response.set_cookie(
@@ -228,8 +234,14 @@ def gmail_status(request: Request, user: AuthUser = Depends(get_current_user)):
     with Session(engine) as session:
         row = session.get(User, user.id)
         if not row:
-            return {"connected": False, "email": "", "connectedAt": ""}
-        return gmail_mod.status_payload(row)
+            return {
+                "connected": False,
+                "email": "",
+                "connectedAt": "",
+                "needsReconnect": False,
+                "canSend": False,
+            }
+        return gmail_mod.status_payload(row, verify_send=True)
 
 
 @router.get("/sheets/status")
@@ -430,28 +442,38 @@ def _workspace_callback(code: str, state_payload: dict, app_url: str):
             return RedirectResponse(f"{app_url}/?sheets=error#integrations")
         expires_in = int(token_data.get("expires_in") or 3600)
         email = account_email or user.email
-        gmail_mod.store_tokens(
-            session,
-            user,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_in=expires_in,
-            email=email,
-        )
-        # Re-load after gmail store (session refreshed tokens on same row).
-        user = session.get(User, user_id) or user
+        can_gmail = gmail_mod.has_send_scope(access_token)
+        if can_gmail:
+            gmail_mod.store_tokens(
+                session,
+                user,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                expires_in=expires_in,
+                email=email,
+            )
+            # Re-load after gmail store (session refreshed tokens on same row).
+            user = session.get(User, user_id) or user
         sheets_oauth_mod.store_tokens(
             session,
             user,
             access_token=access_token,
-            refresh_token=refresh_token or user.sheets_refresh_token or user.gmail_refresh_token,
+            refresh_token=refresh_token
+            or user.sheets_refresh_token
+            or (user.gmail_refresh_token if can_gmail else None),
             expires_in=expires_in,
             email=email,
         )
 
+    if can_gmail:
+        redirect_qs = "sheets=connected&gmail=connected"
+    else:
+        # Sheets may still be ok; Gmail needs a consent that includes gmail.send
+        # (enable Gmail API + scopes on the Google Cloud OAuth consent screen).
+        redirect_qs = "sheets=connected&gmail=needs_scope"
     response = HTMLResponse(
-        """<!DOCTYPE html><html><head><meta charset="utf-8"></head>"""
-        """<body><script>window.location.replace('/?sheets=connected&gmail=connected#integrations');</script></body></html>"""
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>"
+        f"<body><script>window.location.replace('/?{redirect_qs}#integrations');</script></body></html>"
     )
     response.delete_cookie("nr_oauth_state", path="/")
     return response
@@ -496,6 +518,12 @@ def _gmail_callback(code: str, state_payload: dict, app_url: str):
         # Refresh token only returned on first consent; keep existing if missing
         if not refresh_token and not (user.gmail_refresh_token or "").strip():
             return RedirectResponse(f"{app_url}/?gmail=error#integrations")
+        if not gmail_mod.has_send_scope(access_token):
+            return RedirectResponse(f"{app_url}/?gmail=needs_scope#integrations")
+        # Prefer a brand-new refresh token. Reusing a stale one after re-consent
+        # is a common cause of "token refresh failed (400)".
+        if not refresh_token:
+            log.warning("Gmail OAuth returned no refresh_token for user %s", user_id)
         gmail_mod.store_tokens(
             session,
             user,

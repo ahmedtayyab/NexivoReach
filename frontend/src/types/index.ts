@@ -195,6 +195,8 @@ export interface AuthUser {
     connected: boolean;
     email?: string;
     connectedAt?: string;
+    needsReconnect?: boolean;
+    canSend?: boolean;
   };
   sheets?: {
     connected: boolean;

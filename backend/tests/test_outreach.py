@@ -35,6 +35,23 @@ def test_gmail_status_disconnected():
     user = User(id="u1", google_id="g1", email="a@b.com")
     assert is_connected(user) is False
     assert status_payload(user)["connected"] is False
+    assert status_payload(user)["canSend"] is False
+    assert status_payload(user)["needsReconnect"] is False
+
+
+def test_gmail_status_connected_without_verify():
+    user = User(
+        id="u1",
+        google_id="g1",
+        email="a@b.com",
+        gmail_refresh_token="rt",
+        gmail_email="a@b.com",
+        gmail_connected_at="2026-01-01T00:00:00Z",
+    )
+    payload = status_payload(user)
+    assert payload["connected"] is True
+    assert payload["canSend"] is True
+    assert payload["needsReconnect"] is False
 
 
 def test_recipient_from_contacts_when_draft_to_empty():

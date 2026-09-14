@@ -58,13 +58,13 @@ export default function ConnectionStatus({
       <button type="button" className="conn-status__row" onClick={onOpenConnect} title={gmailEmail || 'Gmail'}>
         <span className={`conn-dot ${gmailConnected ? 'is-on' : 'is-off'}`} aria-hidden />
         <span className="conn-status__label">Gmail</span>
-        <span className="conn-status__state">{gmailConnected ? 'On' : 'Off'}</span>
+        <span className="conn-status__state">{gmailConnected ? 'Ready' : 'Not connected'}</span>
       </button>
       <button type="button" className="conn-status__row" onClick={onOpenConnect} title={sheets?.oauth?.email || 'Sheets'}>
         <span className={`conn-dot ${sheetsLinked ? 'is-on' : sheetsOauth ? 'is-ready' : 'is-off'}`} aria-hidden />
         <span className="conn-status__label">Sheets</span>
         <span className="conn-status__state">
-          {sheetsLinked ? 'Linked' : sheetsOauth ? 'Ready' : 'Off'}
+          {sheetsLinked ? 'Linked' : sheetsOauth ? 'Ready' : 'Not connected'}
         </span>
       </button>
     </div>

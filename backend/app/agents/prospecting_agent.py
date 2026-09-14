@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 from urllib.parse import urlparse
 
+import httpx
+
 from app.agents.search_planner import (
     apply_prompt_focus,
     apply_prompt_geo,
@@ -19,22 +21,28 @@ from app.agents.search_planner import (
 )
 from app.agents.serp_classifier import classify_serp_row, summarize_classifications
 from app.agents.qualify import qualify_account
-from app.tools.web_search import WebSearchTool
+from app.tools.web_search import WebSearchTool, HEADERS
 from app.tools.contact_finder import discover_contacts, contacts_from_text
 from app.providers.factory import get_ai_provider
 
 
-FETCH_CAP = 48
+FETCH_CAP = 36
 SAVE_CAP = 40
 STRONG_SAVE = 20  # amazing / ready to pursue
 AVERAGE_SAVE = 20  # workable / worth a look
-WAVE1_RESULT_CAP = 180
-WAVE2_RESULT_CAP = 100
+WAVE1_RESULT_CAP = 140
+WAVE2_RESULT_CAP = 80
 ENRICH_CAP = 0  # drafts belong in Outreach — keep Discover fast
 CONTACT_DURING_HUNT = 0  # all contact crawl is background — keep hunt snappy
-SCRAPE_CONCURRENCY = 16
-MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 55
+SCRAPE_CONCURRENCY = 18
+SCRAPE_BATCH = 18
+# Skip wave 2 once we already have enough relevant SERP hits for a 20–30+ shortlist
+MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 30
 DEFAULT_HUNT_LIMIT = 40
+# Stop fetching more sites once we can fill this many persistable leads
+EARLY_EXIT_PERSISTABLE = 28
+WAVE1_QUERY_CAP = 10
+WAVE2_QUERY_CAP = 6
 
 
 def _domain(url: str) -> str:
@@ -104,11 +112,12 @@ class ProspectingAgent:
         })
 
         leads = await self.web_search.hunt_leads(
-            wave1,
+            wave1[:WAVE1_QUERY_CAP],
             target_location=place,
             exclude_domains=exclude_domains,
             limit=WAVE1_RESULT_CAP,
             use_maps=profile.use_maps,
+            max_queries=WAVE1_QUERY_CAP,
         )
         classified = [
             classify_serp_row(
@@ -146,11 +155,9 @@ class ProspectingAgent:
             "toolResultSnippet": f"rejected={stats['rejected']} seeds={len(stats['competitor_names'])}",
         })
 
-        wave2 = plan_wave2(profile, stats, stats.get("learned_terms"))
-        # Always deepen when the first wave is thin — volume matters for usable hunts
-        need_wave2 = bool(wave2) and stats["relevant_count"] < (
-            MIN_CANDIDATES_BEFORE_SKIP_WAVE2 if profile.strict_geo else MIN_CANDIDATES_BEFORE_SKIP_WAVE2
-        )
+        wave2 = plan_wave2(profile, stats, stats.get("learned_terms"))[:WAVE2_QUERY_CAP]
+        # Deepen only when the first wave is thin — saves a full search round when we already have volume
+        need_wave2 = bool(wave2) and stats["relevant_count"] < MIN_CANDIDATES_BEFORE_SKIP_WAVE2
         if need_wave2:
             more = await self.web_search.hunt_leads(
                 wave2,
@@ -158,6 +165,7 @@ class ProspectingAgent:
                 exclude_domains=exclude_domains | {_domain(r.get("website")) for r in classified if r.get("website")},
                 limit=WAVE2_RESULT_CAP,
                 use_maps=profile.use_maps and profile.strict_geo,
+                max_queries=WAVE2_QUERY_CAP,
             )
             extra = [
                 classify_serp_row(
@@ -220,39 +228,60 @@ class ProspectingAgent:
             }
 
         to_fetch = [c for c in candidates if (c.get("website") or "").strip()][:FETCH_CAP]
-        # Homepage-only for speed; deep about/news pages skipped during hunt
-        scrape_sem = asyncio.Semaphore(SCRAPE_CONCURRENCY)
-
-        async def _scrape_one(url: str) -> Any:
-            async with scrape_sem:
-                return await self.web_search.scrape_homepage(url, limit=6000)
-
-        pages = await asyncio.gather(
-            *[_scrape_one(c["website"]) for c in to_fetch],
-            return_exceptions=True,
-        )
+        # Homepage-only for speed; deep about/news pages skipped during hunt.
+        # Scrape in batches and stop early once we have enough persistable leads.
         text_by_domain: Dict[str, Dict[str, Any]] = {}
-        for cand, page in zip(to_fetch, pages):
-            dom = _domain(cand.get("website") or "")
-            if isinstance(page, dict) and page.get("ok"):
-                page = {**page}
-                # Keep raw HTML for contact mailto parsing during enrich
-                # (visible text often says "Email us" without the address)
-                text_by_domain[dom] = page
-                if page.get("location") and not (cand.get("location") or "").strip():
-                    cand["location"] = page["location"]
-                elif page.get("location") and len(str(page["location"])) > len(str(cand.get("location") or "")):
-                    cand["location"] = page["location"]
-                if page.get("emails"):
-                    cand.setdefault("_seed_emails", page["emails"])
-            else:
-                text_by_domain[dom] = {"text": "", "url": cand.get("website") or "", "ok": False, "location": "", "emails": []}
+        fetched_count = 0
+
+        async with httpx.AsyncClient(
+            timeout=5.0,
+            follow_redirects=True,
+            headers=HEADERS,
+            limits=httpx.Limits(max_connections=SCRAPE_CONCURRENCY, max_keepalive_connections=SCRAPE_CONCURRENCY),
+        ) as scrape_client:
+            scrape_sem = asyncio.Semaphore(SCRAPE_CONCURRENCY)
+
+            async def _scrape_one(url: str) -> Any:
+                async with scrape_sem:
+                    return await self.web_search.scrape_homepage(
+                        url, limit=5000, client=scrape_client, keep_html=False,
+                    )
+
+            for batch_start in range(0, len(to_fetch), SCRAPE_BATCH):
+                batch = to_fetch[batch_start : batch_start + SCRAPE_BATCH]
+                pages = await asyncio.gather(
+                    *[_scrape_one(c["website"]) for c in batch],
+                    return_exceptions=True,
+                )
+                fetched_count += len(batch)
+                for cand, page in zip(batch, pages):
+                    dom = _domain(cand.get("website") or "")
+                    if isinstance(page, dict) and page.get("ok"):
+                        page = {**page}
+                        page.pop("html", None)
+                        text_by_domain[dom] = page
+                        if page.get("location") and not (cand.get("location") or "").strip():
+                            cand["location"] = page["location"]
+                        elif page.get("location") and len(str(page["location"])) > len(str(cand.get("location") or "")):
+                            cand["location"] = page["location"]
+                        if page.get("emails"):
+                            cand.setdefault("_seed_emails", page["emails"])
+                    else:
+                        text_by_domain[dom] = {
+                            "text": "", "url": cand.get("website") or "", "ok": False,
+                            "location": "", "emails": [],
+                        }
+
+                # Early exit: enough scraped sites to build a solid shortlist
+                ok_sites = sum(1 for v in text_by_domain.values() if v.get("ok") and (v.get("text") or "").strip())
+                if ok_sites >= EARLY_EXIT_PERSISTABLE and fetched_count >= min(24, len(to_fetch)):
+                    break
 
         decisions_log.append({
             "step": 4,
             "observation": (
                 f"{len(candidates)} candidates after exclusions; "
-                f"fetched {len(to_fetch)} homepages (cap {FETCH_CAP}, fast mode)."
+                f"fetched {fetched_count} homepages (cap {FETCH_CAP}, early-exit at {EARLY_EXIT_PERSISTABLE})."
             ),
             "decision": (
                 "Qualify Fit vs Intent from homepage text. "
@@ -456,7 +485,7 @@ class ProspectingAgent:
             elif contact_hit:
                 timeline.append({"time": time.strftime("%H:%M"), "action": f"Found {len(contacts)} public contact channel(s)"})
             else:
-                timeline.append({"time": time.strftime("%H:%M"), "action": "No public email on site (contact page checked)"})
+                timeline.append({"time": time.strftime("%H:%M"), "action": "No public email on homepage yet (deeper crawl runs in background)"})
 
             if item.get("want_draft") and website:
                 async with draft_sem:
@@ -570,7 +599,11 @@ class ProspectingAgent:
                     f"Shortlist {len(prospects)} accounts "
                     f"(~{sum(1 for p in prospects if (p.get('priority') or '').lower() in ('priority', 'nurture'))} strong, "
                     f"~{sum(1 for p in prospects if (p.get('priority') or '').lower() in ('review', 'low'))} average). "
-                    f"Contact crawl on {contact_runs} strong leads."
+                    + (
+                        f"Contact crawl on {contact_runs} strong leads."
+                        if contact_runs
+                        else "Homepage emails seeded; deeper contact crawl continues in the background."
+                    )
                 ),
                 "decision": (
                     f"Target mix is ~{STRONG_SAVE} strong + ~{AVERAGE_SAVE} average — "

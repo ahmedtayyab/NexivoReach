@@ -33,7 +33,7 @@ def test_planner_uses_oem_pools_not_retailer_clones():
     assert "private label" in blobs
     assert "intent_overlay" in families
     assert "seeking" in blobs or "sourcing" in blobs or "private label program" in blobs
-    assert len(queries) <= 16
+    assert len(queries) <= 10
 
 
 def test_planner_saas_skips_maps_and_importers():
@@ -238,7 +238,7 @@ async def test_ai_provider_parses_description():
 
 @pytest.mark.asyncio
 async def test_agent_execution(monkeypatch):
-    async def fake_hunt(self, queries, target_location="", exclude_domains=None, limit=40, use_maps=False):
+    async def fake_hunt(self, queries, target_location="", exclude_domains=None, limit=40, use_maps=False, max_queries=10):
         return [{
             "company_name": "Helios Kliniken",
             "website": "https://www.helios-gesundheit.de/",
@@ -249,7 +249,7 @@ async def test_agent_execution(monkeypatch):
             "discovery_pool": "direct_icp",
         }]
 
-    async def fake_home(self, url, limit=8000):
+    async def fake_home(self, url, limit=8000, client=None, keep_html=True):
         return {
             "ok": True,
             "url": url,

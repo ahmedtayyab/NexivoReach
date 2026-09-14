@@ -185,7 +185,10 @@ export default function OutreachInboxView({
         <div className="page-header nr-enter">
           <h1 className="page-header__title">Outreach</h1>
           <p className="page-header__desc">
-            Best-fit queue with drafts. Send to any address once Gmail is connected.
+            Best-fit queue with drafts.
+            {gmailConnected
+              ? ' Send to any address via Gmail.'
+              : ' Gmail is not connected — connect it in Workspace to send.'}
           </p>
         </div>
         <div className="empty-state nr-enter nr-enter-delay-2">
@@ -221,10 +224,24 @@ export default function OutreachInboxView({
           {bestFitCount} best-fit ready · Sorted by Fit + Intent ·{' '}
           {gmailConnected
             ? 'Send to any To: address via Gmail'
-            : 'Connect Gmail to send in-app (any recipient)'}
+            : 'Gmail is not connected — open Workspace → Connect to send'}
           {' · '}J/K · Enter send
         </p>
       </div>
+
+      {!gmailConnected && (
+        <p className="ui-banner ui-banner--warn nr-enter" role="status">
+          Gmail is not connected. You can prepare drafts, but sending is blocked until you connect Gmail in Workspace → Connect.
+          {onGoWorkspace && (
+            <>
+              {' '}
+              <button type="button" className="linkish" onClick={onGoWorkspace}>
+                Connect Gmail
+              </button>
+            </>
+          )}
+        </p>
+      )}
 
       <div className="toolbar nr-enter nr-enter-delay-1">
         {gmailConnected && onSendAllReady && sendableCount > 0 && (

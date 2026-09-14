@@ -1057,7 +1057,13 @@ type SheetsStatus = {
 };
 
 function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) => void }) {
-  const [status, setStatus] = useState<{ connected: boolean; email?: string; connectedAt?: string } | null>(null);
+  const [status, setStatus] = useState<{
+    connected: boolean;
+    email?: string;
+    connectedAt?: string;
+    needsReconnect?: boolean;
+    canSend?: boolean;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
 
@@ -1068,7 +1074,13 @@ function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) 
       if (r.ok) {
         const data = await r.json();
         setStatus(data);
-        onReadyChange?.(Boolean(data?.connected));
+        const ready = Boolean(data?.connected) && !data?.needsReconnect && data?.canSend !== false;
+        onReadyChange?.(ready);
+        if (data?.needsReconnect) {
+          setMsg(
+            'Gmail is linked but missing send permission. Disconnect, then Connect Gmail again and allow send access. Also confirm Gmail API + gmail.send are enabled on your Google Cloud OAuth consent screen.',
+          );
+        }
       }
     } catch {
       // ignore
@@ -1082,9 +1094,14 @@ function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) 
     const params = new URLSearchParams(window.location.search);
     const gmail = params.get('gmail');
     if (gmail === 'connected') {
-      setMsg('Gmail connected — you can send to any recipient address. Test users only control who can connect the mailbox.');
+      setMsg('Gmail connected — you can send to any recipient address.');
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
       void load();
+    } else if (gmail === 'needs_scope') {
+      setMsg(
+        'Google did not grant Gmail send access. Enable Gmail API and add gmail.send + gmail.readonly on the OAuth consent screen, then Connect Gmail again.',
+      );
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
     } else if (gmail === 'error') {
       setMsg('Gmail connect failed. Re-try and grant send + read access (offline consent).');
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
@@ -1094,11 +1111,14 @@ function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) 
   const disconnect = async () => {
     const resp = await apiFetch('/api/auth/gmail/disconnect', { method: 'POST' });
     if (resp.ok) {
-      setStatus({ connected: false, email: '', connectedAt: '' });
-      setMsg('Gmail disconnected.');
+      setStatus({ connected: false, email: '', connectedAt: '', needsReconnect: false, canSend: false });
+      setMsg('Gmail disconnected. Connect again and allow send access.');
       onReadyChange?.(false);
     }
   };
+
+  const sendReady =
+    Boolean(status?.connected) && !status?.needsReconnect && status?.canSend !== false;
 
   return (
     <div className="border border-border bg-panel/80 p-5 space-y-4">
@@ -1106,15 +1126,18 @@ function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) 
         <div>
           <h3 className="font-display text-[15px] font-semibold text-ink">Gmail</h3>
           <p className="text-[12.5px] text-ink-secondary mt-0.5">
-            Connect your mailbox to send from Outreach/Leads. Once connected, the To: field can be any email —
-            Google “test users” only limit who can authorize this app, not who you can message.
+            Connect your mailbox to send from Outreach. Grant send access when Google asks — without it, emails will fail.
           </p>
         </div>
         {loading ? (
           <Loader2 className="w-4 h-4 animate-spin text-ink-secondary shrink-0" />
-        ) : status?.connected ? (
+        ) : sendReady ? (
           <span className="flex items-center gap-1.5 text-[12px] font-medium shrink-0" style={{ color: 'var(--green)' }}>
             <CheckCircle2 className="w-4 h-4" /> Connected
+          </span>
+        ) : status?.connected ? (
+          <span className="flex items-center gap-1.5 text-[12px] font-medium shrink-0" style={{ color: 'var(--warning)' }}>
+            <XCircle className="w-4 h-4" /> Needs reconnect
           </span>
         ) : (
           <span className="flex items-center gap-1.5 text-[12px] font-medium shrink-0" style={{ color: 'var(--warning)' }}>
@@ -1137,13 +1160,21 @@ function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) 
             Connect Gmail
           </a>
         ) : (
-          <button
-            type="button"
-            onClick={disconnect}
-            className="px-3 py-1.5 text-[13px] border border-border rounded-md text-ink-secondary hover:border-ink-muted"
-          >
-            Disconnect
-          </button>
+          <>
+            <a
+              href="/api/auth/gmail"
+              className="inline-flex px-3 py-1.5 text-[13px] bg-accent hover:bg-accent-hover text-white font-medium rounded-md nr-btn-press"
+            >
+              {status.needsReconnect ? 'Reconnect Gmail' : 'Reconnect'}
+            </a>
+            <button
+              type="button"
+              onClick={disconnect}
+              className="px-3 py-1.5 text-[13px] border border-border rounded-md text-ink-secondary hover:border-ink-muted"
+            >
+              Disconnect
+            </button>
+          </>
         )}
       </div>
     </div>

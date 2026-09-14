@@ -304,6 +304,7 @@ class WebSearchTool:
         exclude_domains: Optional[set] = None,
         limit: int = 140,
         use_maps: bool = False,
+        max_queries: int = 10,
     ) -> List[Dict[str, Any]]:
         """Run a wave of web searches (Maps only when the plan says so)."""
         exclude_domains = exclude_domains or set()
@@ -311,7 +312,7 @@ class WebSearchTool:
         seen: set = set(exclude_domains)
 
         specs: List[Dict[str, Any]] = []
-        for q in queries[:16]:
+        for q in queries[: max(1, max_queries)]:
             if isinstance(q, str):
                 specs.append({"query": q, "use_maps": use_maps, "pool": "", "family": ""})
             elif isinstance(q, dict):
@@ -370,7 +371,14 @@ class WebSearchTool:
         return merged
 
     def _search_sync(self, query: str) -> List[Dict[str, str]]:
-        for fn in (self._serper, self._brave, self._tavily, self._duckduckgo):
+        # Prefer Serper when configured — avoid stacking 20s timeouts across providers.
+        ordered = []
+        if settings.SERPER_API_KEY:
+            ordered.append(self._serper)
+        for fn in (self._brave, self._tavily, self._duckduckgo):
+            if fn not in ordered:
+                ordered.append(fn)
+        for fn in ordered:
             try:
                 hits = fn(query)
                 if hits:
@@ -382,7 +390,7 @@ class WebSearchTool:
     def _serper(self, query: str) -> List[Dict[str, str]]:
         if not settings.SERPER_API_KEY:
             return []
-        with httpx.Client(timeout=20.0) as client:
+        with httpx.Client(timeout=10.0) as client:
             res = client.post(
                 "https://google.serper.dev/search",
                 headers={"X-API-KEY": settings.SERPER_API_KEY, "Content-Type": "application/json"},
@@ -466,13 +474,19 @@ class WebSearchTool:
             })
         return hits
 
-    async def scrape_homepage(self, url: str, limit: int = 8000) -> Dict[str, Any]:
+    async def scrape_homepage(
+        self,
+        url: str,
+        limit: int = 8000,
+        client: Optional[httpx.AsyncClient] = None,
+        keep_html: bool = True,
+    ) -> Dict[str, Any]:
         """Cheap single-page fetch for qualification. Does not crawl the shop catalog."""
         if not url or _should_skip(url):
             return {"text": "", "title": "", "url": url or "", "ok": False, "location": ""}
         try:
-            async with httpx.AsyncClient(timeout=6.0, follow_redirects=True, headers=HEADERS) as client:
-                res = await client.get(url)
+            async def _get(c: httpx.AsyncClient) -> Dict[str, Any]:
+                res = await c.get(url, headers=HEADERS, timeout=5.0)
                 if res.status_code != 200 or not res.text:
                     return {"text": "", "title": "", "url": str(res.url), "ok": False, "location": ""}
                 soup = BeautifulSoup(res.text, "html.parser")
@@ -481,7 +495,6 @@ class WebSearchTool:
                     title = soup.title.get_text(strip=True)[:160]
                 meta = soup.find("meta", attrs={"name": "description"})
                 desc = (meta.get("content") or "") if meta else ""
-                # Location often lives in the footer — extract before we strip chrome
                 location = _location_from_html(res.text)
                 emails: List[str] = []
                 phones: List[str] = []
@@ -499,18 +512,25 @@ class WebSearchTool:
                     text = f"{desc}\n{text}"[:limit]
                 if not location:
                     location = _location_from_text(f"{title} {desc} {text}")
-                return {
+                out = {
                     "text": text,
                     "title": title,
                     "url": str(res.url),
                     "ok": True,
                     "status": res.status_code,
-                    "html": res.text,
                     "location": location,
                     "emails": emails,
                     "phones": phones,
                     "contact_urls": contact_urls,
                 }
+                if keep_html:
+                    out["html"] = res.text
+                return out
+
+            if client is not None:
+                return await _get(client)
+            async with httpx.AsyncClient(timeout=5.0, follow_redirects=True, headers=HEADERS) as own:
+                return await _get(own)
         except Exception:
             return {"text": "", "title": "", "url": url, "ok": False, "location": ""}
 

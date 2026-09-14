@@ -38,6 +38,14 @@ import { useConfirm } from './components/ConfirmDialog';
 import LoginView from './components/LoginView';
 import SuspendedView from './components/SuspendedView';
 import BrandLockup from './components/brand/BrandLockup';
+
+function gmailCanSend(user: AuthUser | null | undefined): boolean {
+  const g = user?.gmail;
+  if (!g?.connected) return false;
+  if (g.needsReconnect) return false;
+  if (g.canSend === false) return false;
+  return true;
+}
 import ThemeToggle from './components/ThemeToggle';
 import { Menu } from 'lucide-react';
 import { brandAssets } from './lib/brandAssets';
@@ -205,7 +213,7 @@ export default function App() {
           window.history.replaceState({ route: initialRoute }, '', `#${initialRoute}`);
         }
         // Refresh Gmail status after OAuth return
-        if (params.get('gmail') === 'connected') {
+        if (params.get('gmail') === 'connected' || params.get('gmail') === 'needs_scope') {
           const st = await apiFetch('/api/auth/gmail/status');
           if (st.ok) {
             const gmail = await st.json();
@@ -457,8 +465,14 @@ export default function App() {
   };
 
   const handleSendAllReady = async (mode: 'batch' | 'ready' = 'batch') => {
-    if (!user?.gmail?.connected) {
-      pushToast('info', 'Connect Gmail first', 'Workspace → Connect, then send in one click.');
+    if (!gmailCanSend(user)) {
+      pushToast(
+        'info',
+        user?.gmail?.connected ? 'Reconnect Gmail' : 'Connect Gmail first',
+        user?.gmail?.connected
+          ? 'Workspace → Connect: Disconnect Gmail, then Connect again and allow send access.'
+          : 'Workspace → Connect, then send in one click.',
+      );
       return;
     }
     const label = mode === 'ready'
@@ -509,8 +523,14 @@ export default function App() {
   };
 
   const handleSendSelected = async (ids: string[]) => {
-    if (!user?.gmail?.connected) {
-      pushToast('info', 'Connect Gmail first', 'Workspace → Connect, then send selected emails.');
+    if (!gmailCanSend(user)) {
+      pushToast(
+        'info',
+        user?.gmail?.connected ? 'Reconnect Gmail' : 'Connect Gmail first',
+        user?.gmail?.connected
+          ? 'Workspace → Connect: Disconnect Gmail, then Connect again and allow send access.'
+          : 'Workspace → Connect, then send selected emails.',
+      );
       return;
     }
     if (!ids.length) return;
@@ -827,7 +847,7 @@ export default function App() {
             onPrepareOutreach={() => handlePrepareOutreach()}
             onSendAllReady={() => handleSendAllReady('ready')}
             onSendSelected={handleSendSelected}
-            gmailConnected={Boolean(user?.gmail?.connected)}
+            gmailConnected={gmailCanSend(user)}
             onGoWorkspace={() => navigate(preferredWorkspaceRoute(businessInfo))}
           />
         )}
@@ -845,7 +865,7 @@ export default function App() {
             onRemoveProspect={handleRemoveProspect}
             onClearAll={handleClearLeads}
             onSendSelected={handleSendSelected}
-            gmailConnected={Boolean(user?.gmail?.connected)}
+            gmailConnected={gmailCanSend(user)}
             onGoWorkspace={() => navigate(preferredWorkspaceRoute(businessInfo))}
           />
         )}
@@ -904,7 +924,7 @@ export default function App() {
         onSendViaEmail={handleSendViaEmail}
         onPrepareOutreach={id => handlePrepareOutreach(id)}
         onPrepareFollowUp={handlePrepareFollowUp}
-        gmailConnected={Boolean(user?.gmail?.connected)}
+        gmailConnected={gmailCanSend(user)}
       />
     </div>
   );

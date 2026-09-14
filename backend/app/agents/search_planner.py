@@ -447,9 +447,9 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
             continue
         seen_family[item.family] = n + 1
         out.append(item)
-        if len(out) >= 16:
+        if len(out) >= 10:
             break
-    return out or queries[:16]
+    return out or queries[:10]
 
 
 def plan_wave2(
@@ -553,7 +553,7 @@ def plan_wave2(
             continue
         seen.add(key)
         out.append(q)
-        if len(out) >= 12:
+        if len(out) >= 6:
             break
     return out
 

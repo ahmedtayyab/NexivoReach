@@ -180,7 +180,9 @@ export default function Sidebar({
 
         <div className="px-2 pb-2">
           <ConnectionStatus
-            gmailConnected={Boolean(user?.gmail?.connected)}
+            gmailConnected={Boolean(
+              user?.gmail?.connected && !user?.gmail?.needsReconnect && user?.gmail?.canSend !== false,
+            )}
             gmailEmail={user?.gmail?.email}
             onOpenConnect={() => go('integrations')}
           />
