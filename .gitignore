@@ -22,3 +22,7 @@ Thumbs.db
 # Generated local dumps
 Gemini_Generated_Image_*.jpeg
 Gemini_Generated_Image_*.jpg
+
+# Private / internal docs (keep local only)
+docs/INTERNAL_PROJECT_BRIEF.md
+docs/INTERNAL*
