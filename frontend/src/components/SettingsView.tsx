@@ -86,7 +86,7 @@ export default function SettingsView({
     company: 'Name and website are enough. A short description helps the hunt.',
     integrations: 'Optional — needed for Gmail send and Sheets sync.',
     catalog: 'Optional — pull products from your site when you want richer matches.',
-    icp: 'Describe who to find. Results land in Leads.',
+    icp: 'Type one hunt: product + buyer + place (e.g. belt importers in Nevada). Run separate hunts for other markets.',
   };
 
   useEffect(() => {

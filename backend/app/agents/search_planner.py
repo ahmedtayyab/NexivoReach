@@ -351,6 +351,16 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
             qn = f"{cat2} {role} {place}"
             if not any(x.query.lower() == qn.lower() for x in queries):
                 queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
+        # Fan out extra places from the prompt (Nevada + Texas, UAE + Germany, …)
+        for extra_place in (profile.places or [])[1:3]:
+            for c in _uniq([cat, cat2], 2):
+                qn = f"{c} {role} {extra_place}"
+                if qn and not any(x.query.lower() == qn.lower() for x in queries):
+                    queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
+                if "import" in (buyer or "").lower():
+                    qn2 = f"{c} importer {extra_place}"
+                    if not any(x.query.lower() == qn2.lower() for x in queries):
+                        queries.append(PlannedQuery(qn2, "user", "direct_icp", False, 1))
 
     def add(q: str, family: str, pool: str, maps: bool = False) -> None:
         q = re.sub(r"\s+", " ", q).strip()

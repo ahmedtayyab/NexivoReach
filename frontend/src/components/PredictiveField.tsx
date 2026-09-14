@@ -24,6 +24,8 @@ interface Props {
   };
   /** Single-value mode (Discover query) — replace instead of CSV toggle */
   single?: boolean;
+  /** Hide the suggested-scan list once the user has typed a query */
+  hideSuggestionsWhenFilled?: boolean;
 }
 
 /**
@@ -39,6 +41,7 @@ export default function PredictiveField({
   placeholder,
   aiContext,
   single = false,
+  hideSuggestionsWhenFilled = false,
 }: Props) {
   const listId = useId();
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -215,11 +218,11 @@ export default function PredictiveField({
         </div>
       )}
 
-      {single && suggestions.length > 0 && (
+      {single && suggestions.length > 0 && !(hideSuggestionsWhenFilled && value.trim()) && (
         <div className="mt-2 space-y-1.5">
-          <p className="text-[11px] text-ink-muted">Suggested scans — click to use:</p>
+          <p className="text-[11px] text-ink-muted">Try a starter hunt:</p>
           <div className="flex flex-col gap-1">
-            {suggestions.slice(0, 4).map(item => (
+            {suggestions.slice(0, 3).map(item => (
               <button
                 key={item}
                 type="button"

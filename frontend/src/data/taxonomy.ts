@@ -306,16 +306,41 @@ export function filterMatches(pool: string[], query: string, limit = 8): string[
     .slice(0, limit);
 }
 
+/** Labels that are nav/page junk, not product categories. */
+const JUNK_CHIP_LABELS = new Set([
+  'products', 'product', 'contact', 'contact us', 'blog', 'news', 'about', 'about us',
+  'privacy', 'privacy policy', 'terms', 'terms of service', 'cart', 'checkout',
+  'home', 'shop', 'store', 'search', 'login', 'account', 'faq', 'support',
+  'shipping', 'returns', 'wishlist', 'uncategorized', 'all', 'new', 'sale',
+]);
+
+/** Drop scraped nav junk and absurdly long product-title “categories”. */
+export function isUsefulChipLabel(label: string): boolean {
+  const t = (label || '').trim();
+  if (!t || t.length < 2) return false;
+  if (t.length > 42) return false;
+  if (JUNK_CHIP_LABELS.has(t.toLowerCase())) return false;
+  if (/[.\/]aspx\b/i.test(t) || /%c2%b0/i.test(t)) return false;
+  if (/\b(free shipping|privacy policy|terms of)\b/i.test(t)) return false;
+  // Mostly a URL slug / SKU dump
+  if ((t.match(/\d/g) || []).length > 6 && t.split(/\s+/).length > 8) return false;
+  return true;
+}
+
+export function cleanChipLabels(labels: string[], limit = 4): string[] {
+  return uniquePreserve(labels.filter(isUsefulChipLabel)).slice(0, limit);
+}
+
 /** Derive category labels from scraped/saved products for catalog-aware suggestions. */
 export function categoriesFromProducts(products: { category?: string; name?: string }[]): string[] {
   const counts = new Map<string, number>();
   for (const p of products) {
     const cat = (p.category || '').trim();
-    if (!cat || cat.toLowerCase() === 'uncategorized') continue;
+    if (!isUsefulChipLabel(cat)) continue;
     counts.set(cat, (counts.get(cat) || 0) + 1);
   }
   return [...counts.entries()]
     .sort((a, b) => b[1] - a[1])
     .map(([cat]) => cat)
-    .slice(0, 12);
+    .slice(0, 8);
 }

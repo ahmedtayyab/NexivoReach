@@ -1,4 +1,5 @@
 import BrandLockup from './brand/BrandLockup';
+import ThemeToggle from './ThemeToggle';
 import { brandAssets } from '../lib/brandAssets';
 
 interface Props {
@@ -8,6 +9,9 @@ interface Props {
 export default function LoginView({ error }: Props) {
   return (
     <div className="min-h-dvh flex items-center justify-center px-4 sm:px-6 relative overflow-hidden">
+      <div className="login-theme-slot">
+        <ThemeToggle compact />
+      </div>
       <img
         src={brandAssets.loginAtmosphere}
         alt=""
@@ -15,14 +19,7 @@ export default function LoginView({ error }: Props) {
         decoding="async"
         fetchPriority="high"
       />
-      <div
-        className="absolute inset-0"
-        style={{
-          background:
-            'linear-gradient(118deg, rgba(247,247,245,0.94) 0%, rgba(247,247,245,0.78) 46%, rgba(23,32,51,0.18) 100%)',
-        }}
-        aria-hidden
-      />
+      <div className="login-veil" aria-hidden />
       <div
         className="absolute -right-16 top-1/4 w-72 h-72 rounded-full opacity-40 pointer-events-none"
         style={{ background: 'radial-gradient(circle, color-mix(in srgb, var(--cta) 28%, transparent), transparent 70%)' }}
@@ -36,7 +33,7 @@ export default function LoginView({ error }: Props) {
           </div>
         </div>
 
-        <div className="nr-enter nr-enter-delay-2 rounded-xl border border-border bg-panel/90 backdrop-blur-sm p-6 sm:p-7 shadow-[0_20px_50px_rgba(23,32,51,0.08)]">
+        <div className="nr-enter nr-enter-delay-2 rounded-xl border border-border bg-panel/90 backdrop-blur-sm p-6 sm:p-7 login-card">
           <h1 className="font-display text-[1.75rem] sm:text-[2rem] font-bold text-ink leading-tight tracking-tight">
             Sign in
           </h1>

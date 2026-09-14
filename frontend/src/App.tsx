@@ -38,6 +38,7 @@ import { useConfirm } from './components/ConfirmDialog';
 import LoginView from './components/LoginView';
 import SuspendedView from './components/SuspendedView';
 import BrandLockup from './components/brand/BrandLockup';
+import ThemeToggle from './components/ThemeToggle';
 import { Menu } from 'lucide-react';
 import { brandAssets } from './lib/brandAssets';
 
@@ -790,7 +791,10 @@ export default function App() {
           <Menu className="w-5 h-5" strokeWidth={1.75} />
         </button>
         <BrandLockup size="sm" className="absolute left-1/2 -translate-x-1/2 pointer-events-none" />
-        <NotificationHeaderButton unread={notifUnread} onClick={() => setNotifSheetOpen(true)} />
+        <div className="flex items-center gap-1">
+          <ThemeToggle compact />
+          <NotificationHeaderButton unread={notifUnread} onClick={() => setNotifSheetOpen(true)} />
+        </div>
       </header>
 
       <Sidebar

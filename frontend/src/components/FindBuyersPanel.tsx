@@ -3,7 +3,7 @@ import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product
 import { Loader2 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
-import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
+import { categoriesFromProducts, cleanChipLabels, suggestionsForField } from '../data/taxonomy';
 import { isPlaceholderCompanyName } from '../lib/workspace';
 
 interface Props {
@@ -33,6 +33,11 @@ function buildPhases(query: string, placeHint: string): string[] {
   ];
 }
 
+function shortLabel(value: string, max = 28): string {
+  const t = value.trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
 /**
  * Primary product action: describe who to find, then hunt.
  */
@@ -60,16 +65,16 @@ export default function FindBuyersPanel({
   const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
   const productOptions = useMemo(() => {
     const fromCatalog = catalogCats.length ? catalogCats : (businessInfo.primaryCategories || []);
-    return fromCatalog.filter(Boolean).slice(0, 6);
+    return cleanChipLabels(fromCatalog, 3);
   }, [catalogCats, businessInfo.primaryCategories]);
   const buyerOptions = useMemo(
-    () => (icp.targetBuyerTypes || []).filter(Boolean).slice(0, 6),
+    () => cleanChipLabels(icp.targetBuyerTypes || [], 3),
     [icp.targetBuyerTypes],
   );
   const placeOptions = useMemo(() => {
-    const fromIcp = (icp.targetCountries || []).filter(Boolean);
-    const fromBiz = (businessInfo.targetMarkets || []).filter(Boolean);
-    return [...fromIcp, ...fromBiz].filter((v, i, a) => a.indexOf(v) === i).slice(0, 6);
+    const fromIcp = icp.targetCountries || [];
+    const fromBiz = businessInfo.targetMarkets || [];
+    return cleanChipLabels([...fromIcp, ...fromBiz], 3);
   }, [icp.targetCountries, businessInfo.targetMarkets]);
 
   const context = useMemo(
@@ -85,7 +90,7 @@ export default function FindBuyersPanel({
     [query, businessInfo, icp, catalogCats],
   );
   const suggestions = useMemo(
-    () => suggestionsForField('discover', context, catalogCats),
+    () => suggestionsForField('discover', context, catalogCats).slice(0, 3),
     [context, catalogCats],
   );
 
@@ -222,10 +227,32 @@ export default function FindBuyersPanel({
         <div className="find-buyers__head">
           <h3 className="find-buyers__title">Find buyers</h3>
           <p className="find-buyers__desc">
-            Be specific — product, buyer type, and place. Results go to Leads and Google Sheets.
+            Type one focused hunt: <strong>product + buyer type + place</strong>. Results go to Leads and Sheets.
           </p>
         </div>
       )}
+
+      <div className="hunt-howto" aria-label="How to write a hunt">
+        <p className="hunt-howto__title">How to write it</p>
+        <ol className="hunt-howto__list">
+          <li>
+            Use this pattern:{' '}
+            <code className="hunt-howto__code">[product] [buyer type] in [state or country]</code>
+          </li>
+          <li>
+            Good:{' '}
+            <span className="hunt-howto__good">martial arts belt importers in Nevada</span>
+            {' · '}
+            <span className="hunt-howto__good">hoodie wholesalers in Texas</span>
+            {' · '}
+            <span className="hunt-howto__good">gaming chair distributors in UAE</span>
+          </li>
+          <li>
+            Avoid packing two hunts into one line (e.g. belts in Nevada <em>and</em> hoodies in Texas).
+            Run them as separate Find buyers searches for cleaner geo filtering.
+          </li>
+        </ol>
+      </div>
 
       {!sheetsConnected && (
         <p className="ui-banner ui-banner--warn" role="status">
@@ -240,76 +267,85 @@ export default function FindBuyersPanel({
 
       {sheetsConnected && !ready && (
         <p className="ui-banner ui-banner--warn" role="status">
-          Type who you want below, or add a short company brief first.
+          Type a hunt below (product + buyer + place), or add a short company brief first.
         </p>
-      )}
-
-      {showBuilder && (
-        <div className="hunt-builder" aria-label="Build hunt from chips">
-          {productOptions.map(opt => (
-            <button
-              key={`p-${opt}`}
-              type="button"
-              className={`hunt-chip ${productChip === opt ? 'is-on' : ''}`}
-              onClick={() => toggleChip('product', opt)}
-            >
-              <span className="hunt-chip__key">Product</span>
-              {opt}
-            </button>
-          ))}
-          {buyerOptions.map(opt => (
-            <button
-              key={`b-${opt}`}
-              type="button"
-              className={`hunt-chip ${buyerChip === opt ? 'is-on' : ''}`}
-              onClick={() => toggleChip('buyer', opt)}
-            >
-              <span className="hunt-chip__key">Buyer</span>
-              {opt}
-            </button>
-          ))}
-          {placeOptions.map(opt => (
-            <button
-              key={`l-${opt}`}
-              type="button"
-              className={`hunt-chip ${placeChip === opt ? 'is-on' : ''}`}
-              onClick={() => toggleChip('place', opt)}
-            >
-              <span className="hunt-chip__key">Place</span>
-              {opt}
-            </button>
-          ))}
-          {!buyerOptions.length && (
-            <button
-              type="button"
-              className="hunt-chip"
-              onClick={() => {
-                const v = 'importers';
-                setBuyerChip(v);
-                composeFromChips(productChip, v, placeChip);
-              }}
-            >
-              <span className="hunt-chip__key">Buyer</span>
-              importers
-            </button>
-          )}
-        </div>
       )}
 
       <PredictiveField
         label="What are you looking for?"
-        hint="Tap chips above or type freely — e.g. martial arts belt importers in Nevada."
+        hint="One product, one buyer type, one place — then run. Need another market? Run a second hunt."
         value={query}
         onChange={setQuery}
         suggestions={suggestions}
-        placeholder="e.g. martial arts belt importers in Nevada"
+        placeholder="martial arts belt importers in Nevada"
         single
+        hideSuggestionsWhenFilled
         aiContext={{
           field: 'discover',
           description: businessInfo.description,
           catalogCategories: catalogCats.length ? catalogCats : businessInfo.primaryCategories,
         }}
       />
+
+      {showBuilder && (
+        <div className="hunt-builder" aria-label="Quick picks">
+          <p className="hunt-builder__label">Quick picks</p>
+          <div className="hunt-builder__rows">
+            {productOptions.length > 0 && (
+              <div className="hunt-builder__row">
+                <span className="hunt-builder__kind">Product</span>
+                <div className="hunt-builder__chips">
+                  {productOptions.map(opt => (
+                    <button
+                      key={`p-${opt}`}
+                      type="button"
+                      title={opt}
+                      className={`hunt-chip ${productChip === opt ? 'is-on' : ''}`}
+                      onClick={() => toggleChip('product', opt)}
+                    >
+                      {shortLabel(opt)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="hunt-builder__row">
+                <span className="hunt-builder__kind">Buyer</span>
+                <div className="hunt-builder__chips">
+                  {(buyerOptions.length ? buyerOptions : ['importers']).map(opt => (
+                    <button
+                      key={`b-${opt}`}
+                      type="button"
+                      title={opt}
+                      className={`hunt-chip ${buyerChip === opt ? 'is-on' : ''}`}
+                      onClick={() => toggleChip('buyer', opt)}
+                    >
+                      {shortLabel(opt)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            {placeOptions.length > 0 && (
+              <div className="hunt-builder__row">
+                <span className="hunt-builder__kind">Place</span>
+                <div className="hunt-builder__chips">
+                  {placeOptions.map(opt => (
+                    <button
+                      key={`l-${opt}`}
+                      type="button"
+                      title={opt}
+                      className={`hunt-chip ${placeChip === opt ? 'is-on' : ''}`}
+                      onClick={() => toggleChip('place', opt)}
+                    >
+                      {shortLabel(opt)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="find-buyers__actions">
         <div className="find-buyers__status-block" aria-live="polite">
@@ -318,7 +354,7 @@ export default function FindBuyersPanel({
               {statusText ||
                 (lastFound !== null
                   ? `Last run added ${lastFound} lead${lastFound === 1 ? '' : 's'}.`
-                  : 'Typical hunt: about 30–45 seconds for a ranked shortlist.')}
+                  : 'Typical hunt: about 30–45 seconds.')}
             </p>
           )}
         </div>

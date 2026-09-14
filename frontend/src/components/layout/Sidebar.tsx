@@ -4,6 +4,7 @@ import type { AuthUser, BusinessInfo } from '../../types';
 import type { AppRoute } from '../../lib/navigation';
 import BrandLockup from '../brand/BrandLockup';
 import ConnectionStatus from '../ConnectionStatus';
+import ThemeToggle from '../ThemeToggle';
 
 interface Props {
   activeTab: string;
@@ -220,6 +221,7 @@ export default function Sidebar({
         </div>
 
         <div className="px-3 py-3 border-t border-border-subtle space-y-2 mt-auto">
+          <ThemeToggle />
           {user && (
             <div className="flex items-center gap-2 min-w-0">
               {user.picture ? (

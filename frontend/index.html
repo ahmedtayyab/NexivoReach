@@ -13,6 +13,23 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:image" content="/brand/og-card.jpeg" />
     <title>NexivoReach</title>
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('nr-theme');
+          var theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          document.documentElement.setAttribute('data-theme', theme);
+          document.documentElement.style.colorScheme = theme;
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute('content', theme === 'dark' ? '#0E1117' : '#F7F7F5');
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
