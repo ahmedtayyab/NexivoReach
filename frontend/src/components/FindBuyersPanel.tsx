@@ -3,7 +3,7 @@ import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product
 import { Loader2 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
-import { categoriesFromProducts, cleanChipLabels, suggestionsForField } from '../data/taxonomy';
+import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
 import { isPlaceholderCompanyName } from '../lib/workspace';
 
 interface Props {
@@ -33,11 +33,6 @@ function buildPhases(query: string, placeHint: string): string[] {
   ];
 }
 
-function shortLabel(value: string, max = 28): string {
-  const t = value.trim();
-  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
-}
-
 /**
  * Primary product action: describe who to find, then hunt.
  */
@@ -58,23 +53,12 @@ export default function FindBuyersPanel({
   const [lastFound, setLastFound] = useState<number | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [phaseIndex, setPhaseIndex] = useState(0);
-  const [productChip, setProductChip] = useState('');
-  const [buyerChip, setBuyerChip] = useState('');
-  const [placeChip, setPlaceChip] = useState('');
 
   const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
-  const productOptions = useMemo(() => {
-    const fromCatalog = catalogCats.length ? catalogCats : (businessInfo.primaryCategories || []);
-    return cleanChipLabels(fromCatalog, 3);
-  }, [catalogCats, businessInfo.primaryCategories]);
-  const buyerOptions = useMemo(
-    () => cleanChipLabels(icp.targetBuyerTypes || [], 3),
-    [icp.targetBuyerTypes],
-  );
-  const placeOptions = useMemo(() => {
-    const fromIcp = icp.targetCountries || [];
-    const fromBiz = businessInfo.targetMarkets || [];
-    return cleanChipLabels([...fromIcp, ...fromBiz], 3);
+  const placeHint = useMemo(() => {
+    const fromIcp = (icp.targetCountries || []).filter(Boolean);
+    const fromBiz = (businessInfo.targetMarkets || []).filter(Boolean);
+    return [...fromIcp, ...fromBiz][0] || '';
   }, [icp.targetCountries, businessInfo.targetMarkets]);
 
   const context = useMemo(
@@ -103,30 +87,7 @@ export default function FindBuyersPanel({
 
   const ready = Boolean(query.trim()) || hasBrief;
   const canHunt = ready && sheetsConnected;
-  const phases = useMemo(
-    () => buildPhases(query, placeChip || placeOptions[0] || ''),
-    [query, placeChip, placeOptions],
-  );
-
-  const composeFromChips = (nextProduct: string, nextBuyer: string, nextPlace: string) => {
-    const parts = [nextProduct, nextBuyer].filter(Boolean);
-    let sentence = parts.join(' ');
-    if (nextPlace) sentence = sentence ? `${sentence} in ${nextPlace}` : nextPlace;
-    if (sentence) setQuery(sentence);
-  };
-
-  const toggleChip = (
-    kind: 'product' | 'buyer' | 'place',
-    value: string,
-  ) => {
-    const nextProduct = kind === 'product' ? (productChip === value ? '' : value) : productChip;
-    const nextBuyer = kind === 'buyer' ? (buyerChip === value ? '' : value) : buyerChip;
-    const nextPlace = kind === 'place' ? (placeChip === value ? '' : value) : placeChip;
-    if (kind === 'product') setProductChip(nextProduct);
-    if (kind === 'buyer') setBuyerChip(nextBuyer);
-    if (kind === 'place') setPlaceChip(nextPlace);
-    composeFromChips(nextProduct, nextBuyer, nextPlace);
-  };
+  const phases = useMemo(() => buildPhases(query, placeHint), [query, placeHint]);
 
   useEffect(() => {
     if (!isRunning) return;
@@ -200,8 +161,6 @@ export default function FindBuyersPanel({
     }
   };
 
-  const showBuilder = productOptions.length + buyerOptions.length + placeOptions.length > 0;
-
   return (
     <div className={`find-buyers find-buyers--primary ${compact ? 'find-buyers--compact' : ''}`}>
       {isRunning && (
@@ -227,31 +186,23 @@ export default function FindBuyersPanel({
         <div className="find-buyers__head">
           <h3 className="find-buyers__title">Find buyers</h3>
           <p className="find-buyers__desc">
-            Type one focused hunt: <strong>product + buyer type + place</strong>. Results go to Leads and Sheets.
+            Name the product, who buys it, and where. Results go to Leads and Sheets.
           </p>
         </div>
       )}
 
-      <div className="hunt-howto" aria-label="How to write a hunt">
-        <p className="hunt-howto__title">How to write it</p>
-        <ol className="hunt-howto__list">
-          <li>
-            Use this pattern:{' '}
-            <code className="hunt-howto__code">[product] [buyer type] in [state or country]</code>
-          </li>
-          <li>
-            Good:{' '}
-            <span className="hunt-howto__good">martial arts belt importers in Nevada</span>
-            {' · '}
-            <span className="hunt-howto__good">hoodie wholesalers in Texas</span>
-            {' · '}
-            <span className="hunt-howto__good">gaming chair distributors in UAE</span>
-          </li>
-          <li>
-            Avoid packing two hunts into one line (e.g. belts in Nevada <em>and</em> hoodies in Texas).
-            Run them as separate Find buyers searches for cleaner geo filtering.
-          </li>
-        </ol>
+      <div className="hunt-howto" aria-label="Hunt writing tips">
+        <p className="hunt-howto__lede">
+          Keep each search to one product, one buyer type, and one place.
+          For another market, run a second hunt.
+        </p>
+        <p className="hunt-howto__examples">
+          Examples: <em>martial arts belt importers in Nevada</em>
+          {' · '}
+          <em>hoodie wholesalers in Texas</em>
+          {' · '}
+          <em>gaming chair distributors in UAE</em>
+        </p>
       </div>
 
       {!sheetsConnected && (
@@ -286,66 +237,6 @@ export default function FindBuyersPanel({
           catalogCategories: catalogCats.length ? catalogCats : businessInfo.primaryCategories,
         }}
       />
-
-      {showBuilder && (
-        <div className="hunt-builder" aria-label="Quick picks">
-          <p className="hunt-builder__label">Quick picks</p>
-          <div className="hunt-builder__rows">
-            {productOptions.length > 0 && (
-              <div className="hunt-builder__row">
-                <span className="hunt-builder__kind">Product</span>
-                <div className="hunt-builder__chips">
-                  {productOptions.map(opt => (
-                    <button
-                      key={`p-${opt}`}
-                      type="button"
-                      title={opt}
-                      className={`hunt-chip ${productChip === opt ? 'is-on' : ''}`}
-                      onClick={() => toggleChip('product', opt)}
-                    >
-                      {shortLabel(opt)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="hunt-builder__row">
-                <span className="hunt-builder__kind">Buyer</span>
-                <div className="hunt-builder__chips">
-                  {(buyerOptions.length ? buyerOptions : ['importers']).map(opt => (
-                    <button
-                      key={`b-${opt}`}
-                      type="button"
-                      title={opt}
-                      className={`hunt-chip ${buyerChip === opt ? 'is-on' : ''}`}
-                      onClick={() => toggleChip('buyer', opt)}
-                    >
-                      {shortLabel(opt)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            {placeOptions.length > 0 && (
-              <div className="hunt-builder__row">
-                <span className="hunt-builder__kind">Place</span>
-                <div className="hunt-builder__chips">
-                  {placeOptions.map(opt => (
-                    <button
-                      key={`l-${opt}`}
-                      type="button"
-                      title={opt}
-                      className={`hunt-chip ${placeChip === opt ? 'is-on' : ''}`}
-                      onClick={() => toggleChip('place', opt)}
-                    >
-                      {shortLabel(opt)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       <div className="find-buyers__actions">
         <div className="find-buyers__status-block" aria-live="polite">

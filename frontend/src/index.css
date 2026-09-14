@@ -1,6 +1,6 @@
 /* NexivoReach — premium B2B intelligence workspace.
-   Warm ivory neutrals (light) / charcoal slate (dark), deep ink, restrained indigo,
-   emerald CTAs. Sparse brass. Toggle via data-theme on <html>. */
+   Warm ivory (light) / warm ink (dark), deep type, restrained accent,
+   forest CTAs. Same brand with the lights lowered — no neon, no glow. */
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Syne:wght@600;700&display=swap');
 @import "tailwindcss";
 
@@ -83,69 +83,70 @@
     --shadow-color: rgba(23, 32, 51, 0.14);
   }
 
-  /* Dark mode — charcoal slate + brighter emerald CTAs */
+  /* Dark mode — warm ink room (same brand as light, lights lowered) */
   [data-theme="dark"] {
     color-scheme: dark;
 
-    --color-canvas: #0E1117;
-    --color-surface: #141820;
-    --color-panel: #1A1F2A;
-    --color-panel-elevated: #222833;
-    --color-muted: #252B38;
-    --color-border: #2E3545;
-    --color-border-subtle: #232936;
-    --color-ink: #E9ECF1;
-    --color-ink-secondary: #9AA3B5;
-    --color-ink-muted: #7A8498;
-    --color-accent: #8BA3C7;
-    --color-accent-hover: #A5BAD8;
+    --color-canvas: #141311;
+    --color-surface: #1A1916;
+    --color-panel: #201F1B;
+    --color-panel-elevated: #282622;
+    --color-muted: #2A2824;
+    --color-border: #34322C;
+    --color-border-subtle: #2A2824;
+    --color-ink: #EDEAE4;
+    --color-ink-secondary: #A39E94;
+    --color-ink-muted: #7F7A72;
+    --color-accent: #8A9BB0;
+    --color-accent-hover: #A4B3C4;
 
-    --bg-app: #0E1117;
-    --bg-panel: #1A1F2A;
-    --bg-surface: #141820;
-    --sidebar-bg: #12161F;
-    --sidebar-active: #252B38;
-    --border: #2E3545;
-    --border-subtle: #232936;
-    --panel: #1A1F2A;
-    --panel-elevated: #222833;
-    --muted: #252B38;
-    --row-hover: #1F2532;
+    --bg-app: #141311;
+    --bg-panel: #201F1B;
+    --bg-surface: #1A1916;
+    --sidebar-bg: #181714;
+    --sidebar-active: #2A2824;
+    --border: #34322C;
+    --border-subtle: #2A2824;
+    --panel: #201F1B;
+    --panel-elevated: #282622;
+    --muted: #2A2824;
+    --row-hover: #26241F;
 
-    --text-primary: #E9ECF1;
-    --text-secondary: #9AA3B5;
-    --text-muted: #7A8498;
-    --text-label: #A8B0C0;
+    --text-primary: #EDEAE4;
+    --text-secondary: #A39E94;
+    --text-muted: #7F7A72;
+    --text-label: #B0AAA0;
 
-    --brand: #E9ECF1;
-    --navy: #C5CEDC;
-    --navy-soft: rgba(201, 214, 232, 0.08);
-    --accent: #8BA3C7;
-    --accent-hover: #A5BAD8;
-    --accent-soft: rgba(139, 163, 199, 0.14);
-    --focus-ring: rgba(47, 191, 138, 0.42);
+    --brand: #EDEAE4;
+    --navy: #C8C2B8;
+    --navy-soft: rgba(237, 234, 228, 0.06);
+    --accent: #8A9BB0;
+    --accent-hover: #A4B3C4;
+    --accent-soft: rgba(138, 155, 176, 0.12);
+    --focus-ring: rgba(61, 138, 108, 0.45);
 
-    --cta: #2FBF8A;
-    --cta-hover: #3DD49A;
-    --cta-soft: rgba(47, 191, 138, 0.16);
+    /* Same family as light CTA — deeper forest, not neon mint */
+    --cta: #2F8F6D;
+    --cta-hover: #3A9F7B;
+    --cta-soft: rgba(47, 143, 109, 0.16);
 
-    --brass: #C9A66B;
-    --brass-text: #D4B57A;
-    --brass-bg: rgba(201, 166, 107, 0.14);
-    --amber: #C9A66B;
-    --amber-hover: #D4B57A;
-    --amber-soft: rgba(201, 166, 107, 0.14);
+    --brass: #B89968;
+    --brass-text: #D0B584;
+    --brass-bg: rgba(184, 153, 104, 0.14);
+    --amber: #B89968;
+    --amber-hover: #D0B584;
+    --amber-soft: rgba(184, 153, 104, 0.14);
 
-    --green: #3ECF8E;
-    --fit-high: #2FBF8A;
-    --fit-mid: #C9A66B;
-    --fit-low: #D48080;
-    --danger: #D48080;
-    --info: #8BA3C7;
-    --warning: #C9A66B;
+    --green: #3F9B74;
+    --fit-high: #2F8F6D;
+    --fit-mid: #B89968;
+    --fit-low: #C57A7A;
+    --danger: #C57A7A;
+    --info: #8A9BB0;
+    --warning: #B89968;
 
-    --mix-base: #1A1F2A;
-    --shadow-color: rgba(0, 0, 0, 0.45);
+    --mix-base: #201F1B;
+    --shadow-color: rgba(0, 0, 0, 0.4);
   }
 
   * { box-sizing: border-box; }
@@ -162,13 +163,6 @@
     margin: 0;
     padding: 0;
     transition: background-color 180ms ease, color 180ms ease;
-  }
-
-  [data-theme="dark"] body {
-    background-image:
-      radial-gradient(ellipse 90% 55% at 12% -8%, rgba(47, 191, 138, 0.09), transparent 55%),
-      radial-gradient(ellipse 70% 45% at 100% 0%, rgba(139, 163, 199, 0.07), transparent 50%);
-    background-attachment: fixed;
   }
 
   h1, h2, h3, .font-display {
@@ -1577,45 +1571,27 @@ input:focus, textarea:focus, select:focus {
 }
 
 .hunt-howto {
-  margin: 0 0 0.85rem;
-  padding: 0.7rem 0.85rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--bg-surface);
+  margin: 0 0 0.9rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
-.hunt-howto__title {
-  margin: 0 0 0.4rem;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-.hunt-howto__list {
-  margin: 0;
-  padding-left: 1.1rem;
-  display: grid;
-  gap: 0.35rem;
+.hunt-howto__lede {
+  margin: 0 0 0.35rem;
   color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.hunt-howto__examples {
+  margin: 0;
+  color: var(--text-muted);
   font-size: 12.5px;
-  line-height: 1.45;
+  line-height: 1.5;
 }
-.hunt-howto__list li::marker {
-  color: var(--cta);
-}
-.hunt-howto__code {
-  display: inline;
-  padding: 0.05rem 0.35rem;
-  border-radius: 4px;
-  background: var(--cta-soft);
-  color: var(--cta);
-  font-family: var(--font-sans);
-  font-size: 12px;
-  font-weight: 600;
-}
-.hunt-howto__good {
-  color: var(--text-primary);
-  font-weight: 550;
+.hunt-howto__examples em {
+  color: var(--text-secondary);
+  font-style: normal;
+  font-weight: 500;
 }
 
 .hunt-builder {
@@ -2590,8 +2566,8 @@ input:focus, textarea:focus, select:focus {
 }
 .theme-toggle__thumb.is-dark {
   transform: translateX(100%);
-  background: color-mix(in srgb, var(--cta) 16%, var(--bg-panel));
-  border-color: color-mix(in srgb, var(--cta) 35%, var(--border));
+  background: var(--bg-panel);
+  border-color: var(--border);
 }
 .theme-toggle--icon {
   display: inline-flex;
@@ -2630,9 +2606,9 @@ input:focus, textarea:focus, select:focus {
 [data-theme="dark"] .login-veil {
   background: linear-gradient(
     118deg,
-    color-mix(in srgb, var(--bg-app) 92%, transparent) 0%,
-    color-mix(in srgb, var(--bg-app) 72%, transparent) 42%,
-    color-mix(in srgb, var(--cta) 18%, transparent) 100%
+    color-mix(in srgb, var(--bg-app) 94%, transparent) 0%,
+    color-mix(in srgb, var(--bg-app) 80%, transparent) 50%,
+    color-mix(in srgb, var(--bg-app) 55%, transparent) 100%
   );
 }
 .login-theme-slot {
@@ -2643,11 +2619,4 @@ input:focus, textarea:focus, select:focus {
 }
 .login-card {
   box-shadow: 0 20px 50px var(--shadow-color);
-}
-[data-theme="dark"] .btn-primary {
-  color: #0B1A14;
-  font-weight: 650;
-}
-[data-theme="dark"] .btn-primary:hover:not(:disabled) {
-  color: #0B1A14;
 }

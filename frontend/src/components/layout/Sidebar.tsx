@@ -94,16 +94,19 @@ export default function Sidebar({
           mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
         ].join(' ')}
       >
-        <div className="nr-sidebar__brand justify-between">
+        <div className="nr-sidebar__brand justify-between gap-2">
           <BrandLockup size="sm" />
-          <button
-            type="button"
-            className="md:hidden p-1.5 -mr-1 text-ink-muted hover:text-ink"
-            onClick={onMobileClose}
-            aria-label="Close menu"
-          >
-            <X className="w-4 h-4" strokeWidth={1.75} />
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            <ThemeToggle compact className="hidden md:inline-flex" />
+            <button
+              type="button"
+              className="md:hidden p-1.5 -mr-1 text-ink-muted hover:text-ink"
+              onClick={onMobileClose}
+              aria-label="Close menu"
+            >
+              <X className="w-4 h-4" strokeWidth={1.75} />
+            </button>
+          </div>
         </div>
 
         <div className="px-2 pt-3" ref={menuRef}>
@@ -221,7 +224,6 @@ export default function Sidebar({
         </div>
 
         <div className="px-3 py-3 border-t border-border-subtle space-y-2 mt-auto">
-          <ThemeToggle />
           {user && (
             <div className="flex items-center gap-2 min-w-0">
               {user.picture ? (
@@ -233,8 +235,10 @@ export default function Sidebar({
                 <p className="text-[12px] font-medium text-ink-secondary truncate">{user.name}</p>
                 <p className="text-[11px] text-ink-muted truncate">{user.email}</p>
               </div>
+              <ThemeToggle compact className="md:hidden" />
             </div>
           )}
+          {!user && <ThemeToggle className="md:hidden" />}
           {onLogout && (
             <button
               type="button"
