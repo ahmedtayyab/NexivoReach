@@ -41,6 +41,8 @@ interface Props {
    * When false, the input shows the saved CSV (so chip picks appear in the field too).
    */
   searchOnly?: boolean;
+  /** Max selected items (countries / categories). 0 = unlimited */
+  maxItems?: number;
   /** How many rotating suggestion chips to show */
   rotateCount?: number;
 }
@@ -62,6 +64,7 @@ export default function PredictiveField({
   prefixSearch = false,
   selectedAsTags = false,
   searchOnly = false,
+  maxItems = 0,
   rotateCount = 5,
 }: Props) {
   const listId = useId();
@@ -70,8 +73,10 @@ export default function PredictiveField({
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
   const [query, setQuery] = useState('');
+  const [capNote, setCapNote] = useState('');
 
   const selected = useMemo(() => (single ? [] : csvItems(value)), [single, value]);
+  const atCap = Boolean(maxItems && selected.length >= maxItems);
   const useSearchBox = selectedAsTags && searchOnly && !single;
   const token = single ? value.trim() : useSearchBox ? query.trim() : activeTokenFallback(value);
 
@@ -105,6 +110,13 @@ export default function PredictiveField({
       setOpen(false);
       return;
     }
+    if (maxItems && selected.length >= maxItems) {
+      setCapNote(`Up to ${maxItems} selections — keep hunts focused.`);
+      setQuery('');
+      setOpen(false);
+      return;
+    }
+    setCapNote('');
     onChange([...selected, clean].join(', '));
     setQuery('');
     setOpen(false);
@@ -144,12 +156,14 @@ export default function PredictiveField({
       } else if (aiContext.field === 'markets') {
         const next = [...selected];
         for (const item of items.slice(0, 6)) {
+          if (maxItems && next.length >= maxItems) break;
           if (!next.some(s => s.toLowerCase() === item.toLowerCase())) next.push(item);
         }
         onChange(next.join(', '));
       } else {
         let next = value;
         for (const item of items.slice(0, 6)) {
+          if (maxItems && csvItems(next).length >= maxItems && !csvIncludes(next, item)) break;
           next = toggleCsvValue(next, item);
         }
         onChange(next);
@@ -195,6 +209,17 @@ export default function PredictiveField({
         )}
       </div>
       {hint && <p className="text-[12px] text-ink-muted mb-2">{hint}</p>}
+      {maxItems > 0 && (
+        <p className="text-[11px] text-ink-muted mb-2">
+          {selected.length}/{maxItems} selected
+          {atCap ? ' — limit reached' : ''}
+        </p>
+      )}
+      {(capNote || aiError) && (
+        <p className="text-[12px] mb-2" style={{ color: 'var(--warning)' }}>
+          {capNote || aiError}
+        </p>
+      )}
 
       {selectedAsTags && selected.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-2">
@@ -283,8 +308,6 @@ export default function PredictiveField({
         )}
       </div>
 
-      {aiError && <p className="text-[12px] mt-1" style={{ color: 'var(--warning)' }}>{aiError}</p>}
-
       {!single && chipDisplay === 'pool' && (
         <div className="flex flex-wrap gap-1.5 mt-2">
           {suggestions.slice(0, 12).map(item => {
@@ -293,8 +316,16 @@ export default function PredictiveField({
               <button
                 key={item}
                 type="button"
-                onClick={() => onChange(toggleCsvValue(value, item))}
-                className={`px-2 py-1 rounded-md text-[12px] border transition-colors ${
+                onClick={() => {
+                  if (!selectedChip && atCap) {
+                    setCapNote(`Up to ${maxItems} selections — keep hunts focused.`);
+                    return;
+                  }
+                  setCapNote('');
+                  onChange(toggleCsvValue(value, item));
+                }}
+                disabled={!selectedChip && atCap}
+                className={`px-2 py-1 rounded-md text-[12px] border transition-colors disabled:opacity-40 ${
                   selectedChip
                     ? 'bg-[var(--sidebar-active)] text-[var(--brand)] border-[var(--brand)]'
                     : 'bg-panel border-border text-ink-secondary hover:border-ink-muted'
@@ -316,7 +347,8 @@ export default function PredictiveField({
                 key={item}
                 type="button"
                 onClick={() => addItem(item)}
-                className="px-2 py-1 rounded-md text-[12px] border border-border bg-panel text-ink-secondary hover:border-ink-muted hover:text-ink transition-colors"
+                disabled={atCap}
+                className="px-2 py-1 rounded-md text-[12px] border border-border bg-panel text-ink-secondary hover:border-ink-muted hover:text-ink transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {item}
               </button>

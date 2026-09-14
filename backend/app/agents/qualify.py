@@ -162,6 +162,7 @@ def qualify_account(
         source_type=source_type,
         evidence_count=len([e for e in evidence if e.get("claim") in ("icp", "offer", "motion")]),
         site_text=site_text or "",
+        seed_key=f"{name}|{url}",
     )
     persist = (
         priority != "reject"
@@ -521,70 +522,98 @@ def _fit_score_only(
     source_type: str = "serp",
     evidence_count: int = 0,
     site_text: str = "",
+    seed_key: str = "",
 ) -> Dict[str, Any]:
     """
     Composite Fit score only (Intent excluded).
 
-    Designed to spread scores:
+    Continuous within bands so leads don't all land on 20 / 80 / 92:
     - SERP-only / thin evidence → usually < 55
-    - Homepage with clear ICP+motion → 65–82
-    - Strong ICP+offer+motion+geo → 83–95
-    Unknown levels score near zero — no free "medium" padding.
+    - Homepage with clear ICP+motion → mid 60s–low 80s
+    - Strong ICP+offer+motion+geo → high 70s–mid 90s
+    Stable per-company jitter keeps the same account consistent across runs.
     """
-    level_pts = {
-        "high": (28, 26, 24),      # icp, offer, motion
-        "medium": (18, 14, 14),
-        "unknown": (4, 2, 2),
-        "low": (0, 0, 0),
-    }
-    icp_pts, offer_pts, motion_pts = (
-        level_pts.get(icp, (0, 0, 0))[0],
-        level_pts.get(offer, (0, 0, 0))[1],
-        level_pts.get(motion, (0, 0, 0))[2],
-    )
+    # Continuous base by level (not identical point packs)
+    icp_base = {"high": 24.0, "medium": 15.0, "unknown": 3.5, "low": 0.0}
+    offer_base = {"high": 22.0, "medium": 12.0, "unknown": 2.0, "low": 0.0}
+    motion_base = {"high": 20.0, "medium": 11.0, "unknown": 2.0, "low": 0.0}
 
-    geo_pts = 0
+    site = site_text or ""
+    site_len = len(site)
+    # Richer pages earn a bit more inside the same level (0–6)
+    depth = 0.0
+    if source_type == "homepage" and site_len:
+        depth = min(6.0, site_len / 900.0)
+        if re.search(r"\b(wholesale|distributor|importer|b2b|private[\s-]?label)\b", site, re.I):
+            depth = min(6.0, depth + 1.5)
+        if re.search(r"\b(about us|our story|contact|products?)\b", site, re.I):
+            depth = min(6.0, depth + 0.8)
+
+    icp_pts = icp_base.get(icp, 0.0) + (depth * 0.35 if icp in ("high", "medium") else 0.0)
+    offer_pts = offer_base.get(offer, 0.0)
+    # Offer strength scales with catalog token hits in page text
+    if offer in ("high", "medium") and site:
+        cat_blob = " ".join(profile.categories or []).lower()
+        cat_tokens = [t for t in re.split(r"[^a-z0-9]+", cat_blob) if len(t) > 3][:12]
+        hits = sum(1 for t in cat_tokens if t in site.lower())
+        offer_pts += min(5.0, hits * 0.9)
+    motion_pts = motion_base.get(motion, 0.0) + (depth * 0.25 if motion in ("high", "medium") else 0.0)
+
+    geo_pts = 0.0
     if profile.places:
         from app.agents.geo import places_mentioned
-        blob = f"{location or ''} {site_text or ''}".lower()
+
+        blob = f"{location or ''} {site}".lower()
         if places_mentioned(location or "", profile.places) or places_mentioned(blob, profile.places):
-            geo_pts = 12
+            geo_pts = 9.0
+            # City-level address is slightly stronger than country-only
+            if location and re.search(r",\s*\w+", location):
+                geo_pts += 2.5
+            if len((location or "").strip()) >= 16:
+                geo_pts += 1.0
         elif location and len(location.strip()) >= 8:
-            geo_pts = 0
+            geo_pts = 1.5
 
-    # Boost when primary Discover role (e.g. importer) is explicit on the site
-    role_pts = 0
-    if _primary_buyer_hit(f"{location}\n{site_text}", profile):
-        role_pts = 6
+    role_pts = 0.0
+    if _primary_buyer_hit(f"{location}\n{site}", profile):
+        role_pts = 4.5 + min(2.5, depth * 0.4)
 
-    evidence_bonus = 0
+    evidence_bonus = 0.0
     if source_type == "homepage":
-        evidence_bonus += 6
-    evidence_bonus += min(6, evidence_count * 2)
+        evidence_bonus += 4.0 + min(3.0, depth * 0.5)
+    evidence_bonus += min(5.0, evidence_count * 1.4)
 
     total = icp_pts + offer_pts + motion_pts + geo_pts + role_pts + evidence_bonus
 
+    # Stable 0–7 spread from company identity so identical buckets don't look cloned
+    seed = f"{seed_key}|{location}|{source_type}|{icp}|{offer}|{motion}|{site_len}"
+    checksum = sum((i + 1) * ord(c) for i, c in enumerate(seed[:180]))
+    jitter = (checksum % 71) / 10.0  # 0.0–7.0
+    if checksum % 2:
+        total += jitter * 0.65
+    else:
+        total -= jitter * 0.4
+
     # Hard caps so thin evidence cannot look like a strong lead.
     if source_type != "homepage":
-        total = min(total, 52)
+        total = min(total, 51.0 + (jitter * 0.15))
     if icp in ("unknown", "low") and motion in ("unknown", "low"):
-        total = min(total, 40)
+        total = min(total, 38.0 + (jitter * 0.2))
     if offer == "low" and source_type == "homepage":
-        total = min(total, 72)
+        total = min(total, 70.0 + (jitter * 0.25))
     if icp == "low" or motion == "low":
-        total = min(total, 35)
+        total = min(total, 34.0 + (jitter * 0.15))
 
-    total = max(0, min(100, total))
+    total_i = int(round(max(0.0, min(99.0, total))))
 
-    # Breakdown mirrors the same components (scaled to legacy UI maxes).
     return {
-        "total_score": total,
+        "total_score": total_i,
         "breakdown": {
-            "industryFit": min(25, int(round(icp_pts * 25 / 28))) if icp_pts else 0,
-            "locationFit": min(20, int(round(geo_pts * 20 / 12))) if geo_pts else 0,
-            "productMatch": min(20, int(round(offer_pts * 20 / 26))) if offer_pts else 0,
+            "industryFit": min(25, int(round(icp_pts * 25 / 30))) if icp_pts else 0,
+            "locationFit": min(20, int(round(geo_pts * 20 / 12.5))) if geo_pts else 0,
+            "productMatch": min(20, int(round(offer_pts * 20 / 27))) if offer_pts else 0,
             "buyingSignals": 0,
-            "companyFit": min(15, int(round((motion_pts + evidence_bonus) * 15 / 30))) if (motion_pts or evidence_bonus) else 0,
+            "companyFit": min(15, int(round((motion_pts + evidence_bonus) * 15 / 32))) if (motion_pts or evidence_bonus) else 0,
         },
     }
 

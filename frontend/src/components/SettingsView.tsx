@@ -454,11 +454,12 @@ function CompanySection({
             value={markets}
             onChange={setMarkets}
             suggestions={marketSuggestions}
-            placeholder="Start typing a country "
+            placeholder="Start typing a country — e.g. P for Pakistan"
             chipDisplay="none"
             selectedAsTags
             searchOnly
             prefixSearch
+            maxItems={8}
             aiContext={{
               field: 'markets',
               description,
@@ -479,6 +480,7 @@ function CompanySection({
             chipDisplay="rotate"
             selectedAsTags
             rotateCount={5}
+            maxItems={8}
             aiContext={{
               field: 'categories',
               description,
@@ -975,6 +977,7 @@ function ICPSection({
           selectedAsTags
           searchOnly
           prefixSearch
+          maxItems={8}
           aiContext={{
             field: 'markets',
             description: businessInfo.description,

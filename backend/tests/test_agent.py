@@ -202,6 +202,27 @@ def test_fit_score_spreads_thin_vs_strong():
     assert strong["fitScore"] - thin["fitScore"] >= 20
     assert strong["fitScore"] != 77
 
+    strong_b = qualify_account(
+        row={
+            "company_name": "Summit Apparel",
+            "website": "https://summit-apparel.example/",
+            "snippet": "sportswear wholesale",
+            "entity_type": "company",
+            "location": "Denver, United States",
+        },
+        site_text=(
+            "Summit Apparel is a US sportswear brand. "
+            "We wholesale hoodies to boutique retailers. "
+            "Contact our Denver office for private label."
+        ),
+        profile=profile,
+        products=[{"name": "Hoodies", "category": "Sportswear"}],
+        page_url="https://summit-apparel.example/",
+    )
+    # Same band, different evidence → shouldn't clone the same score
+    assert strong_b["fitScore"] >= 65
+    assert strong["fitScore"] != strong_b["fitScore"]
+
 
 
 @pytest.mark.asyncio
