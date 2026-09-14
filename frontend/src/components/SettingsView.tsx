@@ -10,7 +10,6 @@ import {
 } from '../data/taxonomy';
 import type { SettingsSection } from '../lib/navigation';
 import {
-  isCatalogSetupComplete,
   nextWorkspaceSection,
   workspaceSetupProgress,
   workspaceSetupSteps,
@@ -75,17 +74,18 @@ export default function SettingsView({
   const stepIndex = Math.max(0, steps.findIndex(s => s.id === section));
   const stepNumber = stepIndex >= 0 ? stepIndex + 1 : 1;
 
+  const isPrimaryStep = section === 'company' || section === 'icp';
   const titles: Record<SettingsSection, string> = {
-    company: 'Tell us about your company',
-    integrations: 'Connect Google once',
-    catalog: 'Add what you sell',
-    icp: 'Who should we find?',
+    company: 'Company brief',
+    integrations: 'Connect Google',
+    catalog: 'Product catalog',
+    icp: 'Find buyers',
   };
   const blurb: Record<SettingsSection, string> = {
-    company: 'Name and website are enough to start. Description helps the agent.',
-    integrations: 'One click for Gmail + Sheets. Required before importing a catalog.',
-    catalog: 'Pull products from your website, or skip and continue.',
-    icp: 'Name the buyer type, then hit Find buyers. Results land in Leads.',
+    company: 'Name and website are enough. A short description helps the hunt.',
+    integrations: 'Optional — needed for Gmail send and Sheets sync.',
+    catalog: 'Optional — pull products from your site when you want richer matches.',
+    icp: 'Describe who to find. Results land in Leads.',
   };
 
   useEffect(() => {
@@ -111,63 +111,91 @@ export default function SettingsView({
     };
   }, [businessInfo.id, section]);
 
-  const advanceAfter = (from: SettingsSection, complete: boolean, nextBusiness?: BusinessInfo) => {
+  const advanceAfter = (from: SettingsSection, complete: boolean, _nextBusiness?: BusinessInfo) => {
     if (!complete) return;
-    if (from === 'company') {
-      onSectionChange('integrations');
-      return;
-    }
-    if (from === 'integrations') {
-      const biz = nextBusiness ?? businessInfo;
-      onSectionChange(isCatalogSetupComplete(products, biz) ? 'icp' : 'catalog');
-      return;
-    }
     const next = nextWorkspaceSection(from);
     if (next) onSectionChange(next);
+    else if (from === 'integrations' || from === 'catalog') onSectionChange('icp');
   };
 
   const showFind = Boolean(onAddProspects && onAddLog && section === 'icp');
   const nextLabel =
-    section === 'company' ? 'Continue to Connect'
-    : section === 'integrations' ? 'Continue to Products'
-    : section === 'catalog' ? 'Continue to Find buyers'
+    section === 'company' ? 'Continue to Hunt'
+    : section === 'integrations' || section === 'catalog' ? 'Back to Hunt'
     : null;
 
   return (
     <div className="setup-desk">
       <header className="setup-desk__hero">
-        <p className="setup-desk__step tabular-nums">
-          Step {stepNumber} of {steps.length}
-        </p>
+        {isPrimaryStep ? (
+          <p className="setup-desk__step tabular-nums">
+            Step {stepNumber} of {steps.length}
+          </p>
+        ) : (
+          <button
+            type="button"
+            className="setup-desk__back"
+            onClick={() => onSectionChange('icp')}
+          >
+            ← Back to Hunt
+          </button>
+        )}
         <h1 className="setup-desk__title">{titles[section]}</h1>
         <p className="setup-desk__lede">{blurb[section]}</p>
-        <div className="ws-stepper" aria-label="Setup steps">
-          {steps.map((step, i) => (
-            <button
-              key={step.id}
-              type="button"
-              className={[
-                'ws-stepper__item',
-                step.complete ? 'is-done' : '',
-                section === step.id ? 'is-current' : '',
-              ].filter(Boolean).join(' ')}
-              onClick={() => onSectionChange(step.id)}
+        {isPrimaryStep && (
+          <>
+            <div className="ws-stepper ws-stepper--two" aria-label="Workspace steps">
+              {steps.map((step, i) => (
+                <button
+                  key={step.id}
+                  type="button"
+                  className={[
+                    'ws-stepper__item',
+                    step.complete ? 'is-done' : '',
+                    section === step.id ? 'is-current' : '',
+                  ].filter(Boolean).join(' ')}
+                  onClick={() => onSectionChange(step.id)}
+                >
+                  <span className="ws-stepper__num">{i + 1}</span>
+                  <span className="ws-stepper__label">{step.label.replace(/^\d+\.\s*/, '')}</span>
+                </button>
+              ))}
+            </div>
+            <div
+              className="ws-progress__track mt-3"
+              role="progressbar"
+              aria-valuenow={progress.percent}
+              aria-valuemin={0}
+              aria-valuemax={100}
             >
-              <span className="ws-stepper__num">{i + 1}</span>
-              <span className="ws-stepper__label">{step.label.replace(/^\d+\.\s*/, '')}</span>
-            </button>
-          ))}
-        </div>
-        <div
-          className="ws-progress__track mt-3"
-          role="progressbar"
-          aria-valuenow={progress.percent}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        >
-          <div className="ws-progress__fill" style={{ width: `${progress.percent}%` }} />
-        </div>
+              <div className="ws-progress__fill" style={{ width: `${progress.percent}%` }} />
+            </div>
+          </>
+        )}
       </header>
+
+      {showFind && (
+        <div className="ws-find ws-find--primary">
+          <FindBuyersPanel
+            businessInfo={businessInfo}
+            icp={icp}
+            products={products}
+            onAddProspects={onAddProspects!}
+            onAddLog={onAddLog!}
+            onComplete={onFindBuyersComplete}
+          />
+          <p className="ws-find__secondary">
+            <button type="button" className="linkish" onClick={() => onSectionChange('integrations')}>
+              Connect Google
+            </button>
+            <span aria-hidden="true"> · </span>
+            <button type="button" className="linkish" onClick={() => onSectionChange('catalog')}>
+              Product catalog
+            </button>
+            <span className="ws-find__secondary-hint"> — optional, for send & richer matches</span>
+          </p>
+        </div>
+      )}
 
       <div className={section === 'integrations' || section === 'icp' ? 'ws-panel ws-panel--wide' : 'ws-panel'}>
         {section === 'company' && (
@@ -196,12 +224,15 @@ export default function SettingsView({
           />
         )}
         {section === 'icp' && (
-          <ICPSection
-            icp={icp}
-            businessInfo={businessInfo}
-            products={products}
-            onSave={onSaveICP}
-          />
+          <details className="ws-advanced">
+            <summary>More buyer filters (optional)</summary>
+            <ICPSection
+              icp={icp}
+              businessInfo={businessInfo}
+              products={products}
+              onSave={onSaveICP}
+            />
+          </details>
         )}
         {section === 'integrations' && (
           <IntegrationsSection
@@ -216,19 +247,6 @@ export default function SettingsView({
           />
         )}
       </div>
-
-      {showFind && (
-        <div className="ws-find">
-          <FindBuyersPanel
-            businessInfo={businessInfo}
-            icp={icp}
-            products={products}
-            onAddProspects={onAddProspects!}
-            onAddLog={onAddLog!}
-            onComplete={onFindBuyersComplete}
-          />
-        </div>
-      )}
     </div>
   );
 }
@@ -961,7 +979,7 @@ function ICPSection({
 
       <div className="pt-1">
         <p className="text-[12px] text-ink-muted m-0">
-          Criteria save as you type. Use <strong className="font-medium text-ink">Find buyers</strong> below when ready.
+          Criteria save as you type. They refine Find buyers above.
         </p>
       </div>
     </div>
@@ -1364,12 +1382,11 @@ function IntegrationsSection({
           type="button"
           className="btn btn-primary"
           onClick={() => onContinue?.()}
-          disabled={!connectedEnough}
         >
           {continueLabel}
         </button>
         {!connectedEnough && (
-          <span className="text-[12px] text-ink-muted">Connect Google to continue.</span>
+          <span className="text-[12px] text-ink-muted">Optional — connect when you are ready to send or sync.</span>
         )}
       </div>
 

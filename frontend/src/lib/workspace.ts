@@ -69,7 +69,7 @@ export function isCatalogSetupComplete(products: Product[], business: BusinessIn
   return (business.primaryCategories || []).some(c => (c || '').trim());
 }
 
-/** Buyers tab: at least one buyer type. */
+/** Buyers tab: at least one buyer type (optional now — hunt text can carry this). */
 export function isBuyersSetupComplete(icp: IdealCustomerProfile): boolean {
   return (icp.targetBuyerTypes || []).some(t => (t || '').trim());
 }
@@ -81,17 +81,17 @@ export type WorkspaceStepStatus = {
   optional?: boolean;
 };
 
+/** Primary Workspace path: Brief → Hunt. Connect/catalog stay as secondary routes. */
 export function workspaceSetupSteps(
   business: BusinessInfo,
-  products: Product[],
-  icp: IdealCustomerProfile,
-  connectReady = false,
+  _products: Product[],
+  _icp: IdealCustomerProfile,
+  _connectReady = false,
 ): WorkspaceStepStatus[] {
+  const briefDone = isCompanySetupComplete(business);
   return [
-    { id: 'company', label: '1. Company', complete: isCompanySetupComplete(business) },
-    { id: 'integrations', label: '2. Connect', complete: connectReady },
-    { id: 'catalog', label: '3. Products', complete: isCatalogSetupComplete(products, business) },
-    { id: 'icp', label: '4. Find buyers', complete: isBuyersSetupComplete(icp) },
+    { id: 'company', label: '1. Brief', complete: briefDone },
+    { id: 'icp', label: '2. Hunt', complete: briefDone },
   ];
 }
 
@@ -116,10 +116,13 @@ export function workspaceSetupProgress(steps: WorkspaceStepStatus[]): {
   };
 }
 
-/** Next tab after a successful save — stay on Buyers so Find buyers remains visible. */
+/** Next primary step after Brief. */
 export function nextWorkspaceSection(from: SettingsSection): SettingsSection | null {
-  if (from === 'company') return 'integrations';
-  if (from === 'integrations') return 'catalog';
-  if (from === 'catalog') return 'icp';
+  if (from === 'company') return 'icp';
   return null;
+}
+
+/** Land on Hunt once a brief exists; otherwise Brief. */
+export function preferredWorkspaceRoute(business: BusinessInfo): SettingsSection {
+  return isCompanySetupComplete(business) ? 'icp' : 'company';
 }

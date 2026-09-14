@@ -195,7 +195,7 @@ export default function OutreachInboxView({
           <div className="flex flex-wrap justify-center gap-2 mt-4">
             {onGoWorkspace && (
               <button type="button" className="btn btn-secondary" onClick={onGoWorkspace}>
-                Open Workspace
+                Open Hunt
               </button>
             )}
             {gmailConnected && onPrepareAndSend && (

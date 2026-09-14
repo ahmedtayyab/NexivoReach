@@ -9,7 +9,7 @@ import {
 } from './data/defaults';
 import { apiFetch, setActiveBusinessId } from './lib/api';
 import { recipientEmail } from './lib/leadTone';
-import { parseIcpResponse, parseProfileResponse } from './lib/workspace';
+import { parseIcpResponse, parseProfileResponse, preferredWorkspaceRoute } from './lib/workspace';
 import {
   type AppRoute,
   type SettingsSection,
@@ -246,20 +246,24 @@ export default function App() {
       activeRoute === 'notifications' ||
       isSettingsRoute(activeRoute);
     if (!valid) {
-      navigate('company', true);
+      navigate(preferredWorkspaceRoute(businessInfo), true);
     }
     if (activeRoute === 'notifications') {
       setNotifSheetOpen(true);
       setNotifRailOpenPersist(true);
-      navigate('company', true);
+      navigate(preferredWorkspaceRoute(businessInfo), true);
     }
     if (activeRoute === 'admin' && user && !user.isAdmin) {
-      navigate('company', true);
+      navigate(preferredWorkspaceRoute(businessInfo), true);
     }
-  }, [activeRoute, authLoading, user]);
+  }, [activeRoute, authLoading, user, businessInfo]);
 
   const handleSidebarChange = (tab: string) => {
-    navigate(routeFromSidebarTab(tab));
+    if (tab === 'settings') {
+      navigate(preferredWorkspaceRoute(businessInfo));
+    } else {
+      navigate(routeFromSidebarTab(tab));
+    }
     setMobileNavOpen(false);
   };
 
@@ -808,7 +812,7 @@ export default function App() {
             onSendAllReady={() => handleSendAllReady('ready')}
             onSendSelected={handleSendSelected}
             gmailConnected={Boolean(user?.gmail?.connected)}
-            onGoWorkspace={() => navigate('company')}
+            onGoWorkspace={() => navigate(preferredWorkspaceRoute(businessInfo))}
           />
         )}
         {activeRoute === 'outreach' && (
@@ -826,7 +830,7 @@ export default function App() {
             onClearAll={handleClearLeads}
             onSendSelected={handleSendSelected}
             gmailConnected={Boolean(user?.gmail?.connected)}
-            onGoWorkspace={() => navigate('company')}
+            onGoWorkspace={() => navigate(preferredWorkspaceRoute(businessInfo))}
           />
         )}
         {isSettingsRoute(activeRoute) && (

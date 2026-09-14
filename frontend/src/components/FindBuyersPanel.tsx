@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
 import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
+import { isPlaceholderCompanyName } from '../lib/workspace';
 
 interface Props {
   businessInfo: BusinessInfo;
@@ -16,8 +17,7 @@ interface Props {
 }
 
 /**
- * Core agent action: find buyers from company + catalog + ICP.
- * Lives in Workspace (not a separate Discover tab).
+ * Primary product action: describe who to find, then hunt.
  */
 export default function FindBuyersPanel({
   businessInfo,
@@ -51,15 +51,14 @@ export default function FindBuyersPanel({
     [context, catalogCats],
   );
 
-  const ready =
-    Boolean(query.trim()) ||
+  const hasBrief =
+    Boolean(businessInfo.description?.trim()) ||
+    (Boolean(businessInfo.name?.trim()) && !isPlaceholderCompanyName(businessInfo.name)) ||
     products.length > 0 ||
-    (businessInfo.primaryCategories || []).length > 0;
+    (businessInfo.primaryCategories || []).length > 0 ||
+    (icp.targetBuyerTypes || []).length > 0;
 
-  const missing: string[] = [];
-  if (!businessInfo.name?.trim() && !businessInfo.description?.trim()) missing.push('company');
-  if (!products.length && !(businessInfo.primaryCategories || []).length) missing.push('catalog or categories');
-  if (!(icp.targetBuyerTypes || []).length) missing.push('buyer types');
+  const ready = Boolean(query.trim()) || hasBrief;
 
   const handleRun = async () => {
     if (!ready || isRunning) return;
@@ -93,7 +92,7 @@ export default function FindBuyersPanel({
       setStatusText(
         found.length
           ? `Added ${found.length} lead${found.length === 1 ? '' : 's'} — review Fit/Intent on Leads.`
-          : 'No accounts this round — try a clearer product, buyer type, or location in the focus field.',
+          : 'No accounts this round — try a clearer product, buyer type, or place in the hunt.',
       );
       onComplete?.(found.length);
     } catch (err: unknown) {
@@ -105,23 +104,25 @@ export default function FindBuyersPanel({
   };
 
   return (
-    <div className={`find-buyers ${compact ? 'find-buyers--compact' : ''}`}>
-      <div className="find-buyers__head">
-        <h3 className="find-buyers__title">Find buyers</h3>
-        <p className="find-buyers__desc">
-          One click. Results go to Leads for review.
-        </p>
-      </div>
+    <div className={`find-buyers find-buyers--primary ${compact ? 'find-buyers--compact' : ''}`}>
+      {!compact && (
+        <div className="find-buyers__head">
+          <h3 className="find-buyers__title">Find buyers</h3>
+          <p className="find-buyers__desc">
+            Be specific — product, buyer type, and place. Results go to Leads.
+          </p>
+        </div>
+      )}
 
-      {!ready && missing.length > 0 && (
+      {!ready && (
         <p className="ui-banner ui-banner--warn" role="status">
-          Add {missing.join(', ')} above so the agent has enough to work with.
+          Type who you want below, or add a short company brief first.
         </p>
       )}
 
       <PredictiveField
-        label="Optional focus"
-        hint="Leave blank to use your catalog and buyers."
+        label="What are you looking for?"
+        hint="Example: martial arts belt importers in Nevada. Leave blank to use your company brief."
         value={query}
         onChange={setQuery}
         suggestions={suggestions}

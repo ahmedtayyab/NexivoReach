@@ -43,10 +43,11 @@ const ROUTE_ALIASES: Record<string, AppRoute> = {
   'product-catalog': 'catalog',
   signals: 'icp',
   'icp-signals': 'icp',
-  // Discover folded into Workspace — deep links land on setup
-  discover: 'company',
-  hunt: 'company',
-  find: 'company',
+  // Discover / hunt deep links land on the Hunt step
+  discover: 'icp',
+  hunt: 'icp',
+  find: 'icp',
+  buyers: 'icp',
   help: 'support',
   ticket: 'support',
   tickets: 'support',

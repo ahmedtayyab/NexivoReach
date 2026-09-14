@@ -845,6 +845,10 @@ input:focus, textarea:focus, select:focus {
   margin-top: 1rem;
   max-width: 36rem;
 }
+.ws-stepper--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 18rem;
+}
 .ws-stepper__item {
   display: flex;
   flex-direction: column;
@@ -988,9 +992,73 @@ input:focus, textarea:focus, select:focus {
 }
 .ws-panel--wide { max-width: 48rem; }
 .ws-find {
-  margin-top: 1.75rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--border);
+  margin-top: 0;
+  margin-bottom: 1.25rem;
+  padding-top: 0;
+  border-top: 0;
+}
+.ws-find--primary {
+  max-width: 48rem;
+}
+.ws-find__secondary {
+  margin: 0.75rem 0 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.ws-find__secondary-hint {
+  color: var(--text-muted);
+}
+.setup-desk__back {
+  display: inline-block;
+  margin: 0 0 0.35rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.setup-desk__back:hover {
+  color: var(--brand);
+}
+.linkish {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand);
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.linkish:hover {
+  color: var(--text-primary);
+}
+.ws-advanced {
+  margin-top: 0.25rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 0.65rem 0.85rem;
+  background: var(--bg-panel);
+}
+.ws-advanced > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  list-style: none;
+}
+.ws-advanced > summary::-webkit-details-marker { display: none; }
+.ws-advanced[open] > summary {
+  margin-bottom: 0.85rem;
+  color: var(--text-primary);
+}
+.find-buyers--primary {
+  border-left-width: 4px;
+  padding: 1.35rem 1.35rem 1.45rem;
+}
+.find-buyers--primary .find-buyers__title {
+  font-size: 1.35rem;
 }
 
 /* Sidebar product chrome */

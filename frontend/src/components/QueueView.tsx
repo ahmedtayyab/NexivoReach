@@ -262,11 +262,11 @@ export default function QueueView({
           <p className="empty-state__desc">
             {filtersActive || filter !== 'All'
               ? 'Try clearing Intent / Fit / Priority or switch status to All.'
-              : 'Brief the agent in Workspace, then run Find buyers. Qualified accounts land here.'}
+              : 'Describe who to find in Hunt, then run Find buyers. Qualified accounts land here.'}
           </p>
           {!(filtersActive || filter !== 'All') && onGoWorkspace && (
             <button type="button" className="btn btn-primary mt-4" onClick={onGoWorkspace}>
-              Open Workspace
+              Find buyers
             </button>
           )}
         </div>
