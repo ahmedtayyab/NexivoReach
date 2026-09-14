@@ -3,6 +3,7 @@ import type { Prospect } from '../types';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 import { leadRowToneClass, recipientEmail } from '../lib/leadTone';
 import { brandAssets } from '../lib/brandAssets';
+import { useConfirm } from './ConfirmDialog';
 
 interface Props {
   prospects: Prospect[];
@@ -59,6 +60,7 @@ export default function OutreachInboxView({
   gmailConnected = false,
   onGoWorkspace,
 }: Props) {
+  const confirm = useConfirm();
   const withDrafts = useMemo(
     () => prospects.filter(p => p.outreachDraft),
     [prospects],
@@ -238,10 +240,21 @@ export default function OutreachInboxView({
             type="button"
             onClick={() => {
               const count = selectedIds.length;
-              if (!window.confirm(`Send ${count} selected outreach email(s) via Gmail?`)) return;
-              void Promise.resolve(onSendSelected(selectedIds)).then(() => setSelectedIds([])).catch(err => {
-                console.error(err);
-              });
+              void (async () => {
+                const ok = await confirm({
+                  title: count === 1 ? 'Send this email?' : `Send ${count} emails?`,
+                  body: `Send ${count} selected outreach email${count === 1 ? '' : 's'} via Gmail.`,
+                  confirmLabel: count === 1 ? 'Send email' : 'Send emails',
+                  tone: 'send',
+                });
+                if (!ok) return;
+                try {
+                  await onSendSelected(selectedIds);
+                  setSelectedIds([]);
+                } catch (err) {
+                  console.error(err);
+                }
+              })();
             }}
             className="btn btn-primary"
           >

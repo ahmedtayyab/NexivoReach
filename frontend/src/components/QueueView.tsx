@@ -3,6 +3,7 @@ import type { Prospect, AgentRunLog } from '../types';
 import { leadRowToneClass } from '../lib/leadTone';
 import { brandAssets } from '../lib/brandAssets';
 import { FitScoreBadge } from './FitScoreBadge';
+import { useConfirm } from './ConfirmDialog';
 
 const EMPTY_QUEUE_IMG = brandAssets.emptyQueue;
 
@@ -55,14 +56,18 @@ export default function QueueView({
   const [sendingSelected, setSendingSelected] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [sendingBest, setSendingBest] = useState(false);
+  const confirm = useConfirm();
   const lastRun = agentLogs[0];
   const lastRunLabel = lastRun ? formatRelative(lastRun.timestamp) : null;
 
   const handleClear = async () => {
     if (!onClearLeads || !prospects.length || clearing) return;
-    const ok = window.confirm(
-      `Clear all ${prospects.length} leads for this company? This cannot be undone.`,
-    );
+    const ok = await confirm({
+      title: 'Clear all leads?',
+      body: `Remove all ${prospects.length} leads for this company. This cannot be undone.`,
+      confirmLabel: 'Clear leads',
+      tone: 'danger',
+    });
     if (!ok) return;
     setClearing(true);
     try {
@@ -111,7 +116,13 @@ export default function QueueView({
   const handleSendSelected = async () => {
     if (!onSendSelected || selectedIds.length === 0) return;
     const count = selectedIds.length;
-    if (!window.confirm(`Prepare and send outreach for ${count} selected lead(s) via Gmail?`)) return;
+    const ok = await confirm({
+      title: count === 1 ? 'Send this lead?' : `Send ${count} selected leads?`,
+      body: `Prepare and send outreach for ${count} selected lead${count === 1 ? '' : 's'} via Gmail.`,
+      confirmLabel: count === 1 ? 'Send email' : 'Send emails',
+      tone: 'send',
+    });
+    if (!ok) return;
     setSendingSelected(true);
     try {
       await onSendSelected(selectedIds);

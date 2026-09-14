@@ -4,6 +4,7 @@ import { CheckCircle2, ExternalLink, Loader2, Plus, Trash2, Wand2, XCircle } fro
 import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
 import FindBuyersPanel from './FindBuyersPanel';
+import { useConfirm } from './ConfirmDialog';
 import {
   categoriesFromProducts,
   suggestionsForField,
@@ -1145,6 +1146,7 @@ function IntegrationsSection({
   continueLabel?: string;
   onContinue?: () => void;
 }) {
+  const confirm = useConfirm();
   const [status, setStatus] = useState<SheetsStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [sheetInput, setSheetInput] = useState('');
@@ -1255,7 +1257,13 @@ function IntegrationsSection({
   };
 
   const handleDisconnect = async () => {
-    if (!window.confirm('Unlink this company’s Google Sheet? Data in the sheet is kept.')) return;
+    const ok = await confirm({
+      title: 'Unlink Google Sheet?',
+      body: 'This company will stop syncing to that spreadsheet. Data already in the sheet is kept.',
+      confirmLabel: 'Unlink sheet',
+      tone: 'danger',
+    });
+    if (!ok) return;
     const resp = await apiFetch('/api/sheets/disconnect', { method: 'POST' });
     if (resp.ok) {
       setConnectMsg('Sheet unlinked from this company.');
@@ -1265,11 +1273,14 @@ function IntegrationsSection({
 
   const handleRestore = async () => {
     if (!restoreCompany || restoring) return;
-    const ok = window.confirm(
-      includeLeads
-        ? `Restore catalog and leads for “${restoreCompany}” from Google Sheets into this company?`
-        : `Restore the product catalog for “${restoreCompany}” from Google Sheets into this company?`,
-    );
+    const ok = await confirm({
+      title: includeLeads ? 'Restore catalog & leads?' : 'Restore product catalog?',
+      body: includeLeads
+        ? `Restore catalog and leads for “${restoreCompany}” from Google Sheets into this company.`
+        : `Restore the product catalog for “${restoreCompany}” from Google Sheets into this company.`,
+      confirmLabel: 'Restore',
+      tone: 'default',
+    });
     if (!ok) return;
     setRestoring(true);
     setRestoreMsg('');

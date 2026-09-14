@@ -34,6 +34,7 @@ import NotificationsRail, {
   useNotificationUnread,
 } from './components/NotificationBell';
 import ToastHost, { type AppToast, type ToastKind } from './components/ToastHost';
+import { useConfirm } from './components/ConfirmDialog';
 import LoginView from './components/LoginView';
 import SuspendedView from './components/SuspendedView';
 import BrandLockup from './components/brand/BrandLockup';
@@ -70,6 +71,7 @@ export default function App() {
   });
   const [toasts, setToasts] = useState<AppToast[]>([]);
   const notifUnread = useNotificationUnread(user);
+  const confirm = useConfirm();
 
   const pushToast = useCallback((kind: ToastKind, title: string, body?: string) => {
     const id =
@@ -461,7 +463,13 @@ export default function App() {
     const label = mode === 'ready'
       ? 'Resolve contact emails, prepare drafts if needed, then send best-fit via Gmail?'
       : 'Send best-fit outreach via Gmail (uses scraped contact emails)?';
-    if (!window.confirm(label)) return;
+    const ok = await confirm({
+      title: mode === 'ready' ? 'Prepare & send best-fit?' : 'Send best-fit?',
+      body: label,
+      confirmLabel: mode === 'ready' ? 'Prepare & send' : 'Send now',
+      tone: 'send',
+    });
+    if (!ok) return;
     try {
       pushToast('info', 'Sending…', 'Resolving recipients and sending via Gmail.');
       const path = mode === 'ready' ? '/api/prospects/send-ready' : '/api/prospects/send-batch';
