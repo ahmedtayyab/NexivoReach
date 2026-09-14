@@ -24,16 +24,16 @@ from app.tools.contact_finder import discover_contacts, contacts_from_text
 from app.providers.factory import get_ai_provider
 
 
-FETCH_CAP = 80
+FETCH_CAP = 48
 SAVE_CAP = 40
 STRONG_SAVE = 20  # amazing / ready to pursue
 AVERAGE_SAVE = 20  # workable / worth a look
-WAVE1_RESULT_CAP = 220
-WAVE2_RESULT_CAP = 140
+WAVE1_RESULT_CAP = 180
+WAVE2_RESULT_CAP = 100
 ENRICH_CAP = 0  # drafts belong in Outreach — keep Discover fast
-CONTACT_DURING_HUNT = 20  # deep contact crawl for strong fits; rest fill in background
-SCRAPE_CONCURRENCY = 12
-MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 40
+CONTACT_DURING_HUNT = 0  # all contact crawl is background — keep hunt snappy
+SCRAPE_CONCURRENCY = 16
+MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 55
 DEFAULT_HUNT_LIMIT = 40
 
 
@@ -149,7 +149,7 @@ class ProspectingAgent:
         wave2 = plan_wave2(profile, stats, stats.get("learned_terms"))
         # Always deepen when the first wave is thin — volume matters for usable hunts
         need_wave2 = bool(wave2) and stats["relevant_count"] < (
-            MIN_CANDIDATES_BEFORE_SKIP_WAVE2 if profile.strict_geo else 45
+            MIN_CANDIDATES_BEFORE_SKIP_WAVE2 if profile.strict_geo else MIN_CANDIDATES_BEFORE_SKIP_WAVE2
         )
         if need_wave2:
             more = await self.web_search.hunt_leads(

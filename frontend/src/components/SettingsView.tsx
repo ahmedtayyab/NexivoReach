@@ -183,16 +183,18 @@ export default function SettingsView({
             onAddProspects={onAddProspects!}
             onAddLog={onAddLog!}
             onComplete={onFindBuyersComplete}
+            sheetsConnected={sheetsConnected}
+            onGoConnect={() => onSectionChange('integrations')}
           />
           <p className="ws-find__secondary">
             <button type="button" className="linkish" onClick={() => onSectionChange('integrations')}>
-              Connect Google
+              {sheetsConnected ? 'Google connected' : 'Connect Google (required)'}
             </button>
             <span aria-hidden="true"> · </span>
             <button type="button" className="linkish" onClick={() => onSectionChange('catalog')}>
               Product catalog
             </button>
-            <span className="ws-find__secondary-hint"> — optional, for send & richer matches</span>
+            <span className="ws-find__secondary-hint"> — Sheets keeps leads safe across re-runs</span>
           </p>
         </div>
       )}

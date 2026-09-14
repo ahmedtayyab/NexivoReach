@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from uuid import uuid4
@@ -156,6 +156,11 @@ async def run_discovery_agent(
             from app.api.deps import ensure_default_business
             ensure_default_business(session, user)
             db_user = session.get(User, user.id)
+        if not sheets_mod.is_configured(db_user):
+            raise HTTPException(
+                status_code=400,
+                detail="Connect Google Sheets before finding buyers so leads are saved and kept across re-runs.",
+            )
         if db_user:
             from app.services import access as access_mod
             access_mod.consume_usage(session, db_user, "hunt")
@@ -189,6 +194,7 @@ async def run_discovery_agent(
     prospects = res.get("prospects") or []
     agent_log = res.get("agent_log") or {}
     saved_front: List[Dict[str, Any]] = []
+    skipped_existing = 0
 
     try:
         with Session(engine) as session:
@@ -210,6 +216,7 @@ async def run_discovery_agent(
                 name = (prospect.get("companyName") or "").strip().lower()
                 dom = _domain(website)
                 if (dom and dom in known) or (name and name in known_names):
+                    skipped_existing += 1
                     continue
                 prospect_id = prospect.get("id") or f"prospect-{uuid4().hex[:8]}"
                 pr = ProspectRecord(
@@ -267,7 +274,7 @@ async def run_discovery_agent(
         log.warning("Failed to persist discovery run: %s", e)
         saved_front = prospects
 
-    if sheets_mod.is_configured() and saved_front:
+    if saved_front:
         background_tasks.add_task(_sync_leads_job, business_id, saved_front)
 
     # Email fill continues in the background — do not block the hunt response.
@@ -281,6 +288,7 @@ async def run_discovery_agent(
     return {
         "prospects": saved_front,
         "foundCount": len(saved_front),
+        "skippedExisting": skipped_existing,
         "agent_log": agent_log,
         # keep old key so older clients don't crash
         "prospect": saved_front[0] if saved_front else None,

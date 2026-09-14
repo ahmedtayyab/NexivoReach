@@ -228,10 +228,12 @@ async def _prepare_one(
     seller: str,
     *,
     force: bool = False,
+    scrape_contacts: bool = False,
 ) -> ProspectRecord:
-    # Always try to resolve recipient — even when a draft already exists
-    email = await _ensure_recipient(session, row)
-    contacts = list(row.contacts or [])
+    # Fast path: use stored email only. Contact scrape is optional (slow).
+    email = _recipient_email(row)
+    if scrape_contacts and not email:
+        email = await _ensure_recipient(session, row)
     phone = (row.phone or "").strip()
 
     if row.outreach_draft and not force:
@@ -246,12 +248,6 @@ async def _prepare_one(
             session.commit()
             session.refresh(row)
         return row
-
-    # If still no email, scrape again as part of prepare (website may have been empty earlier)
-    if not email and (row.website or "").strip():
-        email = await _ensure_recipient(session, row)
-        contacts = list(row.contacts or [])
-        phone = (row.phone or "").strip()
 
     provider = get_ai_provider()
     fb = row.fit_breakdown or {}
@@ -281,17 +277,17 @@ async def _prepare_one(
         "createdAt": now,
         "toEmail": to_addr or "",
     }
-    timeline = list(row.agent_timeline or [])
-    timeline.append({"time": _clock(), "action": "Prepared outreach draft (human review before send)"})
-    if to_addr:
-        timeline.append({"time": _clock(), "action": f"Contact email {to_addr}"})
-    else:
-        timeline.append({"time": _clock(), "action": "No public email found — draft saved without To:"})
-
-    row.email = to_addr or row.email
-    row.phone = phone or row.phone
-    row.contacts = contacts
     row.outreach_draft = outreach
+    if to_addr and not (row.email or "").strip():
+        row.email = to_addr
+    timeline = list(row.agent_timeline or [])
+    timeline.append({"time": _clock(), "action": "Drafted personalized outreach (awaiting human approval)"})
+    if to_addr:
+        timeline.append({"time": _clock(), "action": f"Recipient {to_addr}"})
+    elif phone:
+        timeline.append({"time": _clock(), "action": f"No email yet — phone on file ({phone})"})
+    else:
+        timeline.append({"time": _clock(), "action": "Draft ready — add recipient before send"})
     row.agent_timeline = timeline
     session.add(row)
     session.commit()
@@ -306,6 +302,8 @@ async def prepare_outreach_batch(
     user: AuthUser = Depends(get_current_user),
 ):
     """Prepare drafts for high-fit leads that lack outreach (or force regenerate)."""
+    import asyncio
+
     force = bool(payload.get("force"))
     ids = payload.get("ids") or []
     with Session(engine) as session:
@@ -321,7 +319,6 @@ async def prepare_outreach_batch(
             if id_set is not None and row.id not in id_set:
                 continue
             if row.outreach_draft and not force:
-                # Still include if draft exists but To: is empty — patch recipient
                 if _recipient_email(row) and (row.outreach_draft or {}).get("toEmail"):
                     continue
                 if not row.website and not _recipient_email(row):
@@ -330,22 +327,36 @@ async def prepare_outreach_batch(
                 continue
             targets.append(row)
 
-        batch = targets[:40]
-        if db_user and batch:
-            access_mod.consume_usage(session, db_user, "prepare", amount=len(batch))
+        batch_ids = [r.id for r in targets[:40]]
+        if db_user and batch_ids:
+            access_mod.consume_usage(session, db_user, "prepare", amount=len(batch_ids))
+            session.commit()
 
-        updated = []
-        for row in batch:
+    sem = asyncio.Semaphore(6)
+
+    async def _one(pid: str) -> Dict[str, Any] | None:
+        async with sem:
             try:
-                updated.append(await _prepare_one(session, row, seller, force=force))
+                with Session(engine) as session:
+                    row = session.get(ProspectRecord, pid)
+                    if not row:
+                        return None
+                    updated = await _prepare_one(
+                        session, row, seller, force=force, scrape_contacts=False,
+                    )
+                    return prospect_to_frontend(updated)
             except Exception as exc:
-                log.warning("Prepare outreach failed for %s: %s", row.id, exc)
+                log.warning("Prepare outreach failed for %s: %s", pid, exc)
+                return None
 
-        return {
-            "ok": True,
-            "prepared": len(updated),
-            "prospects": [prospect_to_frontend(r) for r in updated],
-        }
+    results = await asyncio.gather(*[_one(pid) for pid in batch_ids]) if batch_ids else []
+    updated = [r for r in results if r]
+
+    return {
+        "ok": True,
+        "prepared": len(updated),
+        "prospects": updated,
+    }
 
 
 def _draft_ready_to_send(row: ProspectRecord) -> bool:

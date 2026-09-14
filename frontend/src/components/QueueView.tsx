@@ -22,7 +22,7 @@ interface Props {
   onReviewProspect: (id: string) => void;
   onUpdateStage: (id: string, stage: Prospect['stage']) => void;
   onClearLeads?: () => Promise<void> | void;
-  onPrepareOutreach?: () => void;
+  onPrepareOutreach?: () => void | Promise<void>;
   onSendAllReady?: () => void;
   onSendSelected?: (ids: string[]) => Promise<void> | void;
   gmailConnected?: boolean;
@@ -52,6 +52,7 @@ export default function QueueView({
   const [clearing, setClearing] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [sendingSelected, setSendingSelected] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const lastRun = agentLogs[0];
   const lastRunLabel = lastRun ? formatRelative(lastRun.timestamp) : null;
 
@@ -149,8 +150,22 @@ export default function QueueView({
           || (p.fitBreakdown?.fitSummary || '').toLowerCase() === 'high'
           || ['priority', 'nurture'].includes((p.priority || p.fitBreakdown?.priority || '').toLowerCase())
         )) && (
-          <button type="button" onClick={() => onPrepareOutreach()} className="btn btn-secondary">
-            Prepare outreach
+          <button
+            type="button"
+            disabled={preparing}
+            onClick={() => {
+              void (async () => {
+                setPreparing(true);
+                try {
+                  await onPrepareOutreach();
+                } finally {
+                  setPreparing(false);
+                }
+              })();
+            }}
+            className="btn btn-secondary"
+          >
+            {preparing ? 'Preparing…' : 'Prepare outreach'}
           </button>
         )}
         {selectedIds.length > 0 && (

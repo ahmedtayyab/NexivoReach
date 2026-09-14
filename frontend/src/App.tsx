@@ -410,6 +410,7 @@ export default function App() {
 
   const handlePrepareOutreach = async (prospectId?: string) => {
     try {
+      pushToast('info', 'Preparing drafts…', 'Writing outreach in parallel — usually a few seconds.');
       if (prospectId) {
         const resp = await apiFetch(`/api/prospects/${prospectId}/prepare-outreach?force=true`, {
           method: 'POST',
@@ -417,6 +418,7 @@ export default function App() {
         if (!resp.ok) throw new Error(await resp.text());
         const row = (await resp.json()) as Prospect;
         setProspects(prev => prev.map(p => (p.id === row.id ? row : p)));
+        pushToast('ok', 'Draft ready', row.companyName || 'Lead');
         return;
       }
       const resp = await apiFetch('/api/prospects/prepare-outreach-batch', {

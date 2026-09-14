@@ -762,6 +762,32 @@ input:focus, textarea:focus, select:focus {
   color: var(--text-muted);
   max-width: 28rem;
 }
+.find-buyers__status-block {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.find-buyers__eta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.find-buyers__eta-track {
+  height: 3px;
+  max-width: 16rem;
+  border-radius: 999px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+.find-buyers__eta-fill {
+  height: 100%;
+  background: var(--brand);
+  border-radius: inherit;
+  transition: width 0.9s ease;
+}
 .find-buyers__cta {
   min-width: 9.5rem;
   font-size: 14px;
