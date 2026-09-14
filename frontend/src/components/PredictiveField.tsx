@@ -36,6 +36,11 @@ interface Props {
   prefixSearch?: boolean;
   /** Show selected values as removable tags above the input */
   selectedAsTags?: boolean;
+  /**
+   * When true with selectedAsTags, the input is a blank search box.
+   * When false, the input shows the saved CSV (so chip picks appear in the field too).
+   */
+  searchOnly?: boolean;
   /** How many rotating suggestion chips to show */
   rotateCount?: number;
 }
@@ -56,6 +61,7 @@ export default function PredictiveField({
   chipDisplay = 'pool',
   prefixSearch = false,
   selectedAsTags = false,
+  searchOnly = false,
   rotateCount = 5,
 }: Props) {
   const listId = useId();
@@ -66,7 +72,7 @@ export default function PredictiveField({
   const [query, setQuery] = useState('');
 
   const selected = useMemo(() => (single ? [] : csvItems(value)), [single, value]);
-  const useSearchBox = selectedAsTags && !single;
+  const useSearchBox = selectedAsTags && searchOnly && !single;
   const token = single ? value.trim() : useSearchBox ? query.trim() : activeTokenFallback(value);
 
   const matches = filterMatches(suggestions, token, prefixSearch ? 10 : 8, {

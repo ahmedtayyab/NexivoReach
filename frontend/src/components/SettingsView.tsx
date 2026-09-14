@@ -454,9 +454,10 @@ function CompanySection({
             value={markets}
             onChange={setMarkets}
             suggestions={marketSuggestions}
-            placeholder="Start typing a country — e.g. P for Pakistan"
+            placeholder="Start typing a country "
             chipDisplay="none"
             selectedAsTags
+            searchOnly
             prefixSearch
             aiContext={{
               field: 'markets',
@@ -469,7 +470,7 @@ function CompanySection({
             hint={
               categorySuggesting
                 ? 'Inferring categories…'
-                : 'Pick a few suggestions, or type your own. Selected ones stay saved.'
+                : 'Pick suggestions or type your own — selections appear in the field and as tags.'
             }
             value={categories}
             onChange={setCategories}
@@ -972,6 +973,7 @@ function ICPSection({
           placeholder="Start typing a country — e.g. P for Pakistan"
           chipDisplay="none"
           selectedAsTags
+          searchOnly
           prefixSearch
           aiContext={{
             field: 'markets',
