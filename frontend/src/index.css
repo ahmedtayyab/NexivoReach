@@ -15,7 +15,7 @@
   --color-border-subtle: #EDEDE8;
   --color-ink: #171A21;
   --color-ink-secondary: #697386;
-  --color-ink-muted: #697386;
+  --color-ink-muted: #9AA3AE;
   --color-accent: #344B73;
   --color-accent-hover: #293B5C;
 }
@@ -80,6 +80,8 @@
     /* Soft fills mix against this (white in light, panel in dark) */
     --mix-base: #FFFFFF;
     --shadow-color: rgba(23, 32, 51, 0.14);
+    /* Placeholders stay quieter than typed text */
+    --placeholder: #A6ADB8;
   }
 
   /* Dark — soft graphite for less glare (same CTA green as light) */
@@ -95,7 +97,7 @@
     --color-border-subtle: #323236;
     --color-ink: #C4C4C2;
     --color-ink-secondary: #8F8F93;
-    --color-ink-muted: #737378;
+    --color-ink-muted: #55555C;
     --color-accent: #7A8699;
     --color-accent-hover: #93A0B3;
 
@@ -146,6 +148,7 @@
 
     --mix-base: #28282B;
     --shadow-color: rgba(0, 0, 0, 0.28);
+    --placeholder: #55555C;
   }
 
   * { box-sizing: border-box; }
@@ -161,6 +164,12 @@
     line-height: 1.45;
     margin: 0;
     padding: 0;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--placeholder);
+    opacity: 1;
   }
 
   h1, h2, h3, .font-display {

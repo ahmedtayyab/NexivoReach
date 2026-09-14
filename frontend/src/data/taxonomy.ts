@@ -226,6 +226,16 @@ export function csvItems(current: string): string[] {
   return current.split(',').map(item => item.trim()).filter(Boolean);
 }
 
+export function filterKnownCountries(items: string[]): string[] {
+  const known = new Set(COUNTRY_LIST.map(c => c.toLowerCase()));
+  return items.filter(item => known.has(item.trim().toLowerCase()));
+}
+
+export function trimCsvItems(current: string, max: number): string {
+  if (!max || max < 1) return current;
+  return csvItems(current).slice(0, max).join(', ');
+}
+
 export function csvIncludes(current: string, value: string): boolean {
   return csvItems(current)
     .map(item => item.toLowerCase())

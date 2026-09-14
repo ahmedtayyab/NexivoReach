@@ -90,6 +90,13 @@ export default function PredictiveField({
   }, [chipDisplay, suggestions, value, rotateCount]);
 
   useEffect(() => {
+    if (!maxItems || single) return;
+    if (selected.length > maxItems) {
+      onChange(selected.slice(0, maxItems).join(', '));
+    }
+  }, [maxItems, single, selected, onChange]);
+
+  useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
     };
@@ -249,7 +256,7 @@ export default function PredictiveField({
             onFocus={() => setOpen(true)}
             rows={3}
             placeholder={placeholder}
-            className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted resize-none"
+            className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink placeholder-ink-muted resize-none"
             aria-autocomplete="list"
             aria-controls={listId}
           />
@@ -264,7 +271,7 @@ export default function PredictiveField({
             onFocus={() => setOpen(true)}
             onKeyDown={onSearchKeyDown}
             placeholder={placeholder}
-            className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted"
+            className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink placeholder-ink-muted"
             aria-autocomplete="list"
             aria-controls={listId}
             autoComplete="off"
@@ -279,7 +286,7 @@ export default function PredictiveField({
             }}
             onFocus={() => setOpen(true)}
             placeholder={placeholder}
-            className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink-secondary placeholder-ink-muted"
+            className="w-full border border-border rounded-md px-3 py-2 text-[13px] text-ink placeholder-ink-muted"
             aria-autocomplete="list"
             aria-controls={listId}
           />

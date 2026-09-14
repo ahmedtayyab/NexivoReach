@@ -186,28 +186,25 @@ export default function FindBuyersPanel({
         <div className="find-buyers__head">
           <h3 className="find-buyers__title">Find buyers</h3>
           <p className="find-buyers__desc">
-            Name the product, who buys it, and where. Results go to Leads and Sheets.
+            Product, buyer type, and place. Results go to Leads.
           </p>
         </div>
       )}
 
       <div className="hunt-howto" aria-label="Hunt writing tips">
         <p className="hunt-howto__lede">
-          Keep each search to one product, one buyer type, and one place.
-          For another market, run a second hunt.
+          One hunt at a time. Run again for another market.
         </p>
         <p className="hunt-howto__examples">
-          Examples: <em>martial arts belt importers in Nevada</em>
+          e.g. <em>belt importers in Nevada</em>
           {' · '}
           <em>hoodie wholesalers in Texas</em>
-          {' · '}
-          <em>gaming chair distributors in UAE</em>
         </p>
       </div>
 
       {!sheetsConnected && (
         <p className="ui-banner ui-banner--warn" role="status">
-          Connect Google Sheets first so leads are saved and won&apos;t disappear on a re-run.{' '}
+          Connect Google Sheets first.{' '}
           {onGoConnect && (
             <button type="button" className="linkish" onClick={onGoConnect}>
               Connect Google
@@ -218,17 +215,17 @@ export default function FindBuyersPanel({
 
       {sheetsConnected && !ready && (
         <p className="ui-banner ui-banner--warn" role="status">
-          Type a hunt below (product + buyer + place), or add a short company brief first.
+          Type a hunt below, or add a company brief first.
         </p>
       )}
 
       <PredictiveField
         label="What are you looking for?"
-        hint="One product, one buyer type, one place — then run. Need another market? Run a second hunt."
+        hint="One product · one buyer · one place"
         value={query}
         onChange={setQuery}
         suggestions={suggestions}
-        placeholder="martial arts belt importers in Nevada"
+        placeholder="e.g. belt importers in Nevada"
         single
         hideSuggestionsWhenFilled
         aiContext={{

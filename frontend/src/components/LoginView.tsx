@@ -38,7 +38,7 @@ export default function LoginView({ error }: Props) {
             Sign in
           </h1>
           <p className="text-[14px] text-ink-secondary mt-2 mb-7 leading-relaxed max-w-sm">
-            Continue with Google to save companies, catalogs, and prospect queues.
+            Continue with Google.
           </p>
 
           {error && (

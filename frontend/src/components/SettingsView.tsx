@@ -7,8 +7,11 @@ import FindBuyersPanel from './FindBuyersPanel';
 import { useConfirm } from './ConfirmDialog';
 import {
   categoriesFromProducts,
+  csvItems,
+  filterKnownCountries,
   isUsefulChipLabel,
   suggestionsForField,
+  trimCsvItems,
 } from '../data/taxonomy';
 import type { SettingsSection } from '../lib/navigation';
 import {
@@ -84,10 +87,10 @@ export default function SettingsView({
     icp: 'Find buyers',
   };
   const blurb: Record<SettingsSection, string> = {
-    company: 'Name and website are enough. A short description helps the hunt.',
-    integrations: 'Optional — needed for Gmail send and Sheets sync.',
-    catalog: 'Optional — pull products from your site when you want richer matches.',
-    icp: 'Type one hunt: product + buyer + place (e.g. belt importers in Nevada). Run separate hunts for other markets.',
+    company: 'Name and website are enough.',
+    integrations: 'Needed for Gmail and Sheets.',
+    catalog: 'Optional — richer product matches.',
+    icp: 'One product, one buyer, one place per hunt.',
   };
 
   useEffect(() => {
@@ -271,8 +274,12 @@ function CompanySection({
   const [name, setName] = useState(businessInfo.name ?? '');
   const [website, setWebsite] = useState(businessInfo.website ?? '');
   const [description, setDescription] = useState(businessInfo.description ?? '');
-  const [markets, setMarkets] = useState((businessInfo.targetMarkets ?? []).join(', '));
-  const [categories, setCategories] = useState((businessInfo.primaryCategories ?? []).join(', '));
+  const [markets, setMarkets] = useState(() =>
+    trimCsvItems(filterKnownCountries(businessInfo.targetMarkets ?? []).join(', '), 8),
+  );
+  const [categories, setCategories] = useState(() =>
+    trimCsvItems((businessInfo.primaryCategories ?? []).filter(isUsefulChipLabel).join(', '), 8),
+  );
   const [showMore, setShowMore] = useState(
     Boolean((businessInfo.targetMarkets ?? []).length || (businessInfo.primaryCategories ?? []).length),
   );
@@ -357,14 +364,19 @@ function CompanySection({
       if (data.website) setWebsite(data.website);
       if (data.description && (!brief || fromWebsite)) setDescription(data.description);
       if (Array.isArray(data.targetMarkets) && data.targetMarkets.length) {
-        setMarkets(data.targetMarkets.join(', '));
+        setMarkets(trimCsvItems(filterKnownCountries(data.targetMarkets).join(', '), 8));
         setShowMore(true);
       }
       if (Array.isArray(data.primaryCategories) && data.primaryCategories.length) {
-        setCategories(data.primaryCategories.join(', '));
+        setCategories(
+          trimCsvItems(
+            data.primaryCategories.filter((c: string) => isUsefulChipLabel(String(c))).join(', '),
+            8,
+          ),
+        );
         setShowMore(true);
       } else if (liveCategorySuggestions.length) {
-        setCategories(liveCategorySuggestions.slice(0, 6).join(', '));
+        setCategories(trimCsvItems(liveCategorySuggestions.slice(0, 6).join(', '), 8));
         setShowMore(true);
       }
     } catch (e) {
@@ -381,14 +393,14 @@ function CompanySection({
       name,
       website,
       description,
-      targetMarkets: markets.split(',').map(s => s.trim()).filter(Boolean),
-      primaryCategories: categories.split(',').map(s => s.trim()).filter(Boolean),
+      targetMarkets: filterKnownCountries(csvItems(markets)).slice(0, 8),
+      primaryCategories: csvItems(categories).filter(isUsefulChipLabel).slice(0, 8),
     });
   };
 
   return (
     <div className="space-y-5 max-w-lg">
-      <Field label="Company name" value={name} onChange={setName} placeholder="Acme Manufacturing" />
+      <Field label="Company name" value={name} onChange={setName} placeholder="Company name" />
       <div>
         <label className="field-label">Website</label>
         <div className="website-field">
@@ -403,7 +415,7 @@ function CompanySection({
               }
             }}
             placeholder="https://yoursite.com"
-            className="website-field__input border border-border rounded-md px-3 py-2 text-[13.5px] text-ink-secondary placeholder-ink-muted"
+            className="website-field__input border border-border rounded-md px-3 py-2 text-[13.5px] text-ink placeholder-ink-muted"
           />
           <button
             type="button"
@@ -421,19 +433,17 @@ function CompanySection({
           </button>
         </div>
         <p className="text-[12.5px] text-ink-muted mt-1.5 m-0">
-          Paste your URL, then Auto-fill — you can edit everything afterward.
+          Paste URL, then Auto-fill.
         </p>
       </div>
       <div>
-        <label className="field-label">
-          What you sell <span className="normal-case tracking-normal font-normal text-ink-muted">(editable)</span>
-        </label>
+        <label className="field-label">What you sell</label>
         <textarea
           value={description}
           onChange={e => setDescription(e.target.value)}
           rows={3}
-          placeholder="We manufacture industrial valves and sell to water utilities in Germany and the UK…"
-          className="w-full border border-border rounded-md px-3 py-2 text-[13.5px] text-ink-secondary placeholder-ink-muted resize-none"
+          placeholder="What you sell, in one or two sentences"
+          className="w-full border border-border rounded-md px-3 py-2 text-[13.5px] text-ink placeholder-ink-muted resize-none"
         />
         {error && <p className="text-[12.5px] mt-1" style={{ color: 'var(--warning)' }}>{error}</p>}
       </div>
@@ -450,11 +460,11 @@ function CompanySection({
         <div className="space-y-4 pt-1 border-t border-border-subtle">
           <PredictiveField
             label="Which countries do you sell to?"
-            hint="Type to search and add multiple countries. Selected ones are saved."
+            hint="Search and add up to 8."
             value={markets}
-            onChange={setMarkets}
+            onChange={v => setMarkets(trimCsvItems(filterKnownCountries(csvItems(v)).join(', '), 8))}
             suggestions={marketSuggestions}
-            placeholder="Start typing a country — e.g. P for Pakistan"
+            placeholder="Type a country"
             chipDisplay="none"
             selectedAsTags
             searchOnly
@@ -468,15 +478,11 @@ function CompanySection({
           />
           <PredictiveField
             label="Product categories"
-            hint={
-              categorySuggesting
-                ? 'Inferring categories…'
-                : 'Pick suggestions or type your own — selections appear in the field and as tags.'
-            }
+            hint={categorySuggesting ? 'Suggesting…' : 'Pick or type up to 8.'}
             value={categories}
-            onChange={setCategories}
+            onChange={v => setCategories(trimCsvItems(v, 8))}
             suggestions={categorySuggestions}
-            placeholder="e.g. Sportswear, Gaming Chairs"
+            placeholder="Type a category"
             chipDisplay="rotate"
             selectedAsTags
             rotateCount={5}
@@ -508,7 +514,7 @@ function Field({ label, value, onChange, placeholder }: { label: string; value: 
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full border border-border rounded-md px-3 py-2 text-[13.5px] text-ink-secondary placeholder-ink-muted"
+        className="w-full border border-border rounded-md px-3 py-2 text-[13.5px] text-ink placeholder-ink-muted"
       />
     </div>
   );
@@ -937,11 +943,11 @@ function ICPSection({
     <div className="space-y-5 max-w-xl">
       <PredictiveField
         label="Buyer types"
-        hint="Who should we find? e.g. distributors, hospitals, gyms."
+        hint="Who to find — e.g. distributors, gyms."
         value={buyerTypes}
         onChange={setBuyerTypes}
         suggestions={buyerSuggestions}
-        placeholder="Distributors, Retailers, Hospitals…"
+        placeholder="Buyer type"
         aiContext={{
           field: 'buyers',
           description: businessInfo.description,
@@ -961,18 +967,18 @@ function ICPSection({
           {marketList ? (
             <span className="text-ink-muted"> ({marketList})</span>
           ) : (
-            <span className="text-ink-muted"> — optional; set in Company if needed</span>
+            <span className="text-ink-muted"> — set in Company if needed</span>
           )}
         </span>
       </label>
       {!sameAsMarkets && (
         <PredictiveField
           label="Which countries should we hunt in?"
-          hint="Only if different from company markets. Type to search."
+          hint="Only if different from company markets."
           value={countries}
-          onChange={setCountries}
+          onChange={v => setCountries(trimCsvItems(filterKnownCountries(csvItems(v)).join(', '), 8))}
           suggestions={countrySuggestions}
-          placeholder="Start typing a country — e.g. P for Pakistan"
+          placeholder="Type a country"
           chipDisplay="none"
           selectedAsTags
           searchOnly
