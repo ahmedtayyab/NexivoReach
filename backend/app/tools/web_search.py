@@ -19,9 +19,15 @@ CATALOG_CONCURRENCY = 4
 CATALOG_BATCH_PAUSE = 0.4
 CATALOG_LIMITS = httpx.Limits(max_connections=CATALOG_CONCURRENCY, max_keepalive_connections=CATALOG_CONCURRENCY)
 CATALOG_MAX_PRODUCTS = 1500
-CATALOG_MAX_LISTING_PAGES = 80
-CATALOG_TIME_BUDGET_SEC = 90.0
+CATALOG_MAX_LISTING_PAGES = 120
+CATALOG_TIME_BUDGET_SEC = 180.0
 CATALOG_WP_REST_MAX_PAGES = max(1, CATALOG_MAX_PRODUCTS // 100)
+# If Shopify/WP returns fewer than this, still run the HTML cascade to fill gaps.
+CATALOG_API_MIN_TRUST = 15
+CATALOG_SITEMAP_NEST_LIMIT = 60
+CATALOG_LISTING_SEED_CAP = 80
+CATALOG_PAGINATION_CAP = 12
+CATALOG_LINK_HARVEST_IF_BELOW = 12
 
 
 SKIP_DOMAINS = {
@@ -591,12 +597,18 @@ class WebSearchTool:
                     pages.append(
                         (urljoin(url, "/products.json"), f"Shopify products.json: {len(shopify_products)}")
                     )
-                    self.catalog_truncated = budget.truncated
+                    # Trust a healthy API catalog; thin results still get the HTML cascade.
+                    if len(products) >= CATALOG_API_MIN_TRUST or budget.stop():
+                        self.catalog_truncated = budget.truncated
+                        log.info(
+                            "scrape_shop_catalog(%s): Shopify returned %d products truncated=%s",
+                            url, len(products), budget.truncated,
+                        )
+                        return pages, products
                     log.info(
-                        "scrape_shop_catalog(%s): Shopify returned %d products truncated=%s",
-                        url, len(products), budget.truncated,
+                        "scrape_shop_catalog(%s): Shopify thin (%d) — continuing HTML cascade",
+                        url, len(products),
                     )
-                    return pages, products
 
                 # 2) WordPress / WooCommerce REST (Alwasi-style)
                 rest_products, _rest_err = await _fetch_wp_rest_products(fetcher, url, budget)
@@ -606,12 +618,17 @@ class WebSearchTool:
                     pages.append(
                         (urljoin(url, "/wp-json/wp/v2/product"), f"WP REST products: {len(rest_products)}")
                     )
-                    self.catalog_truncated = budget.truncated
+                    if len(products) >= CATALOG_API_MIN_TRUST or budget.stop():
+                        self.catalog_truncated = budget.truncated
+                        log.info(
+                            "scrape_shop_catalog(%s): WP REST returned %d products truncated=%s",
+                            url, len(products), budget.truncated,
+                        )
+                        return pages, products
                     log.info(
-                        "scrape_shop_catalog(%s): WP REST returned %d products truncated=%s",
-                        url, len(products), budget.truncated,
+                        "scrape_shop_catalog(%s): WP REST thin (%d) — continuing HTML cascade",
+                        url, len(products),
                     )
-                    return pages, products
 
                 # 3) Homepage + sitemap product URLs + paginated listing pages
                 try:
@@ -619,14 +636,15 @@ class WebSearchTool:
                 except Exception as exc:
                     log.warning("scrape_shop_catalog(%s): homepage fetch failed: %r", url, exc)
                     self.last_catalog_error = _connect_error_kind(exc)
-                    return [], []
+                    # Keep any products already merged from a thin API response
+                    return pages, products
                 if first.status_code != 200 or not first.text:
                     log.warning(
                         "scrape_shop_catalog(%s): homepage status=%s len=%d",
                         url, first.status_code, len(first.text or ""),
                     )
                     self.last_catalog_error = "unreachable" if first.status_code in (0, 403, 502, 503) else ""
-                    return [], []
+                    return pages, products
 
                 html = first.text
                 start_url = _CatalogFetcher.final_url(first, url)
@@ -643,7 +661,12 @@ class WebSearchTool:
 
                 # Listing / collection / category pages with pagination
                 if not budget.stop():
-                    listing_seeds = _listing_page_urls(html, start_url)
+                    listing_seeds = _augment_listing_seeds(_listing_page_urls(html, start_url), start_url)
+                    # Homepage itself is often page 1 of the shop — keep crawling its pagination.
+                    home_key = start_url.split("#")[0].rstrip("/").lower()
+                    if not any(s.split("#")[0].rstrip("/").lower() == home_key for s in listing_seeds):
+                        if _pagination_urls(html, start_url) or len(_shop_products(html, start_url, set())) >= 3:
+                            listing_seeds = [start_url, *listing_seeds]
                     await _crawl_listing_pages(
                         fetcher, listing_seeds, pages, _merge, budget, seen_names
                     )
@@ -945,7 +968,7 @@ async def _fetch_sitemap_product_urls(
             if child not in nested:
                 nested.append(child)
 
-    for child in nested[:20]:
+    for child in nested[:CATALOG_SITEMAP_NEST_LIMIT]:
         if budget.stop() or len(found) >= budget.room():
             break
         locs, _ = await _load(child)
@@ -996,17 +1019,19 @@ def _looks_like_product_url(url: str) -> bool:
         re.search(r"/products?/[^/]+", path)
         or "/product/" in path
         or re.search(r"/shop/[^/]+", path)
+        or re.search(r"/item/[^/]+", path)
+        or re.search(r"/p/[^/]+", path)
+        or re.search(r"/goods/[^/]+", path)
     )
 
 
 def _product_from_url(product_url: str, site_url: str) -> Dict[str, Any]:
-    path = (urlparse(product_url).path or "").strip("/")
-    slug = path.split("/")[-1] if path else "product"
+    slug = (urlparse(product_url).path or "").rstrip("/").split("/")[-1]
     name = slug.replace("-", " ").replace("_", " ").strip().title() or "Product"
     return {
         "name": name[:90],
         "category": _category_from_url(product_url),
-        "description": name,
+        "description": name[:180],
         "productUrl": product_url,
         "imageUrl": "",
         "price": "",
@@ -1030,7 +1055,34 @@ def _listing_page_urls(html: str, base_url: str) -> List[str]:
     # Prefer Woo categories + Shopify collections
     preferred = [u for u in out if "/product-category/" in u or "/collections/" in u or "/shop" in u]
     rest = [u for u in out if u not in preferred]
-    return (preferred + rest)[:40]
+    return (preferred + rest)[:CATALOG_LISTING_SEED_CAP]
+
+
+def _augment_listing_seeds(seeds: List[str], site_url: str) -> List[str]:
+    """Append common shop entry points when homepage nav is thin or theme-specific."""
+    parsed = urlparse(site_url)
+    root = f"{parsed.scheme}://{parsed.netloc}"
+    probes = (
+        f"{root}/shop",
+        f"{root}/shop/",
+        f"{root}/store",
+        f"{root}/store/",
+        f"{root}/products",
+        f"{root}/products/",
+        f"{root}/collections/all",
+        f"{root}/catalog",
+        f"{root}/catalog/",
+        f"{root}/all-products",
+        f"{root}/product-category",
+    )
+    out = list(seeds)
+    seen = {u.split("#")[0].rstrip("/").lower() for u in out}
+    for probe in probes:
+        key = probe.split("#")[0].rstrip("/").lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(probe)
+    return out[:CATALOG_LISTING_SEED_CAP]
 
 
 async def _crawl_listing_pages(
@@ -1088,7 +1140,7 @@ async def _crawl_listing_pages(
 
 
 def _pagination_urls(html: str, page_url: str) -> List[str]:
-    """rel=next, /page/N/, ?page=N successors for the current listing page."""
+    """rel=next, /page/N/, ?page=N, ?paged=N, load-more successors for the current listing page."""
     soup = BeautifulSoup(html or "", "html.parser")
     found: List[str] = []
     seen = set()
@@ -1104,21 +1156,53 @@ def _pagination_urls(html: str, page_url: str) -> List[str]:
         seen.add(key)
         found.append(absolute)
 
-    for link in soup.select('a[rel*="next"], link[rel*="next"]'):
+    for link in soup.select(
+        'a[rel*="next"], link[rel*="next"], '
+        "a.next, a.page-numbers.next, .woocommerce-pagination a.next, "
+        ".pagination a.next, .nav-links a.next, a[class*='next']"
+    ):
         href = (link.get("href") or "").strip()
         if href:
             _add(href)
 
-    for anchor in soup.select("a[href*='page']"):
+    for anchor in soup.select("a[href*='page'], a[href*='paged']"):
         href = (anchor.get("href") or "").strip()
         label = anchor.get_text(" ", strip=True).lower()
+        classes = " ".join(anchor.get("class") or []).lower()
         if not href:
             continue
-        if re.search(r"[?&]page=\d+", href, re.I) or re.search(r"/page/\d+", href, re.I):
-            if label in {"next", "older", ">", "»"} or re.fullmatch(r"\d+", label) or "next" in (anchor.get("class") or []):
-                _add(href)
-            elif re.search(r"/page/\d+/?$", href) or re.search(r"[?&]page=\d+", href):
-                _add(href)
+        pageish = (
+            re.search(r"[?&]page=\d+", href, re.I)
+            or re.search(r"[?&]paged=\d+", href, re.I)
+            or re.search(r"/page/\d+", href, re.I)
+        )
+        if not pageish:
+            continue
+        if (
+            label in {"next", "older", ">", "»", "load more", "show more", "view more"}
+            or "next" in classes
+            or "load-more" in classes
+            or "loadmore" in classes
+            or re.fullmatch(r"\d+", label)
+            or re.search(r"/page/\d+/?$", href)
+            or re.search(r"[?&](?:page|paged)=\d+", href)
+        ):
+            _add(href)
+
+    # Load-more / infinite-scroll style controls
+    for node in soup.select(
+        "a[class*='load-more'], a[class*='loadmore'], button[class*='load-more'], "
+        "a[data-next], a[data-page], [data-next-url], [data-href]"
+    ):
+        href = (
+            (node.get("href") or "").strip()
+            or (node.get("data-next") or "").strip()
+            or (node.get("data-next-url") or "").strip()
+            or (node.get("data-href") or "").strip()
+            or (node.get("data-page") or "").strip()
+        )
+        if href and href.startswith(("http", "/", "?")):
+            _add(href)
 
     # Synthetic next page when current URL already has a page marker
     parsed = urlparse(page_url)
@@ -1131,19 +1215,33 @@ def _pagination_urls(html: str, page_url: str) -> List[str]:
         qs["page"] = [str(cur + 1)]
         synthetic = urlunparse(parsed._replace(query=urlencode(qs, doseq=True)))
         _add(synthetic)
+    elif "paged" in qs:
+        try:
+            cur = int((qs.get("paged") or ["1"])[0])
+        except ValueError:
+            cur = 1
+        qs["paged"] = [str(cur + 1)]
+        synthetic = urlunparse(parsed._replace(query=urlencode(qs, doseq=True)))
+        _add(synthetic)
     else:
         m = re.search(r"/page/(\d+)/?$", parsed.path or "")
         if m:
             nxt_path = re.sub(r"/page/\d+/?$", f"/page/{int(m.group(1)) + 1}/", parsed.path)
             _add(urlunparse(parsed._replace(path=nxt_path)))
-        elif soup.select("li.product, .product-card, .grid__item a[href*='/products/']"):
-            # First listing page often has no page in URL — try page 2 patterns
+        elif soup.select(
+            "li.product, .product-card, .product-item, .product-grid-item, "
+            ".grid__item a[href*='/products/'], .wc-block-grid__product, [data-product-id]"
+        ):
+            # First listing page often has no page in URL — try common page-2 patterns
             _add(urljoin(page_url if page_url.endswith("/") else page_url + "/", "page/2/"))
             q2 = dict(parse_qs(parsed.query))
             q2["page"] = ["2"]
             _add(urlunparse(parsed._replace(query=urlencode(q2, doseq=True))))
+            q3 = dict(parse_qs(parsed.query))
+            q3["paged"] = ["2"]
+            _add(urlunparse(parsed._replace(query=urlencode(q3, doseq=True))))
 
-    return found[:6]
+    return found[:CATALOG_PAGINATION_CAP]
 
 
 def _html_to_text(html: str, limit: int = 12000) -> str:
@@ -1227,7 +1325,7 @@ def _catalog_links(html: str, base_url: str) -> List[str]:
     keywords = (
         "product", "catalog", "category", "shop", "collection", "store",
         "item", "range", "series", "solutions", "equipment", "supplies",
-        "wear", "apparel", "parts", "goods",
+        "wear", "apparel", "parts", "goods", "all-products", "merchandise",
     )
     for anchor in soup.find_all("a", href=True):
         href = (anchor.get("href") or "").strip()
@@ -1242,8 +1340,10 @@ def _catalog_links(html: str, base_url: str) -> List[str]:
         is_listing = (
             "/product-category/" in path
             or "/collections/" in path
+            or "/catalog" in path
             or path.rstrip("/").endswith("/shop")
             or path.rstrip("/").endswith("/store")
+            or path.rstrip("/").endswith("/products")
             or any(key in path or key in label for key in keywords)
         )
         if not is_listing:
@@ -1266,9 +1366,15 @@ def _shop_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
     cards = (
         soup.select("li.product")
         or soup.select(".product-card")
+        or soup.select(".product-item")
+        or soup.select(".product-grid-item")
         or soup.select(".grid__item")
+        or soup.select("li.wc-block-grid__product")
+        or soup.select(".wc-block-grid__product")
         or soup.select("article.product")
         or soup.select("[data-product-id]")
+        or soup.select("[class*='ProductCard']")
+        or soup.select("[class*='product-card']")
         or soup.select(".product")
     )
 
@@ -1297,6 +1403,8 @@ def _shop_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
         link = (
             card.select_one("a[href*='/product/']")
             or card.select_one("a[href*='/products/']")
+            or card.select_one("a[href*='/item/']")
+            or card.select_one("a[href*='/shop/']")
             or card.select_one("a[href]")
         )
         href = (link.get("href") if link else "") or ""
@@ -1335,9 +1443,11 @@ def _shop_products(html: str, page_url: str, seen: set) -> List[Dict[str, Any]]:
         price = price_node.get_text(" ", strip=True) if price_node else ""
         _append(name, href, blob, image_url, price)
 
-    # Generic product-link harvest when theme cards were sparse
-    if len(products) < 3:
-        for anchor in soup.select("a[href*='/products/'], a[href*='/product/']"):
+    # Generic product-link harvest when theme cards were sparse/partial
+    if len(products) < CATALOG_LINK_HARVEST_IF_BELOW:
+        for anchor in soup.select(
+            "a[href*='/products/'], a[href*='/product/'], a[href*='/item/'], a[href*='/shop/']"
+        ):
             href = urljoin(page_url, (anchor.get("href") or "").strip())
             path = (urlparse(href).path or "").lower()
             if not _looks_like_product_url(href):

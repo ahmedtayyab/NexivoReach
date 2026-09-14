@@ -206,6 +206,38 @@ def test_pagination_urls_rel_next():
     assert any("page=2" in u for u in urls)
 
 
+def test_pagination_urls_woo_paged():
+    html = """
+    <html><body>
+    <ul class="products">
+      <li class="product"><a href="/product/a/"><h2>A</h2></a></li>
+      <li class="product"><a href="/product/b/"><h2>B</h2></a></li>
+      <li class="product"><a href="/product/c/"><h2>C</h2></a></li>
+    </ul>
+    <nav class="woocommerce-pagination">
+      <a class="next page-numbers" href="/shop/?paged=2">Next</a>
+    </nav>
+    </body></html>
+    """
+    urls = _pagination_urls(html, "https://shop.test/shop/")
+    assert any("paged=2" in u for u in urls)
+
+
+def test_pagination_urls_synthetic_paged_from_first_page():
+    html = """
+    <html><body>
+    <ul class="products">
+      <li class="product"><a href="/product/a/"><h2>A</h2></a></li>
+      <li class="product"><a href="/product/b/"><h2>B</h2></a></li>
+      <li class="product"><a href="/product/c/"><h2>C</h2></a></li>
+    </ul>
+    </body></html>
+    """
+    urls = _pagination_urls(html, "https://shop.test/shop/")
+    assert any("paged=2" in u for u in urls)
+    assert any("page=2" in u for u in urls)
+
+
 def test_shop_products_woo_cards():
     found = _shop_products(LISTING_PAGE_1, "https://shop.test/shop/", set())
     assert {p["name"] for p in found} == {"Alpha Widget", "Beta Widget"}
