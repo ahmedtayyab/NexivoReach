@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { AgentRunLog } from '../types';
 import type { AuthUser, Prospect } from '../types';
 import { brandAssets } from '../lib/brandAssets';
@@ -25,8 +25,18 @@ export default function ActivityView({
   const selectedLog = agentLogs.find(l => l.id === selectedRunId) || agentLogs[0];
   const outcomes = useMemo(() => computeOutcomes(prospects), [prospects]);
 
+  useEffect(() => {
+    if (!agentLogs.length) {
+      setSelectedRunId('');
+      return;
+    }
+    if (!agentLogs.some(l => l.id === selectedRunId)) {
+      setSelectedRunId(agentLogs[0].id);
+    }
+  }, [agentLogs, selectedRunId]);
+
   return (
-    <div className="max-w-5xl">
+    <div className="activity-desk">
       <div className="page-header">
         <h1 className="page-header__title">Activity</h1>
         <p className="page-header__desc">
@@ -51,87 +61,82 @@ export default function ActivityView({
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 nr-enter nr-enter-delay-2 mt-6">
-          <div className="lg:col-span-4 bg-panel border border-border rounded-lg p-3 space-y-1 nr-panel">
-            <p className="section-label px-2 py-2">Runs ({agentLogs.length})</p>
-            <div className="nr-stagger">
+        <div className="activity-layout nr-enter nr-enter-delay-2">
+          <aside className="activity-runs" aria-label="Hunt runs">
+            <p className="section-label activity-runs__label">Runs ({agentLogs.length})</p>
+            <div className="activity-runs__list nr-stagger">
               {agentLogs.map(log => {
                 const isSelected = log.id === selectedLog?.id;
                 return (
                   <button
                     key={log.id}
+                    type="button"
                     onClick={() => setSelectedRunId(log.id)}
-                    className={`w-full text-left px-3 py-2.5 rounded-md transition-all duration-150 ${
-                      isSelected ? 'bg-muted' : 'hover:bg-panel/80'
-                    }`}
+                    className={`activity-run${isSelected ? ' is-selected' : ''}`}
                   >
-                    <div className="flex items-center justify-between text-[11px] text-ink-muted">
+                    <div className="activity-run__meta">
                       <span>{log.timestamp}</span>
                       <span className="tabular-nums">{(log.durationMs / 1000).toFixed(1)}s</span>
                     </div>
-                    <p className="text-[13px] font-medium text-slate-800 mt-1 line-clamp-2">{log.task}</p>
-                    <p className="text-[11px] text-ink-muted mt-1">
+                    <p className="activity-run__title">{log.task}</p>
+                    <p className="activity-run__foot">
                       {log.toolsUsed.length} tools · {log.sourcesCount} sources · {log.status}
                     </p>
                   </button>
                 );
               })}
             </div>
-          </div>
+          </aside>
 
           {selectedLog && (
-            <div
-              key={selectedLog.id}
-              className="lg:col-span-8 bg-panel border border-border rounded-lg p-5 space-y-4 nr-panel nr-pop"
-            >
-              <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+            <section key={selectedLog.id} className="activity-detail nr-panel nr-pop" aria-label="Run detail">
+              <header className="activity-detail__head">
                 <div>
-                  <p className="text-[11px] font-mono text-ink-muted">{selectedLog.id}</p>
-                  <h3 className="text-[14px] font-semibold text-ink mt-1">{selectedLog.task}</h3>
+                  <p className="activity-detail__id">{selectedLog.id}</p>
+                  <h2 className="activity-detail__title">{selectedLog.task}</h2>
                 </div>
-                <div className="text-right shrink-0">
-                  <p className="text-[13px] font-medium text-slate-800">{selectedLog.status}</p>
-                  <p className="text-[11px] text-ink-muted">{(selectedLog.durationMs / 1000).toFixed(2)}s</p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-1.5">
-                {selectedLog.toolsUsed.map((tool, idx) => (
-                  <span
-                    key={idx}
-                    className="text-[11px] bg-muted text-ink-secondary border border-border px-2 py-0.5 rounded nr-chip"
-                  >
-                    {tool}
+                <div className="activity-detail__status">
+                  <span className={`activity-status is-${(selectedLog.status || '').toLowerCase()}`}>
+                    {selectedLog.status}
                   </span>
-                ))}
-              </div>
+                  <span className="activity-detail__duration tabular-nums">
+                    {(selectedLog.durationMs / 1000).toFixed(2)}s
+                  </span>
+                </div>
+              </header>
 
-              <div className="space-y-3 nr-stagger">
+              {selectedLog.toolsUsed.length > 0 && (
+                <div className="activity-tools">
+                  {selectedLog.toolsUsed.map((tool, idx) => (
+                    <span key={idx} className="activity-chip">
+                      {tool}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div className="activity-steps nr-stagger">
                 {selectedLog.decisions.map((dec, idx) => (
-                  <div key={idx} className="border border-border rounded-lg p-3.5 space-y-2 nr-panel">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[12px] font-semibold text-slate-700">Step {dec.step}</span>
-                      {dec.toolCalled && (
-                        <span className="text-[11px] text-ink-secondary">{dec.toolCalled}</span>
-                      )}
+                  <article key={idx} className="activity-step">
+                    <div className="activity-step__head">
+                      <span className="activity-step__n">Step {dec.step}</span>
+                      {dec.toolCalled && <span className="activity-step__tool">{dec.toolCalled}</span>}
                     </div>
-                    <p className="text-[13px] text-ink-secondary">
-                      <span className="text-ink-muted">Observation · </span>
-                      {dec.observation}
+                    <p className="activity-step__line">
+                      <span className="activity-step__k">Observation</span>
+                      <span className="activity-step__v">{dec.observation}</span>
                     </p>
-                    <p className="text-[13px] text-slate-800">
-                      <span className="text-ink-muted">Decision · </span>
-                      {dec.decision}
+                    <p className="activity-step__line">
+                      <span className="activity-step__k">Decision</span>
+                      <span className="activity-step__v activity-step__v--emph">{dec.decision}</span>
                     </p>
                     {dec.toolResultSnippet && (
-                      <p className="text-[12px] text-ink-secondary bg-slate-50 rounded px-2.5 py-2">
-                        {dec.toolResultSnippet}
-                      </p>
+                      <pre className="activity-step__snippet">{dec.toolResultSnippet}</pre>
                     )}
-                  </div>
+                  </article>
                 ))}
               </div>
-            </div>
+            </section>
           )}
         </div>
       )}
