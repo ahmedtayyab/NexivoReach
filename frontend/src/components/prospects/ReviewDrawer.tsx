@@ -1,5 +1,5 @@
 import type { Prospect } from '../../types';
-import { X, ArrowLeft, ExternalLink, CheckCircle, Mail, Phone } from 'lucide-react';
+import { X, ArrowLeft, ExternalLink, CheckCircle, Mail, Phone, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { recipientEmail } from '../../lib/leadTone';
 
@@ -16,6 +16,7 @@ interface Props {
   ) => void;
   onPrepareOutreach?: (id: string) => void;
   onPrepareFollowUp?: (id: string) => void;
+  onRefreshContacts?: (id: string) => Promise<void> | void;
   gmailConnected?: boolean;
 }
 
@@ -29,6 +30,7 @@ export default function ReviewDrawer({
   onSendViaEmail,
   onPrepareOutreach,
   onPrepareFollowUp,
+  onRefreshContacts,
   gmailConnected = false,
 }: Props) {
   const [draftBody, setDraftBody] = useState('');
@@ -36,6 +38,7 @@ export default function ReviewDrawer({
   const [draftTo, setDraftTo] = useState('');
   const [replyNote, setReplyNote] = useState('');
   const [draftDirty, setDraftDirty] = useState(false);
+  const [findingEmail, setFindingEmail] = useState(false);
 
   useEffect(() => {
     if (!prospect?.outreachDraft) {
@@ -226,9 +229,36 @@ export default function ReviewDrawer({
               }
               if (!emails.length && !phones.length && !pages.length) {
                 return (
-                  <p className="text-[13px] text-ink-muted">
-                    No public email on this company&apos;s site (homepage and contact pages were checked automatically).
-                  </p>
+                  <div className="space-y-3">
+                    <p className="text-[13px] text-ink-muted">
+                      No public email on this company&apos;s site yet. Deep contact crawl often finishes after the hunt —
+                      try Find email again.
+                    </p>
+                    {onRefreshContacts && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        disabled={findingEmail || !(prospect.website || '').trim()}
+                        onClick={() => {
+                          void (async () => {
+                            setFindingEmail(true);
+                            try {
+                              await onRefreshContacts(prospect.id);
+                            } finally {
+                              setFindingEmail(false);
+                            }
+                          })();
+                        }}
+                      >
+                        {findingEmail ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Mail className="w-3.5 h-3.5" />
+                        )}
+                        {findingEmail ? 'Searching…' : 'Find email'}
+                      </button>
+                    )}
+                  </div>
                 );
               }
               return (
@@ -257,6 +287,30 @@ export default function ReviewDrawer({
                       <ExternalLink className="w-3 h-3" strokeWidth={1.5} />
                     </a>
                   ))}
+                  {onRefreshContacts && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost mt-1"
+                      disabled={findingEmail || !(prospect.website || '').trim()}
+                      onClick={() => {
+                        void (async () => {
+                          setFindingEmail(true);
+                          try {
+                            await onRefreshContacts(prospect.id);
+                          } finally {
+                            setFindingEmail(false);
+                          }
+                        })();
+                      }}
+                    >
+                      {findingEmail ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Mail className="w-3.5 h-3.5" />
+                      )}
+                      {findingEmail ? 'Searching…' : 'Refresh contacts'}
+                    </button>
+                  )}
                 </div>
               );
             })()}

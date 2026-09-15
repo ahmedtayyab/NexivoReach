@@ -9,7 +9,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
-from app.config import settings
+from app.config import plan_daily_limits, settings
 from app.models.schemas import InviteAllowlist, UsageDaily, User
 
 UsageKind = Literal["hunt", "extract", "prepare", "send"]
@@ -104,6 +104,9 @@ def _limit_for(user: User, kind: UsageKind) -> int:
     override = overrides[kind]
     if override is not None and int(override) >= 0:
         return int(override)
+    plan_limits = plan_daily_limits(getattr(user, "plan", None))
+    if kind in plan_limits:
+        return max(0, int(plan_limits[kind]))
     defaults = {
         "hunt": settings.DAILY_HUNT_LIMIT,
         "extract": settings.DAILY_EXTRACT_LIMIT,

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Prospect } from '../types';
-import { ChevronDown, ChevronUp, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, Loader2, X } from 'lucide-react';
 import { leadRowToneClass, recipientEmail } from '../lib/leadTone';
+import { isDueFollowUp } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
 import { useConfirm } from './ConfirmDialog';
 
@@ -13,7 +14,7 @@ interface Props {
   ) => void;
   onSaveDraft: (id: string, subject: string, body: string, toEmail?: string) => void;
   onSkip?: (id: string) => void;
-  onSyncReplies?: () => void;
+  onSyncReplies?: () => Promise<void> | void;
   onPrepareFollowUp?: (id: string) => void;
   onSendAllReady?: () => void;
   onPrepareAndSend?: () => void;
@@ -25,7 +26,7 @@ interface Props {
   onGoWorkspace?: () => void;
 }
 
-type Filter = 'best_fit' | 'needs_review' | 'sent' | 'all';
+type Filter = 'best_fit' | 'needs_review' | 'follow_up' | 'sent' | 'all';
 
 function isBestFit(p: Prospect): boolean {
   const summary = (p.fitBreakdown?.fitSummary || '').toLowerCase();
@@ -66,6 +67,7 @@ export default function OutreachInboxView({
     [prospects],
   );
   const [filter, setFilter] = useState<Filter>('best_fit');
+  const [syncingReplies, setSyncingReplies] = useState(false);
   const filtered = useMemo(() => {
     const rows = withDrafts.filter(p => {
       const st = p.outreachDraft?.status;
@@ -73,6 +75,7 @@ export default function OutreachInboxView({
         return (st === 'Draft' || st === 'Approved') && isBestFit(p);
       }
       if (filter === 'needs_review') return st === 'Draft' || st === 'Approved';
+      if (filter === 'follow_up') return isDueFollowUp(p);
       if (filter === 'sent') return st === 'Sent' || st === 'Replied';
       return true;
     });
@@ -167,6 +170,17 @@ export default function OutreachInboxView({
   const bestFitCount = withDrafts.filter(
     p => (p.outreachDraft?.status === 'Draft' || p.outreachDraft?.status === 'Approved') && isBestFit(p),
   ).length;
+  const followUpCount = withDrafts.filter(isDueFollowUp).length;
+
+  const handleSyncReplies = async () => {
+    if (!onSyncReplies || syncingReplies) return;
+    setSyncingReplies(true);
+    try {
+      await onSyncReplies();
+    } finally {
+      setSyncingReplies(false);
+    }
+  };
 
   const persistDraftFields = () => {
     if (!current || !draft) return;
@@ -286,8 +300,14 @@ export default function OutreachInboxView({
           </button>
         )}
         {onSyncReplies && (
-          <button type="button" onClick={() => onSyncReplies()} className="btn btn-ghost">
-            Sync replies
+          <button
+            type="button"
+            onClick={() => void handleSyncReplies()}
+            disabled={syncingReplies}
+            className="btn btn-ghost"
+          >
+            {syncingReplies ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            {syncingReplies ? 'Syncing…' : 'Sync replies'}
           </button>
         )}
         {onClearAll && (
@@ -301,6 +321,7 @@ export default function OutreachInboxView({
             [
               ['best_fit', 'Best fit'],
               ['needs_review', 'All drafts'],
+              ['follow_up', followUpCount > 0 ? `Follow-up (${followUpCount})` : 'Follow-up'],
               ['sent', 'Sent'],
               ['all', 'All'],
             ] as [Filter, string][]

@@ -156,11 +156,6 @@ async def run_discovery_agent(
             from app.api.deps import ensure_default_business
             ensure_default_business(session, user)
             db_user = session.get(User, user.id)
-        if not sheets_mod.is_configured(db_user):
-            raise HTTPException(
-                status_code=400,
-                detail="Connect Google Sheets before finding buyers so leads are saved and kept across re-runs.",
-            )
         if db_user:
             from app.services import access as access_mod
             access_mod.consume_usage(session, db_user, "hunt")

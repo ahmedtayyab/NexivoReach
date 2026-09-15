@@ -608,7 +608,7 @@ export default function App() {
         pushToast(
           'received',
           synced === 1 ? 'Reply received' : `${synced} replies received`,
-          names || 'Synced from Gmail',
+          names || 'Synced from Gmail — open Follow-up in Outreach',
         );
       } else {
         pushToast('info', 'No new replies', 'Inbox checked — nothing new yet.');
@@ -619,6 +619,31 @@ export default function App() {
         'error',
         'Reply sync failed',
         err instanceof Error ? err.message : 'Connect Gmail in Workspace → Connect',
+      );
+    }
+  };
+
+  const handleRefreshContacts = async (prospectId: string) => {
+    try {
+      const resp = await apiFetch(`/api/prospects/${prospectId}/refresh-contacts`, {
+        method: 'POST',
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      const data = await resp.json();
+      if (data.prospect) {
+        setProspects(prev => prev.map(p => (p.id === prospectId ? (data.prospect as Prospect) : p)));
+      }
+      if (data.found) {
+        pushToast('ok', 'Email found', data.email || 'Saved on this lead');
+      } else {
+        pushToast('info', 'No public email found', 'Try another page or enter To: manually.');
+      }
+    } catch (err) {
+      console.error(err);
+      pushToast(
+        'error',
+        'Contact refresh failed',
+        err instanceof Error ? err.message : 'Could not scrape contacts',
       );
     }
   };
@@ -851,6 +876,7 @@ export default function App() {
             onPrepareOutreach={() => handlePrepareOutreach()}
             onSendAllReady={() => handleSendAllReady('ready')}
             onSendSelected={handleSendSelected}
+            onRefreshContacts={handleRefreshContacts}
             gmailConnected={gmailCanSend(user)}
             onGoWorkspace={() => navigate(preferredWorkspaceRoute(businessInfo))}
           />
@@ -880,6 +906,8 @@ export default function App() {
             businessInfo={businessInfo}
             products={products}
             icp={icp}
+            user={user}
+            onAskSupport={() => navigate('support')}
             onSaveBusiness={handleSaveBusiness}
             onSaveProducts={handleSaveProducts}
             onSaveICP={handleSaveICP}
@@ -891,7 +919,15 @@ export default function App() {
             onRestoredFromSheets={handleRestoredFromSheets}
           />
         )}
-        {activeRoute === 'activity' && <ActivityView agentLogs={agentLogs} />}
+        {activeRoute === 'activity' && (
+          <ActivityView
+            agentLogs={agentLogs}
+            prospects={prospects}
+            user={user}
+            onAskSupport={() => navigate('support')}
+            onGoLeads={() => navigate('queue')}
+          />
+        )}
         {activeRoute === 'admin' && user?.isAdmin && <AdminView onToast={pushToast} />}
         {activeRoute === 'support' && <SupportView onToast={pushToast} />}
       </main>
@@ -928,6 +964,7 @@ export default function App() {
         onSendViaEmail={handleSendViaEmail}
         onPrepareOutreach={id => handlePrepareOutreach(id)}
         onPrepareFollowUp={handlePrepareFollowUp}
+        onRefreshContacts={handleRefreshContacts}
         gmailConnected={gmailCanSend(user)}
       />
     </div>

@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     # When true, new Google signups must be on the invite allowlist (or an admin email).
     INVITE_ONLY: bool = True
     # Default daily caps per user (UTC day). Admins bypass. Overrides live on User rows.
+    # Used when plan is unknown / pilot baseline.
     DAILY_HUNT_LIMIT: int = 5
     DAILY_EXTRACT_LIMIT: int = 10
     DAILY_PREPARE_LIMIT: int = 50
@@ -87,6 +88,27 @@ class Settings(BaseSettings):
         env_file=str(_BACKEND_DIR / ".env"),
         extra="ignore",
     )
+
+
+# Plan → daily caps (UTC). Per-user overrides and usage_unlimited still win.
+PLAN_DAILY_LIMITS: dict[str, dict[str, int]] = {
+    "free": {"hunt": 2, "extract": 3, "prepare": 15, "send": 10},
+    "pilot": {"hunt": 5, "extract": 10, "prepare": 50, "send": 40},
+    "pro": {"hunt": 20, "extract": 30, "prepare": 200, "send": 150},
+    "growth": {"hunt": 50, "extract": 80, "prepare": 500, "send": 400},
+}
+
+
+def plan_daily_limits(plan: str | None) -> dict[str, int]:
+    key = (plan or "pilot").strip().lower() or "pilot"
+    if key in PLAN_DAILY_LIMITS:
+        return dict(PLAN_DAILY_LIMITS[key])
+    return {
+        "hunt": settings.DAILY_HUNT_LIMIT,
+        "extract": settings.DAILY_EXTRACT_LIMIT,
+        "prepare": settings.DAILY_PREPARE_LIMIT,
+        "send": settings.DAILY_SEND_LIMIT,
+    }
 
 
 _settings = Settings()

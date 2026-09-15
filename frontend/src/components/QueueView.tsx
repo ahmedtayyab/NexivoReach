@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
-import { leadRowToneClass } from '../lib/leadTone';
+import { Loader2, Mail, MailWarning } from 'lucide-react';
+import { leadRowToneClass, recipientEmail } from '../lib/leadTone';
+import { computeOutcomes, hasEmail, isDueFollowUp } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
 import { FitScoreBadge } from './FitScoreBadge';
 import { useConfirm } from './ConfirmDialog';
+import OutcomesStrip from './OutcomesStrip';
 
 const EMPTY_QUEUE_IMG = brandAssets.emptyQueue;
 
@@ -27,6 +30,7 @@ interface Props {
   onPrepareOutreach?: () => void | Promise<void>;
   onSendAllReady?: () => void | Promise<void>;
   onSendSelected?: (ids: string[]) => Promise<void> | void;
+  onRefreshContacts?: (id: string) => Promise<void> | void;
   gmailConnected?: boolean;
   onGoWorkspace?: () => void;
 }
@@ -34,6 +38,7 @@ interface Props {
 type IntentFilter = 'all' | 'high' | 'low' | 'none';
 type FitFilter = 'all' | 'high' | 'medium' | 'low' | 'score75' | 'score90';
 type PriorityFilter = 'all' | 'priority' | 'nurture' | 'review' | 'low';
+type CadenceFilter = 'all' | 'due' | 'missing_email';
 
 export default function QueueView({
   prospects,
@@ -44,6 +49,7 @@ export default function QueueView({
   onPrepareOutreach,
   onSendAllReady,
   onSendSelected,
+  onRefreshContacts,
   gmailConnected = false,
   onGoWorkspace,
 }: Props) {
@@ -51,14 +57,17 @@ export default function QueueView({
   const [intentFilter, setIntentFilter] = useState<IntentFilter>('all');
   const [fitFilter, setFitFilter] = useState<FitFilter>('all');
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all');
+  const [cadenceFilter, setCadenceFilter] = useState<CadenceFilter>('all');
   const [clearing, setClearing] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [sendingSelected, setSendingSelected] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [sendingBest, setSendingBest] = useState(false);
+  const [refreshingId, setRefreshingId] = useState('');
   const confirm = useConfirm();
   const lastRun = agentLogs[0];
   const lastRunLabel = lastRun ? formatRelative(lastRun.timestamp) : null;
+  const outcomes = useMemo(() => computeOutcomes(prospects), [prospects]);
 
   const handleClear = async () => {
     if (!onClearLeads || !prospects.length || clearing) return;
@@ -93,11 +102,58 @@ export default function QueueView({
   }, [qualityFiltered]);
 
   const visible = qualityFiltered.filter(p => {
+    if (cadenceFilter === 'due' && !isDueFollowUp(p)) return false;
+    if (cadenceFilter === 'missing_email' && hasEmail(p)) return false;
     if (filter === 'All') return true;
     return normalizeStage(p.stage) === filter;
   });
 
-  const filtersActive = intentFilter !== 'all' || fitFilter !== 'all' || priorityFilter !== 'all';
+  const filtersActive =
+    intentFilter !== 'all' ||
+    fitFilter !== 'all' ||
+    priorityFilter !== 'all' ||
+    cadenceFilter !== 'all';
+
+  const handleRefreshEmail = async (id: string) => {
+    if (!onRefreshContacts || refreshingId) return;
+    setRefreshingId(id);
+    try {
+      await onRefreshContacts(id);
+    } finally {
+      setRefreshingId('');
+    }
+  };
+
+  const emailCell = (prospect: Prospect) => {
+    const email = recipientEmail(prospect);
+    if (email) {
+      return (
+        <span className="lead-email is-ok" title={email}>
+          <Mail className="w-3 h-3 shrink-0" strokeWidth={1.75} />
+          <span className="truncate">{email}</span>
+        </span>
+      );
+    }
+    return (
+      <span className="lead-email is-missing">
+        <MailWarning className="w-3 h-3 shrink-0" strokeWidth={1.75} />
+        <span>No email</span>
+        {onRefreshContacts && (
+          <button
+            type="button"
+            className="linkish lead-email__find"
+            disabled={refreshingId === prospect.id}
+            onClick={e => {
+              e.stopPropagation();
+              void handleRefreshEmail(prospect.id);
+            }}
+          >
+            {refreshingId === prospect.id ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Find'}
+          </button>
+        )}
+      </span>
+    );
+  };
   const visibleIds = visible.map(p => p.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
 
@@ -139,8 +195,13 @@ export default function QueueView({
         <p className="page-header__desc">
           {prospects.length} saved
           {lastRunLabel && <span className="text-ink-muted"> · Last scan {lastRunLabel}</span>}
+          {outcomes.dueFollowUp > 0 && (
+            <span className="text-ink-muted"> · {outcomes.dueFollowUp} due for follow-up</span>
+          )}
         </p>
       </div>
+
+      <OutcomesStrip outcomes={outcomes} className="mb-4 nr-enter nr-enter-delay-1" />
 
       <div className="toolbar nr-enter nr-enter-delay-1">
         {onSendSelected && gmailConnected && selectedIds.length > 0 && (
@@ -220,6 +281,17 @@ export default function QueueView({
 
       <div className="filter-bar nr-enter nr-enter-delay-2">
         <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-secondary">
+          <span className="text-ink-muted shrink-0">Cadence</span>
+          <select
+            value={cadenceFilter}
+            onChange={e => setCadenceFilter(e.target.value as CadenceFilter)}
+          >
+            <option value="all">All</option>
+            <option value="due">Due follow-up ({outcomes.dueFollowUp})</option>
+            <option value="missing_email">Missing email ({outcomes.missingEmail})</option>
+          </select>
+        </label>
+        <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-secondary">
           <span className="text-ink-muted shrink-0">Intent</span>
           <select
             value={intentFilter}
@@ -265,6 +337,7 @@ export default function QueueView({
               setIntentFilter('all');
               setFitFilter('all');
               setPriorityFilter('all');
+              setCadenceFilter('all');
             }}
             className="btn btn-ghost"
           >
@@ -318,7 +391,7 @@ export default function QueueView({
         </div>
       ) : (
         <>
-          <div key={`m-${filter}-${intentFilter}-${fitFilter}-${priorityFilter}`} className="md:hidden space-y-2 nr-stagger">
+          <div key={`m-${filter}-${intentFilter}-${fitFilter}-${priorityFilter}-${cadenceFilter}`} className="md:hidden space-y-2 nr-stagger">
             {visible.map(prospect => (
               <div
                 key={prospect.id}
@@ -350,6 +423,7 @@ export default function QueueView({
                     </div>
                   </button>
                 </div>
+                <div className="mt-2">{emailCell(prospect)}</div>
                 <select
                   value={normalizeStage(prospect.stage)}
                   onChange={e => onUpdateStage(prospect.id, e.target.value as Prospect['stage'])}
@@ -378,12 +452,12 @@ export default function QueueView({
                   ) : null}
                 </span>
                 <span>Lead</span>
-                <span>Source</span>
+                <span>Email</span>
                 <span>Intent</span>
                 <span className="text-right">Fit</span>
                 <span className="text-right">Status</span>
               </div>
-              <div key={`d-${filter}-${intentFilter}-${fitFilter}-${priorityFilter}`} className="nr-stagger">
+              <div key={`d-${filter}-${intentFilter}-${fitFilter}-${priorityFilter}-${cadenceFilter}`} className="nr-stagger">
                 {visible.map(prospect => (
                   <div
                     key={prospect.id}
@@ -406,7 +480,7 @@ export default function QueueView({
                         {prospect.location || prospect.website || '—'}
                       </p>
                     </button>
-                    <span className="text-[13px] text-ink-muted capitalize">{prospect.source || 'web'}</span>
+                    <span className="min-w-0">{emailCell(prospect)}</span>
                     <span className="text-[13px] text-ink-muted capitalize">{prospect.intent || prospect.fitBreakdown?.intent || '—'}</span>
                     <span className="text-right justify-self-end">
                       <FitScoreBadge score={prospect.fitScore} />

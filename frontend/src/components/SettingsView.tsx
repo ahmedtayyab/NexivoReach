@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog } from '../types';
+import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog, AuthUser } from '../types';
 import { CheckCircle2, ExternalLink, Loader2, Plus, Trash2, Wand2, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
 import FindBuyersPanel from './FindBuyersPanel';
+import PlanUsageCard from './PlanUsageCard';
 import { useConfirm } from './ConfirmDialog';
 import {
   categoriesFromProducts,
@@ -46,6 +47,8 @@ interface Props {
   onAddProspects?: (prospects: Prospect[]) => void;
   onAddLog?: (log: AgentRunLog) => void;
   onFindBuyersComplete?: (foundCount: number) => void;
+  user?: AuthUser | null;
+  onAskSupport?: () => void;
   onRestoredFromSheets?: (payload: {
     company?: BusinessInfo;
     products?: Product[];
@@ -66,6 +69,8 @@ export default function SettingsView({
   onAddProspects,
   onAddLog,
   onFindBuyersComplete,
+  user = null,
+  onAskSupport,
   onRestoredFromSheets,
 }: Props) {
   const [connectReady, setConnectReady] = useState(false);
@@ -193,13 +198,13 @@ export default function SettingsView({
           />
           <p className="ws-find__secondary">
             <button type="button" className="linkish" onClick={() => onSectionChange('integrations')}>
-              {sheetsConnected ? 'Google connected' : 'Connect Google (required)'}
+              {sheetsConnected ? 'Google connected' : 'Connect Google Sheets (recommended)'}
             </button>
             <span aria-hidden="true"> · </span>
             <button type="button" className="linkish" onClick={() => onSectionChange('catalog')}>
               Product catalog
             </button>
-            <span className="ws-find__secondary-hint"> — Sheets keeps leads safe across re-runs</span>
+            <span className="ws-find__secondary-hint"> — optional spreadsheet backup</span>
           </p>
         </div>
       )}
@@ -242,16 +247,21 @@ export default function SettingsView({
           </details>
         )}
         {section === 'integrations' && (
-          <IntegrationsSection
-            companyId={businessInfo.id}
-            continueLabel={nextLabel || 'Continue'}
-            onContinue={() => advanceAfter('integrations', true)}
-            onRestoredFromSheets={onRestoredFromSheets}
-            onConnectReadyChange={ready => {
-              setConnectReady(ready);
-              setSheetsConnected(ready);
-            }}
-          />
+          <>
+            <IntegrationsSection
+              companyId={businessInfo.id}
+              continueLabel={nextLabel || 'Continue'}
+              onContinue={() => advanceAfter('integrations', true)}
+              onRestoredFromSheets={onRestoredFromSheets}
+              onConnectReadyChange={ready => {
+                setConnectReady(ready);
+                setSheetsConnected(ready);
+              }}
+            />
+            <div className="mt-5">
+              <PlanUsageCard user={user} onAskSupport={onAskSupport} />
+            </div>
+          </>
         )}
       </div>
     </div>

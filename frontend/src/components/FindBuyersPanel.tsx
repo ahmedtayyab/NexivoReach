@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product } from '../types';
-import { Loader2 } from 'lucide-react';
+import { Check, FileSpreadsheet, Loader2, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
 import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
@@ -19,6 +19,7 @@ interface Props {
 }
 
 const HUNT_PHASE_SECONDS = [0, 12, 28, 45, 70];
+const SKIP_SHEETS_PROMPT_KEY = 'nr-hunt-skip-sheets-prompt';
 
 function buildPhases(query: string, placeHint: string): string[] {
   const focus = (query || '').trim() || 'matching buyers';
@@ -31,6 +32,14 @@ function buildPhases(query: string, placeHint: string): string[] {
     'Scoring Fit on live pages…',
     'Building your shortlist…',
   ];
+}
+
+function loadSkipSheetsPrompt(): boolean {
+  try {
+    return sessionStorage.getItem(SKIP_SHEETS_PROMPT_KEY) === '1';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -53,6 +62,8 @@ export default function FindBuyersPanel({
   const [lastFound, setLastFound] = useState<number | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [phaseIndex, setPhaseIndex] = useState(0);
+  const [showSheetsPrompt, setShowSheetsPrompt] = useState(false);
+  const [skipSheetsPrompt, setSkipSheetsPrompt] = useState(() => loadSkipSheetsPrompt());
 
   const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
   const placeHint = useMemo(() => {
@@ -86,7 +97,7 @@ export default function FindBuyersPanel({
     (icp.targetBuyerTypes || []).length > 0;
 
   const ready = Boolean(query.trim()) || hasBrief;
-  const canHunt = ready && sheetsConnected;
+  const canHunt = ready;
   const phases = useMemo(() => buildPhases(query, placeHint), [query, placeHint]);
 
   useEffect(() => {
@@ -126,8 +137,9 @@ export default function FindBuyersPanel({
     return Math.min(94, 89 + Math.floor((t - 90) / 15));
   }, [isRunning, elapsedSec]);
 
-  const handleRun = async () => {
+  const runHunt = async () => {
     if (!canHunt || isRunning) return;
+    setShowSheetsPrompt(false);
     setIsRunning(true);
     setStatusText(phases[0]);
     setLastFound(null);
@@ -156,11 +168,12 @@ export default function FindBuyersPanel({
       if (data.agent_log) onAddLog(data.agent_log as AgentRunLog);
       setLastFound(found.length);
       const skipped = Number(data.skippedExisting || 0);
+      const sheetsNote = sheetsConnected ? ' Synced to Sheets.' : '';
       setStatusText(
         found.length
           ? `Added ${found.length} lead${found.length === 1 ? '' : 's'}${
               skipped ? ` (${skipped} already in your list)` : ''
-            } — filter Strong vs Average on Leads. Synced to Sheets.`
+            } — filter Strong vs Average on Leads.${sheetsNote}`
           : skipped
             ? `All matches were already in your list (${skipped}). Try a different hunt.`
             : 'No accounts this round — try a clearer product, buyer type, or place.',
@@ -172,6 +185,25 @@ export default function FindBuyersPanel({
     } finally {
       setIsRunning(false);
     }
+  };
+
+  const handleRunClick = () => {
+    if (!canHunt || isRunning) return;
+    if (!sheetsConnected && !skipSheetsPrompt) {
+      setShowSheetsPrompt(true);
+      return;
+    }
+    void runHunt();
+  };
+
+  const continueWithoutSheets = () => {
+    setSkipSheetsPrompt(true);
+    try {
+      sessionStorage.setItem(SKIP_SHEETS_PROMPT_KEY, '1');
+    } catch {
+      // ignore
+    }
+    void runHunt();
   };
 
   return (
@@ -192,6 +224,77 @@ export default function FindBuyersPanel({
             />
           </div>
           <p className="find-buyers__overlay-eta">{progressLabel}</p>
+        </div>
+      )}
+
+      {showSheetsPrompt && !sheetsConnected && (
+        <div
+          className="sheets-prompt-backdrop"
+          role="presentation"
+          onClick={() => setShowSheetsPrompt(false)}
+        >
+          <div
+            className="sheets-prompt"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sheets-prompt-title"
+            onClick={e => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="sheets-prompt__close"
+              aria-label="Close"
+              onClick={() => setShowSheetsPrompt(false)}
+            >
+              <X className="w-4 h-4" strokeWidth={2} />
+            </button>
+            <div className="sheets-prompt__icon" aria-hidden>
+              <FileSpreadsheet className="w-5 h-5" strokeWidth={1.75} />
+            </div>
+            <h2 id="sheets-prompt-title" className="sheets-prompt__title">
+              Recommended: connect Google Sheets
+            </h2>
+            <p className="sheets-prompt__lede">
+              You can hunt now — leads always save in NexivoReach. Sheets makes the experience better:
+            </p>
+            <ul className="sheets-prompt__perks">
+              <li>
+                <Check className="w-3.5 h-3.5" strokeWidth={2.25} aria-hidden />
+                <span>
+                  <strong>Spreadsheet backup</strong> you can open in Google Sheets anytime
+                </span>
+              </li>
+              <li>
+                <Check className="w-3.5 h-3.5" strokeWidth={2.25} aria-hidden />
+                <span>
+                  <strong>Share leads</strong> with teammates who live in spreadsheets
+                </span>
+              </li>
+              <li>
+                <Check className="w-3.5 h-3.5" strokeWidth={2.25} aria-hidden />
+                <span>
+                  <strong>Auto-sync</strong> after each hunt and when stages change
+                </span>
+              </li>
+            </ul>
+            <div className="sheets-prompt__actions">
+              {onGoConnect && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setShowSheetsPrompt(false);
+                    onGoConnect();
+                  }}
+                >
+                  Connect Sheets
+                </button>
+              )}
+              <button type="button" className="btn btn-secondary" onClick={continueWithoutSheets}>
+                Continue without Sheets
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -216,17 +319,24 @@ export default function FindBuyersPanel({
       </div>
 
       {!sheetsConnected && (
-        <p className="ui-banner ui-banner--warn" role="status">
-          Connect Google Sheets first.{' '}
+        <div className="sheets-recommend" role="status">
+          <div className="sheets-recommend__head">
+            <FileSpreadsheet className="w-4 h-4 shrink-0" strokeWidth={1.75} aria-hidden />
+            <p className="sheets-recommend__title">Sheets recommended</p>
+          </div>
+          <p className="sheets-recommend__body">
+            Leads save in the app either way. Connect Google Sheets for a spreadsheet backup and
+            easier sharing.
+          </p>
           {onGoConnect && (
-            <button type="button" className="linkish" onClick={onGoConnect}>
-              Connect Google
+            <button type="button" className="linkish sheets-recommend__link" onClick={onGoConnect}>
+              Connect Google Sheets
             </button>
           )}
-        </p>
+        </div>
       )}
 
-      {sheetsConnected && !ready && (
+      {!ready && (
         <p className="ui-banner ui-banner--warn" role="status">
           Type a hunt below, or add a company brief first.
         </p>
@@ -261,7 +371,7 @@ export default function FindBuyersPanel({
         </div>
         <button
           type="button"
-          onClick={handleRun}
+          onClick={handleRunClick}
           disabled={isRunning || !canHunt}
           className="btn btn-primary find-buyers__cta"
         >
