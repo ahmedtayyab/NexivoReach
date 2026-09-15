@@ -1501,10 +1501,12 @@ input:focus, textarea:focus, select:focus {
 
 .outreach-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
   gap: 0;
   border: 1px solid var(--border);
+  border-radius: 0.75rem;
   background: var(--bg-panel);
+  overflow: hidden;
   min-height: 28rem;
 }
 @media (max-width: 800px) {
@@ -1512,21 +1514,91 @@ input:focus, textarea:focus, select:focus {
 }
 .outreach-list {
   border-right: 1px solid var(--border);
+  background: var(--bg-surface);
   overflow: auto;
   max-height: 70vh;
 }
-.outreach-list button.item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: 0;
+.outreach-lead {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
   border-bottom: 1px solid var(--border-subtle);
   background: transparent;
-  padding: 0.7rem 0.85rem;
-  cursor: pointer;
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
 }
-.outreach-list button.item.is-active {
-  background: var(--accent-soft);
+.outreach-lead:last-child { border-bottom: 0; }
+.outreach-lead:hover {
+  background: var(--row-hover);
+}
+.outreach-lead.is-active {
+  background: var(--sidebar-active);
+  box-shadow: inset 3px 0 0 var(--cta);
+}
+.outreach-lead.is-checked:not(.is-active) {
+  background: color-mix(in srgb, var(--cta) 6%, var(--bg-surface));
+}
+.outreach-lead__check {
+  margin: 0.95rem 0 0 0.75rem;
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: var(--cta);
+  flex-shrink: 0;
+}
+.outreach-lead__btn {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 0.75rem 0.65rem 0.75rem 0.7rem;
+  cursor: pointer;
+  color: inherit;
+}
+.outreach-lead:not(:has(.outreach-lead__check)) .outreach-lead__btn {
+  padding-left: 0.9rem;
+}
+.outreach-lead__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.outreach-lead__name {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.outreach-lead__meta,
+.outreach-lead__email {
+  margin: 0.2rem 0 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.outreach-lead.is-active .outreach-lead__meta,
+.outreach-lead.is-active .outreach-lead__email {
+  color: var(--text-secondary);
+}
+.outreach-lead__remove {
+  margin: 0.55rem 0.45rem 0 0;
+  padding: 0.35rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--text-muted);
+}
+.outreach-lead__remove:hover {
+  color: var(--text-primary);
+  background: var(--muted);
 }
 .outreach-editor {
   padding: 1rem 1.1rem 1.25rem;
@@ -1534,6 +1606,7 @@ input:focus, textarea:focus, select:focus {
   flex-direction: column;
   gap: 0.65rem;
   min-width: 0;
+  background: var(--bg-panel);
 }
 .outreach-editor textarea {
   flex: 1;

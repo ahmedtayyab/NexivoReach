@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Prospect } from '../types';
 import { ChevronDown, ChevronUp, Loader2, X } from 'lucide-react';
-import { leadRowToneClass, recipientEmail } from '../lib/leadTone';
+import { recipientEmail } from '../lib/leadTone';
 import { isDueFollowUp } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
 import { useConfirm } from './ConfirmDialog';
+import { FitScoreBadge } from './FitScoreBadge';
 
 interface Props {
   prospects: Prospect[];
@@ -355,46 +356,44 @@ export default function OutreachInboxView({
                 return (
                   <div
                     key={p.id}
-                    className={`border-b border-border-subtle transition-colors lead-row-tone ${leadRowToneClass(p)}`}
+                    className={`outreach-lead${active ? ' is-active' : ''}${selectedIds.includes(p.id) ? ' is-checked' : ''}`}
                   >
-                    <div className="flex items-start gap-2">
-                      {onSendSelected && (
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.includes(p.id)}
-                          onChange={() => toggleSelected(p.id)}
-                          className="mt-3 ml-2 h-4 w-4 accent-accent"
-                          aria-label={`Select ${p.companyName}`}
-                        />
-                      )}
+                    {onSendSelected && (
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(p.id)}
+                        onChange={() => toggleSelected(p.id)}
+                        className="outreach-lead__check"
+                        aria-label={`Select ${p.companyName}`}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setIndex(i)}
+                      className="outreach-lead__btn"
+                    >
+                      <div className="outreach-lead__top">
+                        <p className="outreach-lead__name">{p.companyName}</p>
+                        <FitScoreBadge score={p.fitScore} />
+                      </div>
+                      <p className="outreach-lead__meta">
+                        Intent {intent} · {st}
+                      </p>
+                      <p className="outreach-lead__email">
+                        {recipientEmail(p) || 'Will resolve from site contacts'}
+                      </p>
+                    </button>
+                    {onRemoveProspect && (
                       <button
                         type="button"
-                        onClick={() => setIndex(i)}
-                        className={`item flex-1 min-w-0 ${active ? 'is-active' : ''}`}
+                        aria-label={`Remove ${p.companyName}`}
+                        title="Remove lead"
+                        onClick={() => onRemoveProspect(p.id)}
+                        className="outreach-lead__remove"
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-[13px] font-medium text-ink truncate">{p.companyName}</p>
-                          <span className="text-[11px] tabular-nums text-ink font-semibold shrink-0">{p.fitScore}</span>
-                        </div>
-                        <p className="text-[11px] text-ink-muted truncate mt-0.5">
-                          Intent {intent} · {st}
-                        </p>
-                        <p className="text-[11px] text-ink-muted truncate">
-                          {recipientEmail(p) || 'Will resolve from site contacts'}
-                        </p>
+                        <X className="w-3.5 h-3.5" />
                       </button>
-                      {onRemoveProspect && (
-                        <button
-                          type="button"
-                          aria-label={`Remove ${p.companyName}`}
-                          title="Remove lead"
-                          onClick={() => onRemoveProspect(p.id)}
-                          className="mt-2 mr-2 p-1.5 text-ink-muted hover:text-ink hover:bg-muted"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
+                    )}
                   </div>
                 );
               })}
