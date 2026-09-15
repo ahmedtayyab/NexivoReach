@@ -17,7 +17,7 @@ from app.api.deps import (
 from app.api.serializers import business_to_frontend
 from app.database.session import engine
 from app.integrations import sheets as sheets_mod
-from app.models.schemas import Business, ICPConfig, User
+from app.models.schemas import Business, BusinessMember, ICPConfig, User
 import logging
 
 log = logging.getLogger(__name__)
@@ -27,6 +27,24 @@ router = APIRouter(prefix="/api/companies", tags=["companies"])
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _accessible_companies(session: Session, user: AuthUser) -> list[Business]:
+    owned = session.exec(
+        select(Business).where(Business.user_id == user.id).order_by(Business.updated_at.desc())
+    ).all()
+    by_id = {b.id: b for b in owned if b.id}
+    email = (user.email or "").strip().lower()
+    memberships = session.exec(
+        select(BusinessMember).where(BusinessMember.status == "active")
+    ).all()
+    for m in memberships:
+        if m.user_id == user.id or (email and (m.email or "").strip().lower() == email):
+            if m.business_id and m.business_id not in by_id:
+                biz = session.get(Business, m.business_id)
+                if biz:
+                    by_id[biz.id] = biz
+    return list(by_id.values())
 
 
 def _set_active_cookie(response: Response, business_id: str) -> None:
@@ -50,9 +68,8 @@ class CompanyCreate(BaseModel):
 def list_companies(request: Request, user: AuthUser = Depends(get_current_user)):
     with Session(engine) as session:
         ensure_default_business(session, user)
-        rows = session.exec(
-            select(Business).where(Business.user_id == user.id).order_by(Business.updated_at.desc())
-        ).all()
+        rows = _accessible_companies(session, user)
+        rows = sorted(rows, key=lambda b: b.updated_at or "", reverse=True)
         active_id = resolve_business_id(request, user, session)
         return {
             "companies": [business_to_frontend(b) for b in rows],
@@ -187,3 +204,140 @@ def delete_company(company_id: str, user: AuthUser = Depends(get_current_user)):
             session.add(db_user)
         session.commit()
         return {"ok": True, "activeBusinessId": next_id}
+
+
+class MemberInvite(BaseModel):
+    email: str
+    role: str = "member"
+
+
+@router.get("/{company_id}/members")
+def list_members(company_id: str, user: AuthUser = Depends(get_current_user)):
+    with Session(engine) as session:
+        biz = session.get(Business, company_id)
+        if not biz:
+            raise HTTPException(status_code=404, detail="Company not found")
+        from app.api.deps import user_can_access_business
+
+        if not user_can_access_business(session, user, biz):
+            raise HTTPException(status_code=404, detail="Company not found")
+        owner = session.get(User, biz.user_id) if biz.user_id else None
+        members = session.exec(
+            select(BusinessMember).where(BusinessMember.business_id == company_id)
+        ).all()
+        return {
+            "owner": {
+                "userId": biz.user_id,
+                "email": owner.email if owner else "",
+                "name": owner.name if owner else "",
+                "role": "owner",
+            },
+            "members": [
+                {
+                    "id": m.id,
+                    "email": m.email,
+                    "userId": m.user_id,
+                    "role": m.role,
+                    "status": m.status,
+                    "createdAt": m.created_at,
+                }
+                for m in members
+            ],
+        }
+
+
+@router.post("/{company_id}/members")
+def invite_member(company_id: str, payload: MemberInvite, user: AuthUser = Depends(get_current_user)):
+    email = (payload.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Enter a valid email")
+    role = (payload.role or "member").strip().lower()
+    if role not in ("member", "admin"):
+        role = "member"
+    with Session(engine) as session:
+        biz = session.get(Business, company_id)
+        if not biz or biz.user_id != user.id:
+            raise HTTPException(status_code=403, detail="Only the company owner can invite seats")
+        existing = session.exec(
+            select(BusinessMember).where(
+                BusinessMember.business_id == company_id,
+                BusinessMember.email == email,
+            )
+        ).first()
+        if existing:
+            return {
+                "id": existing.id,
+                "email": existing.email,
+                "role": existing.role,
+                "status": existing.status,
+                "alreadyInvited": True,
+            }
+        # If they already have an account, activate immediately
+        invitee = session.exec(select(User).where(User.email == email)).first()
+        row = BusinessMember(
+            id=f"mem-{uuid4().hex[:12]}",
+            business_id=company_id,
+            user_id=invitee.id if invitee else None,
+            email=email,
+            role=role,
+            status="active" if invitee else "pending",
+            invited_by=user.id,
+            created_at=_now(),
+            accepted_at=_now() if invitee else None,
+        )
+        session.add(row)
+        # Also allowlist them so invite-only signup works
+        from app.services import access as access_mod
+
+        try:
+            access_mod.add_invite(session, email, note=f"Seat on {biz.name}", created_by=user.email)
+        except Exception:
+            pass
+        session.commit()
+        session.refresh(row)
+        return {
+            "id": row.id,
+            "email": row.email,
+            "role": row.role,
+            "status": row.status,
+            "alreadyInvited": False,
+        }
+
+
+@router.delete("/{company_id}/members/{member_id}")
+def remove_member(company_id: str, member_id: str, user: AuthUser = Depends(get_current_user)):
+    with Session(engine) as session:
+        biz = session.get(Business, company_id)
+        if not biz or biz.user_id != user.id:
+            raise HTTPException(status_code=403, detail="Only the owner can remove seats")
+        row = session.get(BusinessMember, member_id)
+        if not row or row.business_id != company_id:
+            raise HTTPException(status_code=404, detail="Member not found")
+        session.delete(row)
+        session.commit()
+        return {"ok": True}
+
+
+@router.post("/{company_id}/members/accept")
+def accept_member_invite(company_id: str, user: AuthUser = Depends(get_current_user)):
+    email = (user.email or "").strip().lower()
+    with Session(engine) as session:
+        row = session.exec(
+            select(BusinessMember).where(
+                BusinessMember.business_id == company_id,
+                BusinessMember.email == email,
+                BusinessMember.status == "pending",
+            )
+        ).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="No pending invite for this company")
+        row.user_id = user.id
+        row.status = "active"
+        row.accepted_at = _now()
+        session.add(row)
+        db_user = session.get(User, user.id)
+        if db_user:
+            db_user.active_business_id = company_id
+            session.add(db_user)
+        session.commit()
+        return {"ok": True, "businessId": company_id}

@@ -100,7 +100,7 @@ class User(SQLModel, table=True):
     # Access control / SaaS scaffolding
     is_admin: bool = False
     is_suspended: bool = False
-    plan: str = "pilot"  # pilot | free | pro | growth (billing later)
+    plan: str = "pilot"  # free | pilot | pro | growth
     # When true, daily hunt/extract/prepare/send caps are not enforced (still counted).
     usage_unlimited: bool = False
     daily_hunt_limit: Optional[int] = Field(default=None)
@@ -119,6 +119,49 @@ class User(SQLModel, table=True):
     sheets_token_expiry: Optional[str] = Field(default=None)
     sheets_email: Optional[str] = Field(default=None)
     sheets_connected_at: Optional[str] = Field(default=None)
+    # Stripe billing (optional — set via Checkout / webhooks)
+    stripe_customer_id: Optional[str] = Field(default=None, index=True)
+    stripe_subscription_id: Optional[str] = Field(default=None)
+    plan_status: str = "none"  # none | active | past_due | canceled
+
+
+class DiscoveryJob(SQLModel, table=True):
+    """Durable hunt job with pollable progress (survives client disconnect)."""
+
+    __tablename__ = "discovery_job"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    business_id: str = Field(index=True)
+    status: str = "queued"  # queued | running | completed | failed
+    phase: str = "queued"
+    progress: int = 0  # 0–100
+    found_count: int = 0
+    skipped_existing: int = 0
+    error: str = ""
+    user_prompt: str = ""
+    request_payload: dict = Field(default={}, sa_type=JSON)
+    result_prospect_ids: List[str] = Field(default=[], sa_type=JSON)
+    agent_log_id: Optional[str] = Field(default=None)
+    created_at: str = ""
+    updated_at: str = ""
+    completed_at: Optional[str] = None
+
+
+class BusinessMember(SQLModel, table=True):
+    """Team seat on a company workspace (owner is Business.user_id)."""
+
+    __tablename__ = "business_member"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    business_id: str = Field(index=True)
+    user_id: Optional[str] = Field(default=None, index=True)  # set when invite accepted
+    email: str = Field(index=True)
+    role: str = "member"  # member | admin
+    status: str = "pending"  # pending | active
+    invited_by: str = ""
+    created_at: str = ""
+    accepted_at: Optional[str] = None
 
 
 class InviteAllowlist(SQLModel, table=True):

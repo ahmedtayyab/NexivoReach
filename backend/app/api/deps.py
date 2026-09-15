@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from app.config import settings
 from app.database.session import engine
-from app.models.schemas import Business, User
+from app.models.schemas import Business, BusinessMember, User
 from app.api.tokens import decode_session_token
 
 SESSION_COOKIE = "nr_session"
@@ -171,6 +171,26 @@ def ensure_default_business(session: Session, user: AuthUser) -> Business:
     return biz
 
 
+def user_can_access_business(session: Session, user: AuthUser, biz: Business | None) -> bool:
+    if not biz:
+        return False
+    if biz.user_id == user.id:
+        return True
+    email = (user.email or "").strip().lower()
+    member = session.exec(
+        select(BusinessMember).where(
+            BusinessMember.business_id == biz.id,
+            BusinessMember.status == "active",
+        )
+    ).all()
+    for m in member:
+        if m.user_id and m.user_id == user.id:
+            return True
+        if email and (m.email or "").strip().lower() == email:
+            return True
+    return False
+
+
 def resolve_business_id(request: Request, user: AuthUser, session: Session) -> str:
     header = (request.headers.get("X-Business-Id") or "").strip()
     cookie = (request.cookies.get(BUSINESS_COOKIE) or "").strip()
@@ -178,7 +198,7 @@ def resolve_business_id(request: Request, user: AuthUser, session: Session) -> s
 
     if candidate:
         biz = session.get(Business, candidate)
-        if biz and biz.user_id == user.id:
+        if user_can_access_business(session, user, biz):
             return biz.id or candidate
 
     biz = ensure_default_business(session, user)

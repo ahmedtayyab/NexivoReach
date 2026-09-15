@@ -3314,3 +3314,62 @@ input:focus, textarea:focus, select:focus {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+.plan-usage__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.team-panel {
+  margin: 0;
+  padding: 1rem 1.05rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+.team-panel__head { margin-bottom: 0.85rem; }
+.team-panel__form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.85rem;
+}
+.team-panel__form input {
+  flex: 1 1 12rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  padding: 0.45rem 0.6rem;
+  font-size: 13px;
+}
+.team-panel__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+.team-panel__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 13px;
+}
+.team-panel__list li:first-child { border-top: 0; }
+.team-panel__list strong {
+  display: block;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.team-panel__list span {
+  color: var(--text-muted);
+  font-size: 11.5px;
+  text-transform: capitalize;
+}

@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     DAILY_EXTRACT_LIMIT: int = 10
     DAILY_PREPARE_LIMIT: int = 50
     DAILY_SEND_LIMIT: int = 40
+    # Optional Hunter.io key for email enrichment when site scrape misses.
+    HUNTER_API_KEY: str = ""
+    # Stripe (optional). Without keys, Upgrade opens a support/billing message.
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRICE_PRO: str = ""
+    STRIPE_PRICE_GROWTH: str = ""
     # Local default: SQLite. Production (Render): managed Postgres via DATABASE_URL.
     DATABASE_URL: str = "sqlite:///./nexivoreach.db"
     GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON: str = ""

@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import type { AuthUser } from '../types';
+import { apiFetch } from '../lib/api';
 import { planLabel, usageKinds } from '../lib/outcomes';
 
 type Props = {
@@ -11,6 +13,69 @@ export default function PlanUsageCard({ user, compact = false, onAskSupport }: P
   const usage = user?.usage;
   const plan = planLabel(user?.plan);
   const bypassed = Boolean(usage?.bypassed);
+  const [billingReady, setBillingReady] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const resp = await apiFetch('/api/billing/status');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!cancelled) setBillingReady(Boolean(data.configured));
+      } catch {
+        // offline / unconfigured
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const startCheckout = async (nextPlan: 'pro' | 'growth') => {
+    setBusy(nextPlan);
+    setMsg('');
+    try {
+      const resp = await apiFetch('/api/billing/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: nextPlan }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(typeof data.detail === 'string' ? data.detail : 'Checkout unavailable');
+      }
+      if (data.url) {
+        window.location.href = data.url as string;
+        return;
+      }
+      throw new Error('No checkout URL returned');
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Checkout failed');
+      onAskSupport?.();
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const openPortal = async () => {
+    setBusy('portal');
+    setMsg('');
+    try {
+      const resp = await apiFetch('/api/billing/portal', { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(typeof data.detail === 'string' ? data.detail : 'Portal unavailable');
+      }
+      if (data.url) window.location.href = data.url as string;
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Portal failed');
+    } finally {
+      setBusy('');
+    }
+  };
 
   return (
     <section className={`plan-usage ${compact ? 'plan-usage--compact' : ''}`}>
@@ -26,12 +91,48 @@ export default function PlanUsageCard({ user, compact = false, onAskSupport }: P
                 : 'Sign in to see today’s remaining hunts and sends.'}
           </p>
         </div>
-        {onAskSupport && (
-          <button type="button" className="btn btn-secondary" onClick={onAskSupport}>
-            Need higher limits?
-          </button>
-        )}
+        <div className="plan-usage__actions">
+          {billingReady ? (
+            <>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={Boolean(busy)}
+                onClick={() => void startCheckout('pro')}
+              >
+                {busy === 'pro' ? 'Opening…' : 'Upgrade to Pro'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={Boolean(busy)}
+                onClick={() => void startCheckout('growth')}
+              >
+                {busy === 'growth' ? 'Opening…' : 'Growth'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={Boolean(busy)}
+                onClick={() => void openPortal()}
+              >
+                {busy === 'portal' ? 'Opening…' : 'Manage billing'}
+              </button>
+            </>
+          ) : (
+            onAskSupport && (
+              <button type="button" className="btn btn-secondary" onClick={onAskSupport}>
+                Need higher limits?
+              </button>
+            )
+          )}
+        </div>
       </div>
+      {msg && (
+        <p className="ui-banner ui-banner--warn mb-3" role="status">
+          {msg}
+        </p>
+      )}
 
       {usage && (
         <div className="plan-usage__meters" aria-label="Daily usage">

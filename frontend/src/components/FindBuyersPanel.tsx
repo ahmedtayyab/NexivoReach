@@ -64,6 +64,8 @@ export default function FindBuyersPanel({
   const [phaseIndex, setPhaseIndex] = useState(0);
   const [showSheetsPrompt, setShowSheetsPrompt] = useState(false);
   const [skipSheetsPrompt, setSkipSheetsPrompt] = useState(() => loadSkipSheetsPrompt());
+  const [serverPhase, setServerPhase] = useState('');
+  const [serverProgress, setServerProgress] = useState(0);
 
   const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
   const placeHint = useMemo(() => {
@@ -127,21 +129,24 @@ export default function FindBuyersPanel({
     return `Still working · ${elapsedSec}s — large markets take longer`;
   }, [isRunning, elapsedSec]);
 
-  // Indeterminate-feeling bar: climbs quickly early, then slows (never claims a fake deadline)
+  // Prefer server progress when available; else soft elapsed climb.
   const progressPct = useMemo(() => {
     if (!isRunning) return 0;
+    if (serverProgress > 0) return Math.min(99, serverProgress);
     const t = elapsedSec;
     if (t <= 20) return Math.round(12 + t * 2.2);
     if (t <= 50) return Math.round(56 + (t - 20) * 0.7);
     if (t <= 90) return Math.round(77 + (t - 50) * 0.3);
     return Math.min(94, 89 + Math.floor((t - 90) / 15));
-  }, [isRunning, elapsedSec]);
+  }, [isRunning, elapsedSec, serverProgress]);
 
   const runHunt = async () => {
     if (!canHunt || isRunning) return;
     setShowSheetsPrompt(false);
     setIsRunning(true);
     setStatusText(phases[0]);
+    setServerPhase(phases[0]);
+    setServerProgress(4);
     setLastFound(null);
     try {
       const resp = await apiFetch('/api/discovery/run', {
@@ -152,38 +157,73 @@ export default function FindBuyersPanel({
           products,
           icp,
           business: businessInfo,
+          async_mode: true,
         }),
       });
       if (!resp.ok) {
         const text = await resp.text();
         throw new Error(text || `Discovery failed (${resp.status})`);
       }
-      const data = await resp.json();
-      const found: Prospect[] = Array.isArray(data.prospects)
-        ? data.prospects
-        : data.prospect
-          ? [data.prospect]
-          : [];
+      const started = await resp.json();
+      const jobId = started.jobId as string | undefined;
+      if (!jobId) {
+        throw new Error('Hunt started but no job id returned');
+      }
+
+      let data: {
+        status?: string;
+        phase?: string;
+        progress?: number;
+        prospects?: Prospect[];
+        foundCount?: number;
+        skippedExisting?: number;
+        agent_log?: AgentRunLog;
+        error?: string;
+      } = started;
+
+      while (data.status !== 'completed' && data.status !== 'failed') {
+        await new Promise(r => window.setTimeout(r, 1200));
+        const poll = await apiFetch(`/api/discovery/jobs/${jobId}`);
+        if (!poll.ok) {
+          const text = await poll.text();
+          throw new Error(text || `Could not poll hunt (${poll.status})`);
+        }
+        data = await poll.json();
+        if (data.phase) {
+          setServerPhase(data.phase);
+          setStatusText(data.phase);
+        }
+        if (typeof data.progress === 'number') setServerProgress(data.progress);
+      }
+
+      if (data.status === 'failed') {
+        throw new Error(data.error || 'Discovery failed');
+      }
+
+      const found: Prospect[] = Array.isArray(data.prospects) ? data.prospects : [];
       if (found.length) onAddProspects(found);
       if (data.agent_log) onAddLog(data.agent_log as AgentRunLog);
-      setLastFound(found.length);
+      const foundCount = Number(data.foundCount ?? found.length);
+      setLastFound(foundCount);
       const skipped = Number(data.skippedExisting || 0);
       const sheetsNote = sheetsConnected ? ' Synced to Sheets.' : '';
       setStatusText(
-        found.length
-          ? `Added ${found.length} lead${found.length === 1 ? '' : 's'}${
+        foundCount
+          ? `Added ${foundCount} lead${foundCount === 1 ? '' : 's'}${
               skipped ? ` (${skipped} already in your list)` : ''
             } — filter Strong vs Average on Leads.${sheetsNote}`
           : skipped
             ? `All matches were already in your list (${skipped}). Try a different hunt.`
             : 'No accounts this round — try a clearer product, buyer type, or place.',
       );
-      onComplete?.(found.length);
+      onComplete?.(foundCount);
     } catch (err: unknown) {
       console.error('Discovery failed', err);
       setStatusText(err instanceof Error ? err.message : 'Discovery failed');
     } finally {
       setIsRunning(false);
+      setServerProgress(0);
+      setServerPhase('');
     }
   };
 
@@ -213,7 +253,7 @@ export default function FindBuyersPanel({
           <p className="find-buyers__overlay-title">Finding buyers</p>
           <p className="find-buyers__overlay-phase inline-flex items-center gap-2">
             <Loader2 className="w-4 h-4 animate-spin shrink-0 text-[var(--cta)]" strokeWidth={1.75} />
-            {phases[phaseIndex]}
+            {serverPhase || phases[phaseIndex]}
           </p>
           <div className="find-buyers__overlay-track" aria-hidden="true">
             <div

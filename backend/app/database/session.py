@@ -26,9 +26,28 @@ def init_db():
     _ensure_business_sheets_columns()
     _ensure_user_access_columns()
     _ensure_support_ticket_attachments_column()
+    _ensure_user_billing_columns()
     if _backend == "sqlite":
         _ensure_sqlite_columns()
         _migrate_multi_company()
+
+
+def _ensure_user_billing_columns():
+    """Stripe customer / subscription columns on nr_user."""
+    tables = ("nr_user", "user")
+    additions = [
+        ("stripe_customer_id", "VARCHAR"),
+        ("stripe_subscription_id", "VARCHAR"),
+        ("plan_status", "VARCHAR"),
+    ]
+    with engine.connect() as conn:
+        for table in tables:
+            for column, coltype in additions:
+                try:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}"))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
 
 
 def _ensure_support_ticket_attachments_column():

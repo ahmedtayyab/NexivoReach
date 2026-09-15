@@ -5,6 +5,7 @@ import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
 import FindBuyersPanel from './FindBuyersPanel';
 import PlanUsageCard from './PlanUsageCard';
+import TeamMembersPanel from './TeamMembersPanel';
 import { useConfirm } from './ConfirmDialog';
 import {
   categoriesFromProducts,
@@ -260,6 +261,11 @@ export default function SettingsView({
             />
             <div className="mt-5">
               <PlanUsageCard user={user} onAskSupport={onAskSupport} />
+            </div>
+            <div className="mt-5">
+              {businessInfo.id ? (
+                <TeamMembersPanel companyId={businessInfo.id} companyName={businessInfo.name} />
+              ) : null}
             </div>
           </>
         )}

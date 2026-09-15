@@ -734,48 +734,47 @@ async def refresh_contacts(
     request: Request,
     user: AuthUser = Depends(get_current_user),
 ):
-    """Re-scrape the company site for public emails/phones and save onto the lead."""
+    """Re-scrape / enrich the company site for public emails/phones and save onto the lead."""
+    from app.services import enrichment as enrich_mod
+    from app.services import access as access_mod
+
     with Session(engine) as session:
         business_id = resolve_business_id(request, user, session)
         row = _get_owned(session, prospect_id, business_id)
         if not (row.website or "").strip():
             raise HTTPException(status_code=400, detail="Lead has no website to scrape")
-        phone = (row.phone or "").strip()
-        page: Dict[str, Any] = {}
-        try:
-            page = await WebSearchTool().scrape_homepage(row.website)
-        except Exception as exc:
-            log.warning("Homepage scrape failed for %s: %s", prospect_id, exc)
-        site_text = (page.get("text") or "") if isinstance(page, dict) else ""
-        found = await discover_contacts(
-            website=row.website,
-            homepage_html=(page.get("html") or "")[:400000] if isinstance(page, dict) else "",
-            homepage_text=site_text,
-            homepage_url=(page.get("url") if isinstance(page, dict) else None) or row.website,
-            seed_phone=phone,
-            seed_emails=list((page.get("emails") or []) if isinstance(page, dict) else []),
-        )
+        db_user = session.get(User, user.id)
+        if db_user:
+            # Enrich counts as extract usage when Hunter may be used
+            try:
+                access_mod.consume_usage(session, db_user, "extract")
+            except HTTPException:
+                # Still allow free site scrape if extract cap hit
+                pass
+        website = row.website
+        seed_email = row.email or ""
+        seed_phone = row.phone or ""
+        seed_contacts = list(row.contacts or [])
+
+    found = await enrich_mod.enrich_website(
+        website,
+        seed_email=seed_email,
+        seed_phone=seed_phone,
+        seed_contacts=seed_contacts,
+        use_hunter=True,
+    )
+
+    with Session(engine) as session:
+        row = _get_owned(session, prospect_id, business_id)
         email = (found.get("email") or row.email or "").strip()
+        phone = (found.get("phone") or row.phone or "").strip()
         contacts = found.get("contacts") or list(row.contacts or [])
-        phone = found.get("phone") or phone
-        # Ensure email appears in contacts list
-        if email and not any(
-            (c.get("type") == "email" and (c.get("value") or "").lower() == email.lower())
-            for c in contacts
-            if isinstance(c, dict)
-        ):
-            contacts = [{
-                "type": "email",
-                "value": email,
-                "label": "Email",
-                "source": "site",
-                "role": "general",
-            }, *contacts]
         timeline = list(row.agent_timeline or [])
+        src = ",".join(found.get("sources") or []) or "none"
         if email:
-            timeline.append({"time": _clock(), "action": f"Refreshed contacts — email {email}"})
+            timeline.append({"time": _clock(), "action": f"Refreshed contacts — email {email} ({src})"})
         else:
-            timeline.append({"time": _clock(), "action": "Refreshed contacts — no public email found"})
+            timeline.append({"time": _clock(), "action": f"Refreshed contacts — no public email ({src or 'site'})"})
         row.email = email
         row.phone = phone or row.phone
         row.contacts = contacts
@@ -788,7 +787,13 @@ async def refresh_contacts(
         session.add(row)
         session.commit()
         session.refresh(row)
-        return {"prospect": prospect_to_frontend(row), "email": email, "found": bool(email)}
+        return {
+            "prospect": prospect_to_frontend(row),
+            "email": email,
+            "found": bool(email),
+            "sources": found.get("sources") or [],
+            "hunterConfigured": bool(found.get("hunterConfigured")),
+        }
 
 
 @router.post("/{prospect_id}/prepare-outreach")

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
 import { Loader2, Mail, MailWarning } from 'lucide-react';
+import { apiFetch } from '../lib/api';
 import { leadRowToneClass, recipientEmail } from '../lib/leadTone';
 import { computeOutcomes, hasEmail, isDueFollowUp } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
@@ -204,6 +205,29 @@ export default function QueueView({
       <OutcomesStrip outcomes={outcomes} className="mb-4 nr-enter nr-enter-delay-1" />
 
       <div className="toolbar nr-enter nr-enter-delay-1">
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => {
+            void (async () => {
+              try {
+                const resp = await apiFetch('/api/prospects/export.csv');
+                if (!resp.ok) throw new Error(await resp.text());
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'nexivoreach-leads.csv';
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch (err) {
+                console.error(err);
+              }
+            })();
+          }}
+        >
+          Export CSV
+        </button>
         {onSendSelected && gmailConnected && selectedIds.length > 0 && (
           <button
             type="button"

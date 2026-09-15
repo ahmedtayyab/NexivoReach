@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
 from typing import Any, Dict
 from uuid import uuid4
 from sqlmodel import Session, select
@@ -7,10 +8,63 @@ from app.models.schemas import ProspectRecord
 from app.api.deps import AuthUser, get_current_user, resolve_business_id
 from app.api.serializers import prospect_from_frontend, prospect_to_frontend
 from app.integrations import sheets as sheets_mod
+from app.tools.contact_finder import resolve_lead_email
+import csv
+import io
 import logging
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/prospects", tags=["prospects"])
+
+
+@router.get("/export.csv")
+def export_prospects_csv(request: Request, user: AuthUser = Depends(get_current_user)):
+    """CRM-light CSV export (same columns as Sheets lead headers)."""
+    with Session(engine) as session:
+        business_id = resolve_business_id(request, user, session)
+        rows = session.exec(
+            select(ProspectRecord)
+            .where(ProspectRecord.business_id == business_id)
+            .order_by(ProspectRecord.discovered_at.desc())
+        ).all()
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(sheets_mod.LEAD_HEADERS)
+        for r in rows:
+            front = prospect_to_frontend(r)
+            fit = front.get("fitBreakdown") or {}
+            writer.writerow(
+                [
+                    "",  # Seller Company filled by Sheets sync; leave blank here
+                    front.get("companyName") or "",
+                    front.get("website") or "",
+                    resolve_lead_email(
+                        email=front.get("email") or "",
+                        contacts=front.get("contacts") or [],
+                        to_email=((front.get("outreachDraft") or {}).get("toEmail") or ""),
+                    ),
+                    front.get("phone") or "",
+                    front.get("location") or "",
+                    front.get("industry") or "",
+                    front.get("source") or "",
+                    front.get("stage") or "",
+                    "yes" if front.get("contactAgain", True) else "no",
+                    "",
+                    front.get("fitScore") or "",
+                    front.get("intent") or fit.get("intent") or "",
+                    (front.get("whyThisProspect") or "")[:500],
+                    (front.get("whyNow") or "")[:300],
+                    (front.get("replySummary") or "")[:300],
+                    front.get("discoveredAt") or "",
+                    "",
+                ]
+            )
+        data = buf.getvalue()
+    return StreamingResponse(
+        iter([data]),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="nexivoreach-leads.csv"'},
+    )
 
 
 @router.get("/")
