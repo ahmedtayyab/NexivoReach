@@ -109,6 +109,14 @@ def _mount_frontend():
     if assets_dir.is_dir():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
+    @app.get("/privacy")
+    async def privacy_redirect():
+        return FileResponse(STATIC_DIR / "privacy.html")
+
+    @app.get("/privacy.html")
+    async def privacy_html():
+        return FileResponse(STATIC_DIR / "privacy.html")
+
     @app.get("/")
     async def spa_index():
         return FileResponse(STATIC_DIR / "index.html")

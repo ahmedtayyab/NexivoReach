@@ -29,6 +29,37 @@ def read_all(user: AuthUser = Depends(get_current_user)):
         return {"ok": True, "marked": n, "unreadCount": 0}
 
 
+@router.delete("/read")
+def clear_read(user: AuthUser = Depends(get_current_user)):
+    with Session(engine) as session:
+        n = notif_mod.delete_read(session, user.id)
+        return {
+            "ok": True,
+            "deleted": n,
+            "unreadCount": notif_mod.unread_count(session, user.id),
+        }
+
+
+@router.delete("")
+def clear_all(user: AuthUser = Depends(get_current_user)):
+    with Session(engine) as session:
+        n = notif_mod.delete_all(session, user.id)
+        return {"ok": True, "deleted": n, "unreadCount": 0}
+
+
+@router.delete("/{notification_id}")
+def delete_one(notification_id: str, user: AuthUser = Depends(get_current_user)):
+    with Session(engine) as session:
+        ok = notif_mod.delete_one(session, user.id, notification_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Notification not found")
+        return {
+            "ok": True,
+            "deleted": 1,
+            "unreadCount": notif_mod.unread_count(session, user.id),
+        }
+
+
 @router.post("/{notification_id}/read")
 def read_one(notification_id: str, user: AuthUser = Depends(get_current_user)):
     with Session(engine) as session:

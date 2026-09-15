@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Bell, CheckCheck, Loader2, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Archive, Bell, CheckCheck, Loader2, Trash2, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { brandAssets } from '../lib/brandAssets';
 import type { AuthUser } from '../types';
+import { useConfirm } from './ConfirmDialog';
 
 export type AppNotification = {
   id: string;
@@ -14,6 +15,8 @@ export type AppNotification = {
   createdAt: string;
   meta?: Record<string, unknown>;
 };
+
+type NotifTab = 'new' | 'viewed';
 
 type Props = {
   user: AuthUser | null;
@@ -75,25 +78,35 @@ function UsageMeters({ user }: { user: AuthUser }) {
 
 function NotificationList({
   items,
+  emptyCopy,
   onOpen,
+  onDismiss,
 }: {
   items: AppNotification[];
+  emptyCopy: string;
   onOpen: (n: AppNotification) => void;
+  onDismiss: (n: AppNotification) => void;
 }) {
   if (items.length === 0) {
     return (
       <div className="notif-empty-state nr-enter">
         <div className="empty-state__art-wrap" style={{ width: '7.5rem', marginBottom: '0.85rem' }}>
-          <img src={brandAssets.emptyNotifications} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+          <img
+            src={brandAssets.emptyNotifications}
+            alt=""
+            className="empty-state__art"
+            loading="lazy"
+            decoding="async"
+          />
         </div>
-        <p className="notif-empty">No notifications yet. Account changes and usage alerts show up here.</p>
+        <p className="notif-empty">{emptyCopy}</p>
       </div>
     );
   }
   return (
     <ul className="notif-list">
       {items.map(n => (
-        <li key={n.id}>
+        <li key={n.id} className="notif-row">
           <button
             type="button"
             className={`notif-item ${n.readAt ? '' : 'is-unread'}`}
@@ -105,6 +118,18 @@ function NotificationList({
             <span className="notif-item__time">
               {(n.createdAt || '').replace('T', ' ').replace('Z', ' UTC')}
             </span>
+          </button>
+          <button
+            type="button"
+            className="notif-item__dismiss"
+            aria-label="Remove notification"
+            title="Remove"
+            onClick={e => {
+              e.stopPropagation();
+              void onDismiss(n);
+            }}
+          >
+            <X className="w-3.5 h-3.5" strokeWidth={2} />
           </button>
         </li>
       ))}
@@ -145,14 +170,16 @@ export default function NotificationsRail({
   desktopOpen = true,
   onDesktopOpenChange,
 }: Props) {
+  const confirm = useConfirm();
   const [items, setItems] = useState<AppNotification[]>([]);
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useState<NotifTab>('new');
 
   const load = useCallback(async () => {
     if (!user) return;
     try {
-      const resp = await apiFetch('/api/notifications?limit=30');
+      const resp = await apiFetch('/api/notifications?limit=50');
       if (!resp.ok) return;
       const data = await resp.json();
       setItems(Array.isArray(data.notifications) ? data.notifications : []);
@@ -176,12 +203,76 @@ export default function NotificationsRail({
     if (mobileOpen) void load();
   }, [mobileOpen, load]);
 
+  const newItems = useMemo(() => items.filter(n => !n.readAt), [items]);
+  const viewedItems = useMemo(() => items.filter(n => Boolean(n.readAt)), [items]);
+  const visible = tab === 'new' ? newItems : viewedItems;
+
   const markAll = async () => {
     setLoading(true);
     try {
       await apiFetch('/api/notifications/read-all', { method: 'POST' });
       setItems(prev => prev.map(n => ({ ...n, readAt: n.readAt || new Date().toISOString() })));
       setUnread(0);
+      setTab('viewed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const dismissOne = async (n: AppNotification) => {
+    setItems(prev => prev.filter(x => x.id !== n.id));
+    if (!n.readAt) setUnread(u => Math.max(0, u - 1));
+    try {
+      const resp = await apiFetch(`/api/notifications/${n.id}`, { method: 'DELETE' });
+      if (resp.ok) {
+        const data = await resp.json();
+        setUnread(Number(data.unreadCount) || 0);
+      } else {
+        void load();
+      }
+    } catch {
+      void load();
+    }
+  };
+
+  const clearViewed = async () => {
+    if (viewedItems.length === 0) return;
+    const ok = await confirm({
+      title: 'Clear viewed notifications?',
+      body: 'Removes everything you’ve already opened. New alerts stay.',
+      confirmLabel: 'Clear viewed',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setLoading(true);
+    try {
+      const resp = await apiFetch('/api/notifications/read', { method: 'DELETE' });
+      if (resp.ok) {
+        const data = await resp.json();
+        setItems(prev => prev.filter(n => !n.readAt));
+        setUnread(Number(data.unreadCount) || 0);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clearAll = async () => {
+    if (items.length === 0) return;
+    const ok = await confirm({
+      title: 'Remove all notifications?',
+      body: 'This clears both new and viewed alerts. You can’t undo this.',
+      confirmLabel: 'Remove all',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setLoading(true);
+    try {
+      const resp = await apiFetch('/api/notifications', { method: 'DELETE' });
+      if (resp.ok) {
+        setItems([]);
+        setUnread(0);
+      }
     } finally {
       setLoading(false);
     }
@@ -224,15 +315,6 @@ export default function NotificationsRail({
         <div className="notif-rail__actions">
           <button
             type="button"
-            className="notif-panel__mark"
-            onClick={() => void markAll()}
-            disabled={loading || unread === 0}
-          >
-            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
-            Mark all
-          </button>
-          <button
-            type="button"
             className="notif-rail__close"
             onClick={() => {
               onMobileOpenChange?.(false);
@@ -247,8 +329,77 @@ export default function NotificationsRail({
 
       {user.usage && <UsageMeters user={user} />}
 
+      <div className="notif-tabs" role="tablist" aria-label="Notification folders">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'new'}
+          className={`notif-tabs__btn ${tab === 'new' ? 'is-active' : ''}`}
+          onClick={() => setTab('new')}
+        >
+          New
+          {newItems.length > 0 && (
+            <span className="notif-tabs__count tabular-nums">{newItems.length}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'viewed'}
+          className={`notif-tabs__btn ${tab === 'viewed' ? 'is-active' : ''}`}
+          onClick={() => setTab('viewed')}
+        >
+          <Archive className="w-3 h-3" strokeWidth={2} />
+          Viewed
+          {viewedItems.length > 0 && (
+            <span className="notif-tabs__count tabular-nums">{viewedItems.length}</span>
+          )}
+        </button>
+      </div>
+
+      <div className="notif-toolbar">
+        {tab === 'new' ? (
+          <button
+            type="button"
+            className="notif-panel__mark"
+            onClick={() => void markAll()}
+            disabled={loading || unread === 0}
+          >
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
+            Mark all viewed
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="notif-panel__mark"
+            onClick={() => void clearViewed()}
+            disabled={loading || viewedItems.length === 0}
+          >
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+            Clear viewed
+          </button>
+        )}
+        <button
+          type="button"
+          className="notif-panel__mark notif-panel__mark--danger"
+          onClick={() => void clearAll()}
+          disabled={loading || items.length === 0}
+        >
+          Remove all
+        </button>
+      </div>
+
       <div className="notif-rail__scroll">
-        <NotificationList items={items} onOpen={openItem} />
+        <NotificationList
+          items={visible}
+          emptyCopy={
+            tab === 'new'
+              ? 'You’re all caught up. New alerts land here.'
+              : 'No viewed notifications. Opened alerts move here so New stays clean.'
+          }
+          onOpen={openItem}
+          onDismiss={dismissOne}
+        />
       </div>
     </div>
   );

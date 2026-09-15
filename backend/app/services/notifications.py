@@ -172,6 +172,38 @@ def mark_all_read(session: Session, user_id: str) -> int:
     return len(rows)
 
 
+def delete_one(session: Session, user_id: str, notification_id: str) -> bool:
+    row = session.get(Notification, notification_id)
+    if not row or row.user_id != user_id:
+        return False
+    session.delete(row)
+    session.commit()
+    return True
+
+
+def delete_read(session: Session, user_id: str) -> int:
+    rows = session.exec(
+        select(Notification).where(
+            Notification.user_id == user_id,
+            Notification.read_at != None,  # noqa: E711
+        )
+    ).all()
+    for row in rows:
+        session.delete(row)
+    session.commit()
+    return len(rows)
+
+
+def delete_all(session: Session, user_id: str) -> int:
+    rows = session.exec(
+        select(Notification).where(Notification.user_id == user_id)
+    ).all()
+    for row in rows:
+        session.delete(row)
+    session.commit()
+    return len(rows)
+
+
 def serialize(row: Notification) -> dict:
     return {
         "id": row.id,

@@ -36,6 +36,7 @@ import NotificationsRail, {
 import ToastHost, { type AppToast, type ToastKind } from './components/ToastHost';
 import { useConfirm } from './components/ConfirmDialog';
 import LoginView from './components/LoginView';
+import PrivacyPolicyView from './components/PrivacyPolicyView';
 import SuspendedView from './components/SuspendedView';
 import BrandLockup from './components/brand/BrandLockup';
 
@@ -254,6 +255,7 @@ export default function App() {
       activeRoute === 'activity' ||
       activeRoute === 'admin' ||
       activeRoute === 'support' ||
+      activeRoute === 'privacy' ||
       activeRoute === 'notifications' ||
       isSettingsRoute(activeRoute);
     if (!valid) {
@@ -811,6 +813,14 @@ export default function App() {
     );
   }
 
+  const path = typeof window !== 'undefined' ? window.location.pathname.replace(/\/$/, '') : '';
+  const wantsPrivacy =
+    activeRoute === 'privacy' || path === '/privacy' || path === '/privacy.html';
+
+  if (wantsPrivacy && (!authConfigured || !user)) {
+    return <PrivacyPolicyView />;
+  }
+
   if (authConfigured && !user) {
     return <LoginView error={authError} />;
   }
@@ -930,6 +940,9 @@ export default function App() {
         )}
         {activeRoute === 'admin' && user?.isAdmin && <AdminView onToast={pushToast} />}
         {activeRoute === 'support' && <SupportView onToast={pushToast} />}
+        {activeRoute === 'privacy' && (
+          <PrivacyPolicyView embedded onBack={() => navigate('support')} />
+        )}
       </main>
 
       <NotificationsRail

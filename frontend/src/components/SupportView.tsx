@@ -205,6 +205,10 @@ export default function SupportView({ onToast }: Props) {
         <h1 className="support-desk__title">Support</h1>
         <p className="support-desk__lede">
           Raise a ticket for limits, billing questions, or bugs. Replies show up here and in Notifications.
+          {' '}
+          <a href="/privacy.html" className="linkish">
+            Privacy policy
+          </a>
         </p>
       </header>
 

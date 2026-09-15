@@ -9,7 +9,8 @@ export type AppRoute =
   | 'integrations'
   | 'admin'
   | 'support'
-  | 'notifications';
+  | 'notifications'
+  | 'privacy';
 
 export type SettingsSection = 'company' | 'catalog' | 'icp' | 'integrations';
 
@@ -25,6 +26,7 @@ export const APP_ROUTES: AppRoute[] = [
   'admin',
   'support',
   'notifications',
+  'privacy',
 ];
 
 export const SETTINGS_SECTIONS: SettingsSection[] = ['company', 'integrations', 'catalog', 'icp'];
@@ -52,6 +54,9 @@ const ROUTE_ALIASES: Record<string, AppRoute> = {
   ticket: 'support',
   tickets: 'support',
   alerts: 'notifications',
+  privacy: 'privacy',
+  'privacy-policy': 'privacy',
+  policy: 'privacy',
 };
 
 export function normalizeRoute(raw: string | undefined | null): AppRoute {

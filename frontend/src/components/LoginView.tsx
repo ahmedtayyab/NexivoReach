@@ -58,7 +58,7 @@ export default function LoginView({ error }: Props) {
 
         <p className="text-[12.5px] text-ink-muted mt-8 nr-enter nr-enter-delay-3">
           Turn products into qualified buyers.{' '}
-          <a href="/privacy.html" className="underline hover:text-ink">
+          <a href="/privacy.html" className="linkish">
             Privacy
           </a>
         </p>

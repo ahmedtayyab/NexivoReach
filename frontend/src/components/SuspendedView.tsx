@@ -301,14 +301,19 @@ export default function SuspendedView({ user, onLogout, onToast }: Props) {
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={onLogout}
-            className="mt-5 inline-flex items-center gap-1.5 text-[12.5px] text-ink-muted hover:text-ink"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            Sign out
-          </button>
+          <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <button
+              type="button"
+              onClick={onLogout}
+              className="inline-flex items-center gap-1.5 text-[12.5px] text-ink-muted hover:text-ink"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              Sign out
+            </button>
+            <a href="/privacy.html" className="linkish text-[12.5px]">
+              Privacy policy
+            </a>
+          </div>
         </div>
       </div>
     </div>

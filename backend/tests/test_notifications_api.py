@@ -40,6 +40,69 @@ def test_notifications_list_and_mark_read():
     assert all_read.json()["unreadCount"] == 0
 
 
+def test_notifications_delete_one_and_clear_read():
+    with Session(engine) as session:
+        keep = notif_mod.notify_user(
+            session,
+            "local",
+            kind="info",
+            title="Keep unread",
+            body="stays",
+        )
+        gone = notif_mod.notify_user(
+            session,
+            "local",
+            kind="info",
+            title="Delete me",
+            body="bye",
+        )
+        viewed = notif_mod.notify_user(
+            session,
+            "local",
+            kind="info",
+            title="Already viewed",
+            body="archive",
+        )
+        assert keep and gone and viewed
+        notif_mod.mark_read(session, "local", viewed.id)
+        keep_id, gone_id, viewed_id = keep.id, gone.id, viewed.id
+
+    deleted = client.delete(f"/api/notifications/{gone_id}")
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["deleted"] == 1
+
+    listed = client.get("/api/notifications")
+    ids = [n["id"] for n in listed.json()["notifications"]]
+    assert gone_id not in ids
+    assert keep_id in ids
+    assert viewed_id in ids
+
+    cleared = client.delete("/api/notifications/read")
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["deleted"] >= 1
+
+    after = client.get("/api/notifications").json()
+    after_ids = [n["id"] for n in after["notifications"]]
+    assert viewed_id not in after_ids
+    assert keep_id in after_ids
+    assert after["unreadCount"] >= 1
+
+
+def test_notifications_clear_all():
+    with Session(engine) as session:
+        notif_mod.notify_user(session, "local", kind="info", title="A", body="")
+        notif_mod.notify_user(session, "local", kind="info", title="B", body="")
+
+    wiped = client.delete("/api/notifications")
+    assert wiped.status_code == 200, wiped.text
+    assert wiped.json()["unreadCount"] == 0
+
+    listed = client.get("/api/notifications")
+    assert listed.status_code == 200
+    # Other tests may leave rows for local; clear-all for this user should empty theirs.
+    assert all(n["title"] not in {"A", "B"} for n in listed.json()["notifications"])
+
+
 def test_admin_plan_patch_creates_notification():
     # Ensure a real user row exists to patch.
     from uuid import uuid4
