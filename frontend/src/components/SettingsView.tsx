@@ -503,6 +503,7 @@ function CompanySection({
             placeholder="Type a category"
             chipDisplay="rotate"
             selectedAsTags
+            searchOnly
             rotateCount={5}
             maxItems={8}
             aiContext={{

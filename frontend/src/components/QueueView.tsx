@@ -29,7 +29,7 @@ interface Props {
   onReviewProspect: (id: string) => void;
   onUpdateStage: (id: string, stage: Prospect['stage']) => void;
   onClearLeads?: () => Promise<void> | void;
-  onPrepareOutreach?: () => void | Promise<void>;
+  onPrepareOutreach?: (ids?: string[]) => void | Promise<void>;
   onSendAllReady?: () => void | Promise<void>;
   onSendSelected?: (ids: string[]) => Promise<void> | void;
   onRefreshContacts?: (id: string) => Promise<void> | void;
@@ -64,6 +64,7 @@ export default function QueueView({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [sendingSelected, setSendingSelected] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  const [preparingKind, setPreparingKind] = useState<'selected' | 'best' | ''>('');
   const [sendingBest, setSendingBest] = useState(false);
   const [refreshingId, setRefreshingId] = useState('');
   const confirm = useConfirm();
@@ -144,6 +145,7 @@ export default function QueueView({
           <button
             type="button"
             className="linkish lead-email__find"
+            title="Hunt only checks the homepage quickly. Find crawls contact pages on this site."
             disabled={refreshingId === prospect.id}
             onClick={e => {
               e.stopPropagation();
@@ -259,6 +261,28 @@ export default function QueueView({
             {sendingBest ? 'Sending…' : 'Send best-fit'}
           </button>
         )}
+        {onPrepareOutreach && selectedIds.length > 0 && (
+          <button
+            type="button"
+            disabled={preparing}
+            onClick={() => {
+              void (async () => {
+                setPreparing(true);
+                setPreparingKind('selected');
+                try {
+                  await onPrepareOutreach(selectedIds);
+                } finally {
+                  setPreparing(false);
+                  setPreparingKind('');
+                }
+              })();
+            }}
+            className="btn btn-primary nr-soft-pulse"
+            title="Draft outreach only for the leads you’ve checked"
+          >
+            {preparingKind === 'selected' ? 'Preparing…' : `Prepare selected (${selectedIds.length})`}
+          </button>
+        )}
         {onPrepareOutreach && prospects.some(p => !p.outreachDraft && (
           (p.fitScore || 0) >= 75
           || (p.fitBreakdown?.fitSummary || '').toLowerCase() === 'high'
@@ -270,16 +294,19 @@ export default function QueueView({
             onClick={() => {
               void (async () => {
                 setPreparing(true);
+                setPreparingKind('best');
                 try {
                   await onPrepareOutreach();
                 } finally {
                   setPreparing(false);
+                  setPreparingKind('');
                 }
               })();
             }}
-            className="btn btn-secondary"
+            className={selectedIds.length > 0 ? 'btn btn-secondary' : 'btn btn-primary'}
+            title="Draft outreach for all high-fit leads that don’t have a draft yet"
           >
-            {preparing ? 'Preparing…' : 'Prepare outreach'}
+            {preparingKind === 'best' ? 'Preparing…' : 'Prepare best-fit'}
           </button>
         )}
         {selectedIds.length > 0 && (

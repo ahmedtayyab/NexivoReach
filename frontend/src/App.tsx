@@ -421,9 +421,16 @@ export default function App() {
     );
   };
 
-  const handlePrepareOutreach = async (prospectId?: string) => {
+  const handlePrepareOutreach = async (prospectId?: string, ids?: string[]) => {
     try {
-      pushToast('info', 'Preparing drafts…', 'Writing outreach in parallel — usually a few seconds.');
+      const selectedCount = ids?.length || 0;
+      pushToast(
+        'info',
+        'Preparing drafts…',
+        selectedCount
+          ? `Writing ${selectedCount} selected draft${selectedCount === 1 ? '' : 's'} — each needs an AI pass.`
+          : 'Writing outreach in parallel — each draft is an AI call.',
+      );
       if (prospectId) {
         const resp = await apiFetch(`/api/prospects/${prospectId}/prepare-outreach?force=true`, {
           method: 'POST',
@@ -437,7 +444,7 @@ export default function App() {
       const resp = await apiFetch('/api/prospects/prepare-outreach-batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify(ids?.length ? { ids, force: true } : {}),
       });
       if (!resp.ok) throw new Error(await resp.text());
       const data = await resp.json();
@@ -874,7 +881,7 @@ export default function App() {
 
       <main
         key={isSettingsRoute(activeRoute) ? 'workspace' : activeRoute}
-        className="app-main flex-1 min-w-0 px-4 py-5 sm:px-6 md:px-8 md:py-8 pb-20 md:pb-8"
+        className="app-main flex-1 min-w-0 px-4 py-5 sm:px-6 md:px-8 md:py-8 pb-20 md:pb-8 nr-route"
       >
         {activeRoute === 'queue' && (
           <QueueView
@@ -883,7 +890,7 @@ export default function App() {
             onReviewProspect={id => setSelectedProspectId(id)}
             onUpdateStage={handleUpdateStage}
             onClearLeads={handleClearLeads}
-            onPrepareOutreach={() => handlePrepareOutreach()}
+            onPrepareOutreach={ids => handlePrepareOutreach(undefined, ids)}
             onSendAllReady={() => handleSendAllReady('ready')}
             onSendSelected={handleSendSelected}
             onRefreshContacts={handleRefreshContacts}

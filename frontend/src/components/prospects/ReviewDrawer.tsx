@@ -111,7 +111,7 @@ export default function ReviewDrawer({
               <button
                 type="button"
                 onClick={() => onPrepareOutreach(prospect.id)}
-                className="px-2.5 sm:px-3.5 py-1.5 border border-border text-[12px] sm:text-[13px] rounded-md nr-btn-press"
+                className="btn btn-primary"
               >
                 Prepare outreach
               </button>
@@ -132,7 +132,7 @@ export default function ReviewDrawer({
                     onUpdateStatus(prospect.id, 'Sent');
                   }
                 }}
-                className="px-2.5 sm:px-3.5 py-1.5 bg-accent hover:bg-accent-hover text-white text-[12px] sm:text-[13px] font-medium rounded-md nr-btn-press"
+                className="btn btn-primary"
               >
                 {gmailConnected ? 'Approve & send' : 'Approve & open email'}
               </button>

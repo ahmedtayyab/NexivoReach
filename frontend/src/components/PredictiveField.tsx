@@ -38,7 +38,7 @@ interface Props {
   selectedAsTags?: boolean;
   /**
    * When true with selectedAsTags, the input is a blank search box.
-   * When false, the input shows the saved CSV (so chip picks appear in the field too).
+   * Defaults to true whenever selectedAsTags is on (avoids duplicating chips in the field).
    */
   searchOnly?: boolean;
   /** Max selected items (countries / categories). 0 = unlimited */
@@ -63,7 +63,7 @@ export default function PredictiveField({
   chipDisplay = 'pool',
   prefixSearch = false,
   selectedAsTags = false,
-  searchOnly = false,
+  searchOnly,
   maxItems = 0,
   rotateCount = 5,
 }: Props) {
@@ -77,7 +77,7 @@ export default function PredictiveField({
 
   const selected = useMemo(() => (single ? [] : csvItems(value)), [single, value]);
   const atCap = Boolean(maxItems && selected.length >= maxItems);
-  const useSearchBox = selectedAsTags && searchOnly && !single;
+  const useSearchBox = selectedAsTags && (searchOnly ?? true) && !single;
   const token = single ? value.trim() : useSearchBox ? query.trim() : activeTokenFallback(value);
 
   const matches = filterMatches(suggestions, token, prefixSearch ? 10 : 8, {
