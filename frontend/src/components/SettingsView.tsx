@@ -21,6 +21,7 @@ import {
   workspaceSetupProgress,
   workspaceSetupSteps,
 } from '../lib/workspace';
+import PageAmbient from './brand/PageAmbient';
 
 async function apiErrorMessage(resp: Response, fallback: string): Promise<string> {
   const text = await resp.text();
@@ -136,7 +137,8 @@ export default function SettingsView({
     : null;
 
   return (
-    <div className="setup-desk">
+    <div className="setup-desk page-shell">
+      <PageAmbient variant="workspace" tone="whisper" />
       <header className="setup-desk__hero">
         {isPrimaryStep ? (
           <p className="setup-desk__step tabular-nums">

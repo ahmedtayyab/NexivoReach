@@ -8,6 +8,7 @@ import { brandAssets } from '../lib/brandAssets';
 import { FitScoreBadge } from './FitScoreBadge';
 import { useConfirm } from './ConfirmDialog';
 import OutcomesStrip from './OutcomesStrip';
+import PageAmbient from './brand/PageAmbient';
 
 const EMPTY_QUEUE_IMG = brandAssets.emptyQueue;
 
@@ -190,7 +191,8 @@ export default function QueueView({
   };
 
   return (
-    <div className="max-w-6xl w-full">
+    <div className="page-shell max-w-6xl w-full">
+      {prospects.length > 0 && <PageAmbient variant="leads" tone="whisper" />}
       <div className="page-header nr-enter">
         <h1 className="page-header__title">Leads</h1>
         <p className="page-header__desc">

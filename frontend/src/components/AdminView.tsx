@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import { Loader2, Shield, UserPlus, Ban, CheckCircle2, RefreshCw, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import type { ToastKind } from './ToastHost';
+import PageAmbient from './brand/PageAmbient';
 
 type Props = {
   onToast?: (kind: ToastKind, title: string, body?: string) => void;
@@ -593,7 +594,8 @@ export default function AdminView({ onToast }: Props) {
   }
 
   return (
-    <div className="admin-desk">
+    <div className="admin-desk page-shell">
+      <PageAmbient variant="admin" tone="whisper" />
       <header className="admin-desk__hero">
         <div>
           <p className="admin-desk__eyebrow">

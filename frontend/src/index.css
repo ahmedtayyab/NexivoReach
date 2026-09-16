@@ -820,6 +820,8 @@ input:focus, textarea:focus, select:focus {
 }
 
 .page-header {
+  position: relative;
+  z-index: 1;
   margin-bottom: 1.25rem;
 }
 .page-header__title {
@@ -836,6 +838,73 @@ input:focus, textarea:focus, select:focus {
   color: var(--text-secondary);
   max-width: 36rem;
   line-height: 1.5;
+}
+
+/* Shared page shell + ambient geometry (same language as empty states) */
+.page-shell {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+}
+.page-shell > .page-ambient {
+  z-index: 0;
+}
+.page-shell > *:not(.page-ambient) {
+  position: relative;
+  z-index: 1;
+}
+.page-ambient {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  user-select: none;
+  border: 0;
+  margin: 0;
+  object-fit: contain;
+  right: -4%;
+  top: -1.5rem;
+  width: min(42%, 22rem);
+  max-width: 24rem;
+  opacity: 0.42;
+  mix-blend-mode: multiply;
+  animation: nr-float 9s ease-in-out infinite;
+}
+.page-ambient--whisper {
+  width: min(34%, 16rem);
+  top: -0.5rem;
+  right: -2%;
+  opacity: 0.28;
+}
+[data-theme="dark"] .page-ambient {
+  opacity: 0.38;
+  mix-blend-mode: screen;
+}
+[data-theme="dark"] .page-ambient--whisper {
+  opacity: 0.24;
+}
+@media (max-width: 720px) {
+  .page-ambient {
+    width: min(58%, 14rem);
+    opacity: 0.28;
+    top: -0.75rem;
+  }
+  [data-theme="dark"] .page-ambient {
+    opacity: 0.22;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-ambient {
+    animation: none !important;
+  }
+}
+
+/* Desk roots also host ambient when tagged with page-shell */
+.setup-desk.page-shell,
+.support-desk.page-shell,
+.admin-desk.page-shell,
+.activity-desk.page-shell,
+.find-buyers.page-shell {
+  overflow: visible;
 }
 
 .empty-state {

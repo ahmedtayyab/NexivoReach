@@ -6,6 +6,7 @@ import { isDueFollowUp } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
 import { useConfirm } from './ConfirmDialog';
 import { FitScoreBadge } from './FitScoreBadge';
+import PageAmbient from './brand/PageAmbient';
 
 interface Props {
   prospects: Prospect[];
@@ -196,7 +197,7 @@ export default function OutreachInboxView({
 
   if (!withDrafts.length) {
     return (
-      <div className="max-w-2xl w-full">
+      <div className="page-shell max-w-2xl w-full">
         <div className="page-header nr-enter">
           <h1 className="page-header__title">Outreach</h1>
           <p className="page-header__desc">
@@ -232,7 +233,8 @@ export default function OutreachInboxView({
   }
 
   return (
-    <div className="max-w-5xl w-full">
+    <div className="page-shell max-w-5xl w-full">
+      <PageAmbient variant="outreach" tone="whisper" />
       <div className="page-header nr-enter">
         <h1 className="page-header__title">Outreach</h1>
         <p className="page-header__desc">

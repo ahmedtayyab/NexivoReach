@@ -5,6 +5,7 @@ import { brandAssets } from '../lib/brandAssets';
 import { computeOutcomes } from '../lib/outcomes';
 import OutcomesStrip from './OutcomesStrip';
 import PlanUsageCard from './PlanUsageCard';
+import PageAmbient from './brand/PageAmbient';
 
 interface Props {
   agentLogs: AgentRunLog[];
@@ -36,7 +37,8 @@ export default function ActivityView({
   }, [agentLogs, selectedRunId]);
 
   return (
-    <div className="activity-desk">
+    <div className="activity-desk page-shell">
+      {agentLogs.length > 0 && <PageAmbient variant="activity" tone="whisper" />}
       <div className="page-header">
         <h1 className="page-header__title">Activity</h1>
         <p className="page-header__desc">

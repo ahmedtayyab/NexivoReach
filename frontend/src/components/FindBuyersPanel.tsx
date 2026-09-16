@@ -5,6 +5,7 @@ import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
 import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
 import { isPlaceholderCompanyName } from '../lib/workspace';
+import PageAmbient from './brand/PageAmbient';
 
 interface Props {
   businessInfo: BusinessInfo;
@@ -247,7 +248,8 @@ export default function FindBuyersPanel({
   };
 
   return (
-    <div className={`find-buyers find-buyers--primary ${compact ? 'find-buyers--compact' : ''}`}>
+    <div className={`find-buyers find-buyers--primary page-shell ${compact ? 'find-buyers--compact' : ''}`}>
+      {!compact && <PageAmbient variant="leads" tone="whisper" />}
       {isRunning && (
         <div className="find-buyers__overlay" role="status" aria-live="polite">
           <p className="find-buyers__overlay-title">Finding buyers</p>

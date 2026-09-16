@@ -3,6 +3,7 @@ import { CheckCircle2, Loader2, LifeBuoy, Paperclip, Send, X, XCircle } from 'lu
 import { apiFetch } from '../lib/api';
 import { brandAssets } from '../lib/brandAssets';
 import type { ToastKind } from './ToastHost';
+import PageAmbient from './brand/PageAmbient';
 
 type TicketAttachment = {
   id: string;
@@ -197,7 +198,8 @@ export default function SupportView({ onToast }: Props) {
   };
 
   return (
-    <div className="support-desk">
+    <div className="support-desk page-shell">
+      <PageAmbient variant="support" tone="whisper" />
       <header className="support-desk__hero">
         <p className="support-desk__eyebrow">
           <LifeBuoy className="w-3.5 h-3.5" /> Help
