@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
-import { Loader2, Mail, MailWarning } from 'lucide-react';
+import { ArrowDown, ArrowUp, Loader2, Mail, MailWarning } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { leadRowToneClass, recipientEmail } from '../lib/leadTone';
 import { computeOutcomes, hasEmail, isDueFollowUp } from '../lib/outcomes';
@@ -39,6 +39,10 @@ interface Props {
 
 type IntentFilter = 'all' | 'high' | 'low' | 'none';
 type FitFilter = 'all' | 'high' | 'medium' | 'low' | 'score75' | 'score90';
+type SortKey = 'fit' | 'intent';
+type SortDir = 'asc' | 'desc';
+
+const INTENT_RANK: Record<string, number> = { high: 3, low: 2, none: 1 };
 type PriorityFilter = 'all' | 'priority' | 'nurture' | 'review' | 'low';
 type CadenceFilter = 'all' | 'due' | 'missing_email';
 
@@ -67,6 +71,8 @@ export default function QueueView({
   const [preparingKind, setPreparingKind] = useState<'selected' | 'best' | ''>('');
   const [sendingBest, setSendingBest] = useState(false);
   const [refreshingId, setRefreshingId] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey | null>('fit');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
   const confirm = useConfirm();
   const lastRun = agentLogs[0];
   const lastRunLabel = lastRun ? formatRelative(lastRun.timestamp) : null;
@@ -104,12 +110,38 @@ export default function QueueView({
     return map;
   }, [qualityFiltered]);
 
-  const visible = qualityFiltered.filter(p => {
-    if (cadenceFilter === 'due' && !isDueFollowUp(p)) return false;
-    if (cadenceFilter === 'missing_email' && hasEmail(p)) return false;
-    if (filter === 'All') return true;
-    return normalizeStage(p.stage) === filter;
-  });
+  const visible = useMemo(() => {
+    const rows = qualityFiltered.filter(p => {
+      if (cadenceFilter === 'due' && !isDueFollowUp(p)) return false;
+      if (cadenceFilter === 'missing_email' && hasEmail(p)) return false;
+      if (filter === 'All') return true;
+      return normalizeStage(p.stage) === filter;
+    });
+    if (!sortKey) return rows;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      if (sortKey === 'fit') {
+        const diff = (Number(a.fitScore) || 0) - (Number(b.fitScore) || 0);
+        if (diff !== 0) return diff * dir;
+      } else {
+        const ai = INTENT_RANK[prospectIntent(a)] ?? 0;
+        const bi = INTENT_RANK[prospectIntent(b)] ?? 0;
+        if (ai !== bi) return (ai - bi) * dir;
+        const scoreDiff = (Number(a.fitScore) || 0) - (Number(b.fitScore) || 0);
+        if (scoreDiff !== 0) return scoreDiff * -1;
+      }
+      return (a.companyName || '').localeCompare(b.companyName || '');
+    });
+  }, [qualityFiltered, cadenceFilter, filter, sortKey, sortDir]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(d => (d === 'desc' ? 'asc' : 'desc'));
+      return;
+    }
+    setSortKey(key);
+    setSortDir('desc');
+  };
 
   const filtersActive =
     intentFilter !== 'all' ||
@@ -419,6 +451,34 @@ export default function QueueView({
         ))}
       </div>
 
+      <div className="leads-sort-bar nr-enter nr-enter-delay-2" aria-label="Sort leads">
+        <span className="leads-sort-bar__label">Sort</span>
+        <button
+          type="button"
+          className={`data-table__sort${sortKey === 'intent' ? ' is-active' : ''}`}
+          onClick={() => toggleSort('intent')}
+        >
+          Intent
+          {sortKey === 'intent' ? (
+            sortDir === 'desc' ? <ArrowDown className="w-3 h-3" strokeWidth={2.25} /> : <ArrowUp className="w-3 h-3" strokeWidth={2.25} />
+          ) : (
+            <ArrowDown className="w-3 h-3 data-table__sort-hint" strokeWidth={2} />
+          )}
+        </button>
+        <button
+          type="button"
+          className={`data-table__sort${sortKey === 'fit' ? ' is-active' : ''}`}
+          onClick={() => toggleSort('fit')}
+        >
+          Fit
+          {sortKey === 'fit' ? (
+            sortDir === 'desc' ? <ArrowDown className="w-3 h-3" strokeWidth={2.25} /> : <ArrowUp className="w-3 h-3" strokeWidth={2.25} />
+          ) : (
+            <ArrowDown className="w-3 h-3 data-table__sort-hint" strokeWidth={2} />
+          )}
+        </button>
+      </div>
+
       {visible.length === 0 ? (
         <div className="empty-state nr-enter nr-enter-delay-3">
           <img
@@ -444,7 +504,7 @@ export default function QueueView({
         </div>
       ) : (
         <>
-          <div key={`m-${filter}-${intentFilter}-${fitFilter}-${priorityFilter}-${cadenceFilter}`} className="md:hidden space-y-2 nr-stagger">
+          <div key={`m-${filter}-${intentFilter}-${fitFilter}-${priorityFilter}-${cadenceFilter}-${sortKey}-${sortDir}`} className="md:hidden space-y-2 nr-stagger">
             {visible.map(prospect => (
               <div
                 key={prospect.id}
@@ -506,11 +566,37 @@ export default function QueueView({
                 </span>
                 <span>Lead</span>
                 <span>Email</span>
-                <span>Intent</span>
-                <span className="text-right">Fit</span>
+                <button
+                  type="button"
+                  className={`data-table__sort${sortKey === 'intent' ? ' is-active' : ''}`}
+                  onClick={() => toggleSort('intent')}
+                  aria-label={`Sort by intent${sortKey === 'intent' ? `, currently ${sortDir}` : ''}`}
+                  title="Sort by intent"
+                >
+                  Intent
+                  {sortKey === 'intent' ? (
+                    sortDir === 'desc' ? <ArrowDown className="w-3 h-3" strokeWidth={2.25} /> : <ArrowUp className="w-3 h-3" strokeWidth={2.25} />
+                  ) : (
+                    <ArrowDown className="w-3 h-3 data-table__sort-hint" strokeWidth={2} />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className={`data-table__sort data-table__sort--end${sortKey === 'fit' ? ' is-active' : ''}`}
+                  onClick={() => toggleSort('fit')}
+                  aria-label={`Sort by fit${sortKey === 'fit' ? `, currently ${sortDir}` : ''}`}
+                  title="Sort by fit score"
+                >
+                  Fit
+                  {sortKey === 'fit' ? (
+                    sortDir === 'desc' ? <ArrowDown className="w-3 h-3" strokeWidth={2.25} /> : <ArrowUp className="w-3 h-3" strokeWidth={2.25} />
+                  ) : (
+                    <ArrowDown className="w-3 h-3 data-table__sort-hint" strokeWidth={2} />
+                  )}
+                </button>
                 <span className="text-right">Status</span>
               </div>
-              <div key={`d-${filter}-${intentFilter}-${fitFilter}-${priorityFilter}-${cadenceFilter}`} className="nr-stagger">
+              <div key={`d-${filter}-${intentFilter}-${fitFilter}-${priorityFilter}-${cadenceFilter}-${sortKey}-${sortDir}`} className="nr-stagger">
                 {visible.map(prospect => (
                   <div
                     key={prospect.id}
