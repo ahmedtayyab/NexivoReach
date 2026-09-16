@@ -15,7 +15,7 @@ const VARIANT_SRC: Record<AmbientVariant, string> = {
   activity: brandAssets.emptyActivity,
   support: brandAssets.emptySupport,
   workspace: brandAssets.emptySupport,
-  admin: brandAssets.emptyActivity,
+  admin: brandAssets.emptyAdmin,
   notifications: brandAssets.emptyNotifications,
 };
 

@@ -12,5 +12,6 @@ export const brandAssets = {
   emptyActivity: '/brand/empty-activity.svg',
   emptyNotifications: '/brand/empty-notifications.svg',
   emptySupport: '/brand/empty-support.svg',
+  emptyAdmin: '/brand/empty-admin.svg',
   ogCard: '/brand/login-atmosphere.webp',
 } as const;

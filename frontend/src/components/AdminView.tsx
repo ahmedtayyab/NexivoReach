@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Loader2, Shield, UserPlus, Ban, CheckCircle2, RefreshCw, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { brandAssets } from '../lib/brandAssets';
 import type { ToastKind } from './ToastHost';
 import PageAmbient from './brand/PageAmbient';
 
@@ -587,7 +588,8 @@ export default function AdminView({ onToast }: Props) {
 
   if (loading && !overview) {
     return (
-      <div className="admin-desk flex items-center justify-center min-h-[40vh] text-ink-muted gap-2">
+      <div className="admin-desk page-shell flex items-center justify-center min-h-[40vh] text-ink-muted gap-2">
+        <PageAmbient variant="admin" />
         <Loader2 className="w-4 h-4 animate-spin" /> Loading ops…
       </div>
     );
@@ -595,7 +597,7 @@ export default function AdminView({ onToast }: Props) {
 
   return (
     <div className="admin-desk page-shell">
-      <PageAmbient variant="admin" tone="whisper" />
+      <PageAmbient variant="admin" />
       <header className="admin-desk__hero">
         <div>
           <p className="admin-desk__eyebrow">
@@ -716,9 +718,21 @@ export default function AdminView({ onToast }: Props) {
             </div>
 
             {tickets.length === 0 ? (
-              <p className="text-[13px] text-ink-muted">No support tickets yet.</p>
+              <div className="empty-state empty-state--compact">
+                <img src={brandAssets.emptyAdmin} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+                <div className="empty-state__content">
+                  <p className="empty-state__title">No support tickets yet</p>
+                  <p className="empty-state__desc">Pilot questions and appeals will land here.</p>
+                </div>
+              </div>
             ) : filteredTickets.length === 0 ? (
-              <p className="text-[13px] text-ink-muted">No tickets match these filters.</p>
+              <div className="empty-state empty-state--compact">
+                <img src={brandAssets.emptyAdmin} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+                <div className="empty-state__content">
+                  <p className="empty-state__title">No tickets match</p>
+                  <p className="empty-state__desc">Try clearing filters to see the full queue.</p>
+                </div>
+              </div>
             ) : (
               <ul className="admin-ticket-list">
                 {filteredTickets.map(t => {
@@ -944,7 +958,13 @@ export default function AdminView({ onToast }: Props) {
                 <h2>Top burn today</h2>
               </div>
               {overview.topUsersToday.length === 0 ? (
-                <p className="text-[13px] text-ink-muted">No usage yet today.</p>
+                <div className="empty-state empty-state--compact">
+                  <img src={brandAssets.emptyAdmin} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+                  <div className="empty-state__content">
+                    <p className="empty-state__title">No usage yet today</p>
+                    <p className="empty-state__desc">API burn will show here once pilots start hunting.</p>
+                  </div>
+                </div>
               ) : (
                 <ul className="admin-top">
                   {overview.topUsersToday.map(u => (
@@ -1017,8 +1037,14 @@ export default function AdminView({ onToast }: Props) {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="text-[13px] text-ink-muted py-4">
-                      No users match these filters.
+                    <td colSpan={4} className="py-6">
+                      <div className="empty-state empty-state--compact">
+                        <img src={brandAssets.emptyAdmin} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+                        <div className="empty-state__content">
+                          <p className="empty-state__title">No users match</p>
+                          <p className="empty-state__desc">Try clearing the status filter.</p>
+                        </div>
+                      </div>
                     </td>
                   </tr>
                 ) : (
@@ -1331,7 +1357,13 @@ export default function AdminView({ onToast }: Props) {
           </p>
         )}
         {invites.length === 0 ? (
-          <p className="text-[13px] text-ink-muted">No invites yet. Add your first pilot email above.</p>
+          <div className="empty-state empty-state--compact">
+            <img src={brandAssets.emptyAdmin} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+            <div className="empty-state__content">
+              <p className="empty-state__title">No invites yet</p>
+              <p className="empty-state__desc">Add your first pilot email above to allowlist Google sign-in.</p>
+            </div>
+          </div>
         ) : (
           <ul className="admin-invites">
             {invites.map(inv => (
