@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 360" fill="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="o-plane" x1="60" y1="40" x2="400" y2="300" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9AA3AE" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#5E6772" stop-opacity="0.06"/>
+    </linearGradient>
+    <linearGradient id="o-emerald" x1="240" y1="80" x2="420" y2="280" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1A7A5C" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#1A7A5C" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="o-blur" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+  </defs>
+  <ellipse cx="300" cy="170" rx="150" ry="100" fill="url(#o-emerald)" filter="url(#o-blur)"/>
+  <path d="M72 88h248c18 0 32 14 32 32v148c0 18-14 32-32 32H72c-18 0-32-14-32-32V120c0-18 14-32 32-32Z" fill="url(#o-plane)" stroke="#A8B0B8" stroke-opacity="0.3" stroke-width="1.2" transform="rotate(-7 196 194)"/>
+  <path d="M128 120h220c14 0 26 12 26 26v132c0 14-12 26-26 26H128c-14 0-26-12-26-26V146c0-14 12-26 26-26Z" fill="#6E7884" fill-opacity="0.14" stroke="#B8C0C8" stroke-opacity="0.25" transform="rotate(5 238 212)"/>
+  <rect x="152" y="168" width="120" height="8" rx="4" fill="#8A939E" fill-opacity="0.35"/>
+  <rect x="152" y="188" width="88" height="8" rx="4" fill="#1A7A5C" fill-opacity="0.4"/>
+  <rect x="152" y="208" width="104" height="8" rx="4" fill="#8A939E" fill-opacity="0.22"/>
+  <circle cx="392" cy="108" r="36" fill="#A8B0B8" fill-opacity="0.16" stroke="#C8D0D8" stroke-opacity="0.28"/>
+</svg>

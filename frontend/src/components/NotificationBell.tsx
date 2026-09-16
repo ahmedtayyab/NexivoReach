@@ -90,15 +90,13 @@ function NotificationList({
   if (items.length === 0) {
     return (
       <div className="notif-empty-state nr-enter">
-        <div className="empty-state__art-wrap" style={{ width: '7.5rem', marginBottom: '0.85rem' }}>
-          <img
-            src={brandAssets.emptyNotifications}
-            alt=""
-            className="empty-state__art"
-            loading="lazy"
-            decoding="async"
-          />
-        </div>
+        <img
+          src={brandAssets.emptyNotifications}
+          alt=""
+          className="empty-state__art"
+          loading="lazy"
+          decoding="async"
+        />
         <p className="notif-empty">{emptyCopy}</p>
       </div>
     );

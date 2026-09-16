@@ -207,24 +207,24 @@ export default function OutreachInboxView({
           </p>
         </div>
         <div className="empty-state nr-enter nr-enter-delay-2">
-          <div className="empty-state__art-wrap">
-            <img src={brandAssets.emptyOutreach} alt="" className="empty-state__art" loading="lazy" decoding="async" />
-          </div>
-          <p className="empty-state__title">No drafts yet</p>
-          <p className="empty-state__desc">
-            Find buyers in Workspace, then use Leads → Prepare outreach. Send ready emails here.
-          </p>
-          <div className="flex flex-wrap justify-center gap-2 mt-4">
-            {onGoWorkspace && (
-              <button type="button" className="btn btn-secondary" onClick={onGoWorkspace}>
-                Open Hunt
-              </button>
-            )}
-            {gmailConnected && onPrepareAndSend && (
-              <button type="button" className="btn btn-primary" onClick={() => onPrepareAndSend()}>
-                Prepare & send best-fit
-              </button>
-            )}
+          <img src={brandAssets.emptyOutreach} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+          <div className="empty-state__content">
+            <p className="empty-state__title">No drafts yet</p>
+            <p className="empty-state__desc">
+              Find buyers in Workspace, then use Leads → Prepare outreach. Send ready emails here.
+            </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {onGoWorkspace && (
+                <button type="button" className="btn btn-secondary" onClick={onGoWorkspace}>
+                  Open Hunt
+                </button>
+              )}
+              {gmailConnected && onPrepareAndSend && (
+                <button type="button" className="btn btn-primary" onClick={() => onPrepareAndSend()}>
+                  Prepare & send best-fit
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

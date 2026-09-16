@@ -392,26 +392,26 @@ export default function QueueView({
 
       {visible.length === 0 ? (
         <div className="empty-state nr-enter nr-enter-delay-3">
-          <div className="empty-state__art-wrap">
-            <img
-              src={EMPTY_QUEUE_IMG}
-              alt=""
-              className="empty-state__art"
-              loading="lazy"
-              decoding="async"
-            />
+          <img
+            src={EMPTY_QUEUE_IMG}
+            alt=""
+            className="empty-state__art"
+            loading="lazy"
+            decoding="async"
+          />
+          <div className="empty-state__content">
+            <p className="empty-state__title">No leads match these filters</p>
+            <p className="empty-state__desc">
+              {filtersActive || filter !== 'All'
+                ? 'Try clearing Intent / Fit / Priority or switch status to All.'
+                : 'Describe who to find in Hunt, then run Find buyers. Qualified accounts land here.'}
+            </p>
+            {!(filtersActive || filter !== 'All') && onGoWorkspace && (
+              <button type="button" className="btn btn-primary" onClick={onGoWorkspace}>
+                Find buyers
+              </button>
+            )}
           </div>
-          <p className="empty-state__title">No leads match these filters</p>
-          <p className="empty-state__desc">
-            {filtersActive || filter !== 'All'
-              ? 'Try clearing Intent / Fit / Priority or switch status to All.'
-              : 'Describe who to find in Hunt, then run Find buyers. Qualified accounts land here.'}
-          </p>
-          {!(filtersActive || filter !== 'All') && onGoWorkspace && (
-            <button type="button" className="btn btn-primary mt-4" onClick={onGoWorkspace}>
-              Find buyers
-            </button>
-          )}
         </div>
       ) : (
         <>

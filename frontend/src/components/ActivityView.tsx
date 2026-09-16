@@ -49,16 +49,16 @@ export default function ActivityView({
 
       {agentLogs.length === 0 ? (
         <div className="empty-state nr-enter mt-6">
-          <div className="empty-state__art-wrap">
-            <img src={brandAssets.emptyActivity} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+          <img src={brandAssets.emptyActivity} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+          <div className="empty-state__content">
+            <p className="empty-state__title">No runs yet</p>
+            <p className="empty-state__desc">Find buyers from Workspace to populate the operational log.</p>
+            {onGoLeads && prospects.length > 0 && (
+              <button type="button" className="btn btn-secondary" onClick={onGoLeads}>
+                Open Leads
+              </button>
+            )}
           </div>
-          <p className="empty-state__title">No runs yet</p>
-          <p className="empty-state__desc">Find buyers from Workspace to populate the operational log.</p>
-          {onGoLeads && prospects.length > 0 && (
-            <button type="button" className="btn btn-secondary mt-3" onClick={onGoLeads}>
-              Open Leads
-            </button>
-          )}
         </div>
       ) : (
         <div className="activity-layout nr-enter nr-enter-delay-2">

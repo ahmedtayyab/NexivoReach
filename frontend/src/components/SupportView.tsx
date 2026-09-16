@@ -335,11 +335,11 @@ export default function SupportView({ onToast }: Props) {
             </p>
           ) : tickets.length === 0 ? (
             <div className="empty-state empty-state--compact nr-enter">
-              <div className="empty-state__art-wrap">
-                <img src={brandAssets.emptySupport} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+              <img src={brandAssets.emptySupport} alt="" className="empty-state__art" loading="lazy" decoding="async" />
+              <div className="empty-state__content">
+                <p className="empty-state__title">No tickets yet</p>
+                <p className="empty-state__desc">Send a message above when you need help.</p>
               </div>
-              <p className="empty-state__title">No tickets yet</p>
-              <p className="empty-state__desc">Send a message above when you need help.</p>
             </div>
           ) : (
             <ul className="support-tickets">

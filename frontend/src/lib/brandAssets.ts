@@ -1,4 +1,4 @@
-/** Central paths for assets in frontend/public/brand/ — optimized WebP. */
+/** Central paths for assets in frontend/public/brand/ — empty states are abstract SVG. */
 export const brandAssets = {
   mark: '/brand/splash-mark.webp',
   splashMark: '/brand/splash-mark.webp',
@@ -6,11 +6,11 @@ export const brandAssets = {
   suspendedAtmosphere: '/brand/suspended-atmosphere.webp',
   workspaceDesk: '/brand/login-atmosphere.webp',
   integrationsDesk: '/brand/login-atmosphere.webp',
-  findBuyers: '/brand/empty-queue.webp',
-  emptyQueue: '/brand/empty-queue.webp',
-  emptyOutreach: '/brand/empty-outreach.webp',
-  emptyActivity: '/brand/empty-activity.webp',
-  emptyNotifications: '/brand/empty-notifications.webp',
-  emptySupport: '/brand/empty-support.webp',
+  findBuyers: '/brand/empty-queue.svg',
+  emptyQueue: '/brand/empty-queue.svg',
+  emptyOutreach: '/brand/empty-outreach.svg',
+  emptyActivity: '/brand/empty-activity.svg',
+  emptyNotifications: '/brand/empty-notifications.svg',
+  emptySupport: '/brand/empty-support.svg',
   ogCard: '/brand/login-atmosphere.webp',
 } as const;
