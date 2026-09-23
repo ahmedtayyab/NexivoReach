@@ -60,6 +60,13 @@ export default function OutreachTemplatesSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- seed once when landing empty
   }, [hideIntro]);
 
+  // Opening this page to write templates → prefer template mode.
+  useEffect(() => {
+    if (hideIntro && outreachMode === 'ai' && templates.length === 0) {
+      setMode('templates');
+    }
+  }, [hideIntro, outreachMode, templates.length]);
+
   const categoryOptions = useMemo(() => {
     const fromCatalog = categoriesFromProducts(products);
     const fromTemplates = rows.map(r => r.category).filter(Boolean);
@@ -83,31 +90,39 @@ export default function OutreachTemplatesSection({
     if (expandedId === id) setExpandedId(null);
   };
 
+  const cleanedRows = () =>
+    rows
+      .map((r, i) => ({
+        ...r,
+        name: (r.name || '').trim() || `Template ${i + 1}`,
+        category: (r.category || '').trim(),
+        tags: (r.tags || []).map(t => t.trim()).filter(Boolean),
+        subject: (r.subject || '').trim(),
+        body: (r.body || '').trim(),
+        specializeLines: (r.specializeLines || []).map(s => s.trim()).filter(Boolean),
+        sortOrder: i,
+      }))
+      .filter(r => r.body || r.subject);
+
   const handleSave = async () => {
     setSaving(true);
     setMsg('');
     try {
-      const cleaned = rows
-        .map((r, i) => ({
-          ...r,
-          name: (r.name || '').trim() || `Template ${i + 1}`,
-          category: (r.category || '').trim(),
-          tags: (r.tags || []).map(t => t.trim()).filter(Boolean),
-          subject: (r.subject || '').trim(),
-          body: (r.body || '').trim(),
-          specializeLines: (r.specializeLines || []).map(s => s.trim()).filter(Boolean),
-          sortOrder: i,
-        }))
-        .filter(r => r.body || r.subject);
+      const cleaned = cleanedRows();
+      if (mode === 'templates' && cleaned.length === 0) {
+        setMsg('Add at least one template with a subject or body before saving.');
+        setSaving(false);
+        return;
+      }
       await onSave(cleaned, mode);
-      setRows(cleaned);
+      setRows(cleaned.length ? cleaned : rows);
       setMsg(
         mode === 'templates'
-          ? 'Saved. Prepare will pick the best matching template by category.'
-          : 'Saved. Prepare will keep using AI-generated drafts.',
+          ? 'Saved. Prepare will use your templates (matched by category).'
+          : 'Saved. Prepare will write a fresh AI draft for each lead.',
       );
     } catch (err) {
-      setMsg(err instanceof Error ? err.message : 'Could not save templates');
+      setMsg(err instanceof Error ? err.message : 'Could not save');
     } finally {
       setSaving(false);
     }
@@ -121,9 +136,7 @@ export default function OutreachTemplatesSection({
             <div>
               <h2 className="section-label">Outreach templates</h2>
               <p className="text-[13px] text-ink-muted mt-1 max-w-xl">
-                Write your own emails (e.g. Boxing vs Weightlifting). When mode is “Use my templates”,
-                Prepare matches the lead’s product category and fills placeholders — it will not send the
-                wrong category template.
+                Choose how Prepare writes emails, then save.
               </p>
             </div>
           </div>
@@ -131,7 +144,7 @@ export default function OutreachTemplatesSection({
         </>
       )}
 
-      <div className="seg outreach-templates__mode" role="group" aria-label="Draft mode">
+      <div className="seg outreach-templates__mode" role="group" aria-label="How Prepare writes emails">
         <button
           type="button"
           className={mode === 'ai' ? 'is-active' : ''}
@@ -148,132 +161,179 @@ export default function OutreachTemplatesSection({
         </button>
       </div>
 
-      {rows.length === 0 ? (
-        <p className="text-[13px] text-ink-muted mt-4">
-          No templates yet. Add 3–4 category templates (one product family each).
-        </p>
+      {mode === 'ai' ? (
+        <div className="outreach-templates__ai-panel mt-4">
+          <p className="outreach-templates__ai-title">AI writes each draft</p>
+          <p className="text-[13px] text-ink-muted m-0 max-w-xl leading-relaxed">
+            Prepare builds a new email per lead from the company brief, lead fit, and product match.
+            You do not need templates in this mode.
+          </p>
+          {rows.some(r => (r.body || '').trim() || (r.subject || '').trim()) && (
+            <p className="text-[12.5px] text-ink-muted mt-3 m-0">
+              You still have {rows.filter(r => (r.body || '').trim() || (r.subject || '').trim()).length}{' '}
+              saved template{rows.length === 1 ? '' : 's'} — switch to “Use my templates” anytime to
+              use them instead.
+            </p>
+          )}
+          <div className="outreach-templates__actions mt-4">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={saving}
+              onClick={() => void handleSave()}
+            >
+              {saving ? 'Saving…' : 'Save preference'}
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => setMode('templates')}>
+              Switch to my templates
+            </button>
+          </div>
+        </div>
       ) : (
-        <ul className="outreach-templates__list mt-4">
-          {rows.map((row, idx) => {
-            const open = expandedId === row.id;
-            return (
-              <li key={row.id} className="outreach-templates__card">
-                <div className="outreach-templates__card-head">
-                  <button
-                    type="button"
-                    className="outreach-templates__toggle"
-                    onClick={() => setExpandedId(open ? null : row.id)}
-                  >
-                    <span className="font-medium text-ink">
-                      {row.name || `Template ${idx + 1}`}
-                    </span>
-                    <span className="text-[12px] text-ink-muted">
-                      {row.category || 'No category'}
-                      {row.tags?.length ? ` · ${row.tags.slice(0, 3).join(', ')}` : ''}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    aria-label="Delete template"
-                    onClick={() => removeRow(row.id)}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                {open && (
-                  <div className="outreach-templates__fields">
-                    <label className="block">
-                      <span className="field-label">Name</span>
-                      <input
-                        className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink"
-                        value={row.name}
-                        onChange={e => updateRow(row.id, { name: e.target.value })}
-                        placeholder="Boxing wholesale intro"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="field-label">Category (required for matching)</span>
-                      <input
-                        className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink"
-                        list={`tpl-cats-${row.id}`}
-                        value={row.category}
-                        onChange={e => updateRow(row.id, { category: e.target.value })}
-                        placeholder="Boxing / Martial arts"
-                      />
-                      <datalist id={`tpl-cats-${row.id}`}>
-                        {categoryOptions.map(c => (
-                          <option key={c} value={c} />
-                        ))}
-                      </datalist>
-                    </label>
-                    <label className="block">
-                      <span className="field-label">Tags (keywords, comma-separated)</span>
-                      <input
-                        className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink"
-                        value={(row.tags || []).join(', ')}
-                        onChange={e =>
-                          updateRow(row.id, {
-                            tags: e.target.value
-                              .split(',')
-                              .map(t => t.trim())
-                              .filter(Boolean),
-                          })
-                        }
-                        placeholder="boxing, MMA, gloves, hand wraps"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="field-label">We specialize in (one product per line → {'{{specialize}}'})</span>
-                      <textarea
-                        className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink resize-y"
-                        rows={4}
-                        value={(row.specializeLines || []).join('\n')}
-                        onChange={e =>
-                          updateRow(row.id, {
-                            specializeLines: e.target.value.split(/\r?\n/),
-                          })
-                        }
-                        placeholder={'Boxing gloves\nMMA gloves\nHand wraps'}
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="field-label">Subject</span>
-                      <input
-                        className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink"
-                        value={row.subject}
-                        onChange={e => updateRow(row.id, { subject: e.target.value })}
-                        placeholder="Introduction — {{seller}}"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="field-label">Body</span>
-                      <textarea
-                        className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink resize-y min-h-[12rem]"
-                        rows={12}
-                        value={row.body}
-                        onChange={e => updateRow(row.id, { body: e.target.value })}
-                        placeholder={PLACEHOLDER_HINT}
-                      />
-                      <span className="text-[11.5px] text-ink-muted mt-1 block">{PLACEHOLDER_HINT}</span>
-                    </label>
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          <p className="text-[13px] text-ink-muted mt-4 mb-0 max-w-xl">
+            Write one template per product family. Prepare picks the matching category — not a random
+            template.
+          </p>
+
+          {rows.length === 0 ? (
+            <p className="text-[13px] text-ink-muted mt-4">
+              No templates yet. Add one to get started.
+            </p>
+          ) : (
+            <ul className="outreach-templates__list mt-4">
+              {rows.map((row, idx) => {
+                const open = expandedId === row.id;
+                return (
+                  <li key={row.id} className="outreach-templates__card">
+                    <div className="outreach-templates__card-head">
+                      <button
+                        type="button"
+                        className="outreach-templates__toggle"
+                        onClick={() => setExpandedId(open ? null : row.id)}
+                      >
+                        <span className="font-medium text-ink">
+                          {row.name || `Template ${idx + 1}`}
+                        </span>
+                        <span className="text-[12px] text-ink-muted">
+                          {row.category || 'No category'}
+                          {row.tags?.length ? ` · ${row.tags.slice(0, 3).join(', ')}` : ''}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        aria-label="Delete template"
+                        onClick={() => removeRow(row.id)}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    {open && (
+                      <div className="outreach-templates__fields">
+                        <label className="block">
+                          <span className="field-label">Name</span>
+                          <input
+                            className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink"
+                            value={row.name}
+                            onChange={e => updateRow(row.id, { name: e.target.value })}
+                            placeholder="Boxing wholesale intro"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="field-label">Category (required for matching)</span>
+                          <input
+                            className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink"
+                            list={`tpl-cats-${row.id}`}
+                            value={row.category}
+                            onChange={e => updateRow(row.id, { category: e.target.value })}
+                            placeholder="Boxing / Martial arts"
+                          />
+                          <datalist id={`tpl-cats-${row.id}`}>
+                            {categoryOptions.map(c => (
+                              <option key={c} value={c} />
+                            ))}
+                          </datalist>
+                        </label>
+                        <label className="block">
+                          <span className="field-label">Tags (keywords, comma-separated)</span>
+                          <input
+                            className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink"
+                            value={(row.tags || []).join(', ')}
+                            onChange={e =>
+                              updateRow(row.id, {
+                                tags: e.target.value
+                                  .split(',')
+                                  .map(t => t.trim())
+                                  .filter(Boolean),
+                              })
+                            }
+                            placeholder="boxing, MMA, gloves, hand wraps"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="field-label">
+                            We specialize in (one product per line → {'{{specialize}}'})
+                          </span>
+                          <textarea
+                            className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink resize-y"
+                            rows={4}
+                            value={(row.specializeLines || []).join('\n')}
+                            onChange={e =>
+                              updateRow(row.id, {
+                                specializeLines: e.target.value.split(/\r?\n/),
+                              })
+                            }
+                            placeholder={'Boxing gloves\nMMA gloves\nHand wraps'}
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="field-label">Subject</span>
+                          <input
+                            className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink"
+                            value={row.subject}
+                            onChange={e => updateRow(row.id, { subject: e.target.value })}
+                            placeholder="Introduction — {{seller}}"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="field-label">Body</span>
+                          <textarea
+                            className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink resize-y min-h-[12rem]"
+                            rows={12}
+                            value={row.body}
+                            onChange={e => updateRow(row.id, { body: e.target.value })}
+                            placeholder={PLACEHOLDER_HINT}
+                          />
+                          <span className="text-[11.5px] text-ink-muted mt-1 block">
+                            {PLACEHOLDER_HINT}
+                          </span>
+                        </label>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          <div className="outreach-templates__actions mt-4">
+            <button type="button" className="btn btn-secondary" onClick={addRow}>
+              <Plus className="w-3.5 h-3.5" />
+              Add template
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={saving}
+              onClick={() => void handleSave()}
+            >
+              {saving ? 'Saving…' : 'Save templates'}
+            </button>
+          </div>
+        </>
       )}
 
-      <div className="outreach-templates__actions mt-4">
-        <button type="button" className="btn btn-secondary" onClick={addRow}>
-          <Plus className="w-3.5 h-3.5" />
-          Add template
-        </button>
-        <button type="button" className="btn btn-primary" disabled={saving} onClick={() => void handleSave()}>
-          {saving ? 'Saving…' : 'Save templates'}
-        </button>
-      </div>
       {msg && (
         <p className="text-[12.5px] text-ink-muted mt-2" role="status">
           {msg}

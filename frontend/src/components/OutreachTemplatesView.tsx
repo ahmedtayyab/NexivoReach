@@ -34,8 +34,8 @@ export default function OutreachTemplatesView({
         </h1>
         <p className="page-header__desc">
           {empty
-            ? 'Write one template per product family. Switch to “Use my templates” when you are ready.'
-            : 'Edit category templates used when preparing outreach.'}
+            ? 'Write your emails, or keep AI drafting — pick a mode below.'
+            : 'Edit templates or switch back to AI-generated drafts.'}
         </p>
       </header>
 

@@ -1528,6 +1528,18 @@ input:focus, textarea:focus, select:focus {
 .outreach-templates--page {
   margin-top: 0;
 }
+.outreach-templates__ai-panel {
+  padding: 1rem 1.05rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--bg-surface);
+}
+.outreach-templates__ai-title {
+  margin: 0 0 0.35rem;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+}
 .setup-desk__back {
   display: inline-block;
   margin: 0 0 0.35rem;
