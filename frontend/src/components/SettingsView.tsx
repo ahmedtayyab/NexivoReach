@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog, AuthUser, OutreachTemplate, OutreachMode } from '../types';
+import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog, AuthUser } from '../types';
 import { CheckCircle2, ExternalLink, Loader2, Plus, Trash2, Wand2, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
 import FindBuyersPanel from './FindBuyersPanel';
 import PlanUsageCard from './PlanUsageCard';
 import TeamMembersPanel from './TeamMembersPanel';
-import OutreachTemplatesSection from './workspace/OutreachTemplatesSection';
 import { useConfirm } from './ConfirmDialog';
 import {
   categoriesFromProducts,
@@ -46,9 +45,6 @@ interface Props {
   onSaveBusiness: (info: BusinessInfo) => void;
   onSaveProducts: (products: Product[]) => void;
   onSaveICP: (icp: IdealCustomerProfile) => void;
-  outreachTemplates?: OutreachTemplate[];
-  outreachMode?: OutreachMode;
-  onSaveOutreachTemplates?: (templates: OutreachTemplate[], mode: OutreachMode) => void | Promise<void>;
   onAddProspects?: (prospects: Prospect[]) => void;
   onAddLog?: (log: AgentRunLog) => void;
   onFindBuyersComplete?: (foundCount: number) => void;
@@ -71,9 +67,6 @@ export default function SettingsView({
   onSaveBusiness,
   onSaveProducts,
   onSaveICP,
-  outreachTemplates = [],
-  outreachMode = 'ai',
-  onSaveOutreachTemplates,
   onAddProspects,
   onAddLog,
   onFindBuyersComplete,
@@ -214,22 +207,7 @@ export default function SettingsView({
             <button type="button" className="linkish" onClick={() => onSectionChange('catalog')}>
               Product catalog
             </button>
-            <span aria-hidden="true"> · </span>
-            <a className="linkish" href="#outreach-templates">
-              Outreach templates
-            </a>
           </p>
-          {onSaveOutreachTemplates && (
-            <div id="outreach-templates" className="ws-find__templates">
-              <OutreachTemplatesSection
-                key={`${businessInfo.id || 'biz'}-hunt-${outreachTemplates.length}-${outreachMode}`}
-                templates={outreachTemplates}
-                outreachMode={outreachMode}
-                products={products}
-                onSave={onSaveOutreachTemplates}
-              />
-            </div>
-          )}
         </div>
       )}
 

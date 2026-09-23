@@ -1506,6 +1506,28 @@ input:focus, textarea:focus, select:focus {
   padding-top: 1.1rem;
   border-top: 1px solid var(--border-subtle);
 }
+.templates-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1rem;
+  margin: 0 0 0.85rem;
+}
+.templates-cta-row__hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  max-width: 22rem;
+}
+.templates-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.outreach-templates--page {
+  margin-top: 0;
+}
 .setup-desk__back {
   display: inline-block;
   margin: 0 0 0.35rem;

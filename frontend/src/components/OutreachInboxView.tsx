@@ -7,6 +7,7 @@ import { brandAssets } from '../lib/brandAssets';
 import { useConfirm } from './ConfirmDialog';
 import { FitScoreBadge } from './FitScoreBadge';
 import PageAmbient from './brand/PageAmbient';
+import TemplatesCta from './TemplatesCta';
 
 interface Props {
   prospects: Prospect[];
@@ -26,6 +27,8 @@ interface Props {
   onSendSelected?: (ids: string[]) => Promise<void> | void;
   gmailConnected?: boolean;
   onGoWorkspace?: () => void;
+  templateCount?: number;
+  onGoTemplates?: () => void;
 }
 
 type Filter = 'best_fit' | 'needs_review' | 'follow_up' | 'sent' | 'all';
@@ -62,6 +65,8 @@ export default function OutreachInboxView({
   onSendSelected,
   gmailConnected = false,
   onGoWorkspace,
+  templateCount = 0,
+  onGoTemplates,
 }: Props) {
   const confirm = useConfirm();
   const withDrafts = useMemo(
@@ -207,6 +212,16 @@ export default function OutreachInboxView({
               : ' Gmail is not connected — connect it in Workspace to send.'}
           </p>
         </div>
+        {onGoTemplates && (
+          <div className="templates-cta-row nr-enter nr-enter-delay-1">
+            <TemplatesCta templateCount={templateCount} onClick={onGoTemplates} />
+            {templateCount <= 0 && (
+              <p className="templates-cta-row__hint">
+                Add your email templates before preparing outreach.
+              </p>
+            )}
+          </div>
+        )}
         <div className="empty-state nr-enter nr-enter-delay-2">
           <img src={brandAssets.emptyOutreach} alt="" className="empty-state__art" loading="lazy" decoding="async" />
           <div className="empty-state__content">
@@ -245,6 +260,17 @@ export default function OutreachInboxView({
           {' · '}J/K · Enter send
         </p>
       </div>
+
+      {onGoTemplates && (
+        <div className="templates-cta-row nr-enter nr-enter-delay-1">
+          <TemplatesCta templateCount={templateCount} onClick={onGoTemplates} />
+          {templateCount <= 0 && (
+            <p className="templates-cta-row__hint">
+              Add templates so Prepare can use your copy by category.
+            </p>
+          )}
+        </div>
+      )}
 
       {!gmailConnected && (
         <p className="ui-banner ui-banner--warn nr-enter" role="status">

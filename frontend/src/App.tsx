@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog, AuthUser, OutreachTemplate, OutreachMode } from './types';
 import {
   emptyBusinessInfo,
@@ -25,6 +25,7 @@ import MobileNav from './components/layout/MobileNav';
 import QueueView from './components/QueueView';
 import SettingsView from './components/SettingsView';
 import OutreachInboxView from './components/OutreachInboxView';
+import OutreachTemplatesView from './components/OutreachTemplatesView';
 import ReviewDrawer from './components/prospects/ReviewDrawer';
 import ActivityView from './components/ActivityView';
 import AdminView from './components/AdminView';
@@ -84,6 +85,7 @@ export default function App() {
   const [toasts, setToasts] = useState<AppToast[]>([]);
   const notifUnread = useNotificationUnread(user);
   const confirm = useConfirm();
+  const templatesReturnRef = useRef<AppRoute>('outreach');
 
   const pushToast = useCallback((kind: ToastKind, title: string, body?: string) => {
     const id =
@@ -263,6 +265,7 @@ export default function App() {
     const valid =
       activeRoute === 'queue' ||
       activeRoute === 'outreach' ||
+      activeRoute === 'templates' ||
       activeRoute === 'activity' ||
       activeRoute === 'admin' ||
       activeRoute === 'support' ||
@@ -925,6 +928,11 @@ export default function App() {
             onRefreshContacts={handleRefreshContacts}
             gmailConnected={gmailCanSend(user)}
             onGoWorkspace={() => navigate(preferredWorkspaceRoute(businessInfo))}
+            templateCount={outreachTemplates.length}
+            onGoTemplates={() => {
+              templatesReturnRef.current = 'queue';
+              navigate('templates');
+            }}
           />
         )}
         {activeRoute === 'outreach' && (
@@ -943,6 +951,20 @@ export default function App() {
             onSendSelected={handleSendSelected}
             gmailConnected={gmailCanSend(user)}
             onGoWorkspace={() => navigate(preferredWorkspaceRoute(businessInfo))}
+            templateCount={outreachTemplates.length}
+            onGoTemplates={() => {
+              templatesReturnRef.current = 'outreach';
+              navigate('templates');
+            }}
+          />
+        )}
+        {activeRoute === 'templates' && (
+          <OutreachTemplatesView
+            templates={outreachTemplates}
+            outreachMode={outreachMode}
+            products={products}
+            onSave={handleSaveOutreachTemplates}
+            onBack={() => navigate(templatesReturnRef.current || 'outreach')}
           />
         )}
         {isSettingsRoute(activeRoute) && (
@@ -957,9 +979,6 @@ export default function App() {
             onSaveBusiness={handleSaveBusiness}
             onSaveProducts={handleSaveProducts}
             onSaveICP={handleSaveICP}
-            outreachTemplates={outreachTemplates}
-            outreachMode={outreachMode}
-            onSaveOutreachTemplates={handleSaveOutreachTemplates}
             onAddProspects={handleAddProspects}
             onAddLog={handleAddLog}
             onFindBuyersComplete={(n) => {

@@ -2,6 +2,7 @@ export type AppRoute =
   | 'queue'
   | 'discover'
   | 'outreach'
+  | 'templates'
   | 'catalog'
   | 'company'
   | 'icp'
@@ -18,6 +19,7 @@ export const APP_ROUTES: AppRoute[] = [
   'queue',
   'discover',
   'outreach',
+  'templates',
   'catalog',
   'company',
   'icp',
@@ -50,6 +52,9 @@ const ROUTE_ALIASES: Record<string, AppRoute> = {
   hunt: 'icp',
   find: 'icp',
   buyers: 'icp',
+  templates: 'templates',
+  'outreach-templates': 'templates',
+  'email-templates': 'templates',
   help: 'support',
   ticket: 'support',
   tickets: 'support',
@@ -98,6 +103,7 @@ export function sidebarTabForRoute(route: AppRoute): string {
   if (route === 'company' || route === 'catalog' || route === 'icp' || route === 'integrations') {
     return 'settings';
   }
+  if (route === 'templates') return 'outreach';
   return route;
 }
 

@@ -9,6 +9,7 @@ import { FitScoreBadge } from './FitScoreBadge';
 import { useConfirm } from './ConfirmDialog';
 import OutcomesStrip from './OutcomesStrip';
 import PageAmbient from './brand/PageAmbient';
+import TemplatesCta from './TemplatesCta';
 
 const EMPTY_QUEUE_IMG = brandAssets.emptyQueue;
 
@@ -35,6 +36,8 @@ interface Props {
   onRefreshContacts?: (id: string) => Promise<void> | void;
   gmailConnected?: boolean;
   onGoWorkspace?: () => void;
+  templateCount?: number;
+  onGoTemplates?: () => void;
 }
 
 type IntentFilter = 'all' | 'high' | 'low' | 'none';
@@ -58,6 +61,8 @@ export default function QueueView({
   onRefreshContacts,
   gmailConnected = false,
   onGoWorkspace,
+  templateCount = 0,
+  onGoTemplates,
 }: Props) {
   const [filter, setFilter] = useState<string>('To contact');
   const [intentFilter, setIntentFilter] = useState<IntentFilter>('all');
@@ -239,6 +244,17 @@ export default function QueueView({
       </div>
 
       <OutcomesStrip outcomes={outcomes} className="mb-4 nr-enter nr-enter-delay-1" />
+
+      {onGoTemplates && (
+        <div className="templates-cta-row nr-enter nr-enter-delay-1">
+          <TemplatesCta templateCount={templateCount} onClick={onGoTemplates} />
+          {templateCount <= 0 && (
+            <p className="templates-cta-row__hint">
+              Write your emails once — Prepare will match by category.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="toolbar nr-enter nr-enter-delay-1">
         <button

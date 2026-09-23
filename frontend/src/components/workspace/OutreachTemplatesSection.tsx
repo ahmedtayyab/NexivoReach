@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { OutreachMode, OutreachTemplate, Product } from '../../types';
 import { Plus, Trash2 } from 'lucide-react';
 import { categoriesFromProducts, allProductCategories } from '../../data/taxonomy';
@@ -34,6 +34,8 @@ type Props = {
   outreachMode: OutreachMode;
   products: Product[];
   onSave: (next: OutreachTemplate[], mode: OutreachMode) => void | Promise<void>;
+  /** Hide the section title when wrapped by a page header. */
+  hideIntro?: boolean;
 };
 
 export default function OutreachTemplatesSection({
@@ -41,12 +43,22 @@ export default function OutreachTemplatesSection({
   outreachMode,
   products,
   onSave,
+  hideIntro = false,
 }: Props) {
   const [mode, setMode] = useState<OutreachMode>(outreachMode);
   const [rows, setRows] = useState<OutreachTemplate[]>(templates);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(templates[0]?.id || null);
+
+  // On the dedicated page with no saved templates, open a blank one ready to type.
+  useEffect(() => {
+    if (!hideIntro || rows.length > 0) return;
+    const next = EMPTY_TEMPLATE();
+    setRows([next]);
+    setExpandedId(next.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seed once when landing empty
+  }, [hideIntro]);
 
   const categoryOptions = useMemo(() => {
     const fromCatalog = categoriesFromProducts(products);
@@ -102,18 +114,22 @@ export default function OutreachTemplatesSection({
   };
 
   return (
-    <section className="outreach-templates mt-8">
-      <div className="outreach-templates__head">
-        <div>
-          <h2 className="section-label">Outreach templates</h2>
-          <p className="text-[13px] text-ink-muted mt-1 max-w-xl">
-            Write your own emails (e.g. Boxing vs Weightlifting). When mode is “Use my templates”,
-            Prepare matches the lead’s product category and fills placeholders — it will not send the
-            wrong category template.
-          </p>
-        </div>
-      </div>
-      <div className="h-px bg-muted my-4" />
+    <section className={`outreach-templates${hideIntro ? ' outreach-templates--page' : ' mt-8'}`}>
+      {!hideIntro && (
+        <>
+          <div className="outreach-templates__head">
+            <div>
+              <h2 className="section-label">Outreach templates</h2>
+              <p className="text-[13px] text-ink-muted mt-1 max-w-xl">
+                Write your own emails (e.g. Boxing vs Weightlifting). When mode is “Use my templates”,
+                Prepare matches the lead’s product category and fills placeholders — it will not send the
+                wrong category template.
+              </p>
+            </div>
+          </div>
+          <div className="h-px bg-muted my-4" />
+        </>
+      )}
 
       <div className="seg outreach-templates__mode" role="group" aria-label="Draft mode">
         <button
