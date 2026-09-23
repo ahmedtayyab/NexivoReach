@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product } from '../types';
-import { Check, FileSpreadsheet, Loader2, MapPin, RotateCcw, Search, X } from 'lucide-react';
+import { Check, FileSpreadsheet, Loader2, RotateCcw, Search, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
-import { categoriesFromProducts, COUNTRY_LIST, MARKET_SUGGESTIONS, suggestionsForField } from '../data/taxonomy';
+import { categoriesFromProducts } from '../data/taxonomy';
+import {
+  HUNT_BUSINESS_CATEGORIES,
+  HUNT_LOCATION_OPTIONS,
+} from '../data/huntTaxonomy';
 import { isPlaceholderCompanyName } from '../lib/workspace';
 import PageAmbient from './brand/PageAmbient';
+import HuntCombobox from './FindBuyers/HuntCombobox';
 
 interface Props {
   businessInfo: BusinessInfo;
@@ -130,36 +135,12 @@ export default function FindBuyersPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessInfo.id]);
 
-  const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
   const placeHint = location.trim() || (icp.targetCountries || [])[0] || '';
 
-  const context = useMemo(
-    () =>
-      [
-        category,
-        location,
-        businessInfo.description,
-        ...(businessInfo.primaryCategories ?? []),
-        ...(icp.targetBuyerTypes ?? []),
-        ...(icp.targetCountries ?? []),
-        ...catalogCats,
-      ].join(' '),
-    [category, location, businessInfo, icp, catalogCats],
-  );
-  const categorySuggestions = useMemo(
-    () => suggestionsForField('discover', context, catalogCats).slice(0, 4),
-    [context, catalogCats],
-  );
-  const locationSuggestions = useMemo(() => {
-    const fromIcp = (icp.targetCountries || []).filter(Boolean);
-    const fromBiz = (businessInfo.targetMarkets || []).filter(Boolean);
-    const typed = location.trim().toLowerCase();
-    const pool = Array.from(
-      new Set([...fromIcp, ...fromBiz, ...MARKET_SUGGESTIONS, ...COUNTRY_LIST.slice(0, 40)]),
-    );
-    if (!typed) return pool.slice(0, 6);
-    return pool.filter(p => p.toLowerCase().includes(typed)).slice(0, 6);
-  }, [icp.targetCountries, businessInfo.targetMarkets, location]);
+  const categoryOptions = useMemo(() => {
+    const fromCatalog = categoriesFromProducts(products);
+    return Array.from(new Set([...HUNT_BUSINESS_CATEGORIES, ...fromCatalog]));
+  }, [products]);
 
   const hasBrief =
     Boolean(businessInfo.description?.trim()) ||
@@ -457,47 +438,27 @@ export default function FindBuyersPanel({
       )}
 
       <div className="hunt-search-bar" role="search">
-        <label className="hunt-search-bar__field hunt-search-bar__field--category">
-          <span className="sr-only">Business category</span>
-          <input
-            type="text"
-            value={category}
-            onChange={e => setCategory(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && canHunt && !isRunning) handleRunClick();
-            }}
-            placeholder="Business category… (e.g. belt importers)"
-            list="hunt-category-suggestions"
-            disabled={isRunning}
-            autoComplete="off"
-          />
-          <datalist id="hunt-category-suggestions">
-            {categorySuggestions.map(s => (
-              <option key={s} value={s} />
-            ))}
-          </datalist>
-        </label>
-        <label className="hunt-search-bar__field hunt-search-bar__field--location">
-          <span className="sr-only">Location</span>
-          <MapPin className="hunt-search-bar__pin" aria-hidden strokeWidth={1.75} />
-          <input
-            type="text"
-            value={location}
-            onChange={e => setLocation(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && canHunt && !isRunning) handleRunClick();
-            }}
-            placeholder="City, state, or country (e.g. Nevada, UAE)"
-            list="hunt-location-suggestions"
-            disabled={isRunning}
-            autoComplete="off"
-          />
-          <datalist id="hunt-location-suggestions">
-            {locationSuggestions.map(s => (
-              <option key={s} value={s} />
-            ))}
-          </datalist>
-        </label>
+        <HuntCombobox
+          className="hunt-search-bar__combo hunt-search-bar__combo--category"
+          label="Business category"
+          value={category}
+          onChange={setCategory}
+          options={categoryOptions}
+          placeholder="Business category…"
+          disabled={isRunning}
+          allowCustom
+        />
+        <HuntCombobox
+          className="hunt-search-bar__combo hunt-search-bar__combo--location"
+          label="Location"
+          value={location}
+          onChange={setLocation}
+          options={HUNT_LOCATION_OPTIONS}
+          placeholder="Country or city…"
+          disabled={isRunning}
+          icon="pin"
+          allowCustom
+        />
         <button
           type="button"
           className="btn btn-primary hunt-search-bar__cta"
@@ -512,25 +473,6 @@ export default function FindBuyersPanel({
           {isRunning ? 'Searching…' : 'Find buyers'}
         </button>
       </div>
-
-      {categorySuggestions.length > 0 && !category.trim() && !isRunning && (
-        <div className="hunt-search-bar__chips" aria-label="Suggested categories">
-          {categorySuggestions.map(s => (
-            <button
-              key={s}
-              type="button"
-              className="hunt-search-bar__chip"
-              onClick={() => {
-                const parts = splitHuntPrompt(s);
-                setCategory(parts.category || s);
-                if (parts.location) setLocation(parts.location);
-              }}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
 
       {recentHunts.length > 0 && !isRunning && (
         <div className="saved-hunts">
