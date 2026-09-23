@@ -523,8 +523,20 @@ export default function App() {
   };
 
   const handleSendAllReady = async (mode: 'batch' | 'ready' = 'batch') => {
-    if (!gmailCanSend(user)) {
-      const hint = gmailBlockedHint(user);
+    // Live preflight — sidebar can lag behind token state.
+    let live = user;
+    try {
+      const st = await apiFetch('/api/auth/gmail/status');
+      if (st.ok) {
+        const gmail = await st.json();
+        setUser(prev => (prev ? { ...prev, gmail } : prev));
+        live = user ? { ...user, gmail } : user;
+      }
+    } catch {
+      /* use cached user */
+    }
+    if (!gmailCanSend(live)) {
+      const hint = gmailBlockedHint(live);
       pushToast('info', hint.title, hint.body);
       navigate('integrations');
       return;
@@ -590,8 +602,19 @@ export default function App() {
   };
 
   const handleSendSelected = async (ids: string[]) => {
-    if (!gmailCanSend(user)) {
-      const hint = gmailBlockedHint(user);
+    let live = user;
+    try {
+      const st = await apiFetch('/api/auth/gmail/status');
+      if (st.ok) {
+        const gmail = await st.json();
+        setUser(prev => (prev ? { ...prev, gmail } : prev));
+        live = user ? { ...user, gmail } : user;
+      }
+    } catch {
+      /* use cached */
+    }
+    if (!gmailCanSend(live)) {
+      const hint = gmailBlockedHint(live);
       pushToast('info', hint.title, hint.body);
       navigate('integrations');
       return;

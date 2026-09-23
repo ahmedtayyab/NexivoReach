@@ -48,7 +48,18 @@ def has_send_scope(access_token: str) -> bool:
 
 
 def is_connected(user: User) -> bool:
-    return bool((getattr(user, "gmail_refresh_token", None) or "").strip())
+    """True when we can obtain a Gmail access token (refresh and/or live access)."""
+    if (getattr(user, "gmail_refresh_token", None) or "").strip():
+        return True
+    if (getattr(user, "gmail_access_token", None) or "").strip():
+        return True
+    # Combined Workspace consent may store only Sheets refresh, but that token
+    # can still mint an access token with gmail.send when scopes allow.
+    if (getattr(user, "sheets_refresh_token", None) or "").strip() and (
+        getattr(user, "gmail_email", None) or ""
+    ).strip():
+        return True
+    return False
 
 
 def status_payload(user: User, *, verify_send: bool = False) -> Dict[str, Any]:
@@ -68,6 +79,8 @@ def status_payload(user: User, *, verify_send: bool = False) -> Dict[str, Any]:
         "connectedAt": (getattr(user, "gmail_connected_at", None) or "") if connected else "",
         "needsReconnect": needs_reconnect,
         "canSend": bool(connected and not needs_reconnect),
+        "hasRefresh": bool((getattr(user, "gmail_refresh_token", None) or "").strip()),
+        "hasAccess": bool((getattr(user, "gmail_access_token", None) or "").strip()),
     }
 
 

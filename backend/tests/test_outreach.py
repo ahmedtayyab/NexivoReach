@@ -56,6 +56,18 @@ def test_gmail_status_connected_without_verify():
     assert payload["needsReconnect"] is False
 
 
+def test_gmail_connected_with_access_token_only():
+    user = User(
+        id="u1",
+        google_id="g1",
+        email="a@b.com",
+        gmail_access_token="ya29.at",
+        gmail_email="a@b.com",
+    )
+    assert is_connected(user) is True
+    assert status_payload(user)["connected"] is True
+
+
 def test_recipient_from_contacts_when_draft_to_empty():
     from app.api.outreach import _recipient_email
     from app.models.schemas import ProspectRecord
