@@ -12,10 +12,14 @@ type Props = {
   icon?: 'pin' | 'none';
   allowCustom?: boolean;
   className?: string;
+  /** Controlled open — use so only one hunt dropdown is open at a time. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
 /**
  * Searchable dropdown: pick from a long list, or type a custom value.
+ * List expands in-flow (no overlay on sections below).
  */
 export default function HuntCombobox({
   label,
@@ -27,11 +31,20 @@ export default function HuntCombobox({
   icon = 'none',
   allowCustom = true,
   className = '',
+  open: openProp,
+  onOpenChange,
 }: Props) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const [query, setQuery] = useState(value);
+  const controlled = typeof openProp === 'boolean';
+  const open = controlled ? openProp : uncontrolledOpen;
+
+  const setOpen = (next: boolean) => {
+    if (!controlled) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
 
   useEffect(() => {
     setQuery(value);
@@ -96,7 +109,6 @@ export default function HuntCombobox({
           }}
           onFocus={() => setOpen(true)}
           onBlur={() => {
-            // slight delay so click on option registers
             window.setTimeout(() => commitCustom(), 120);
           }}
           onKeyDown={e => {
@@ -121,7 +133,7 @@ export default function HuntCombobox({
           tabIndex={-1}
           disabled={disabled}
           aria-label={`Open ${label} list`}
-          onClick={() => setOpen(o => !o)}
+          onClick={() => setOpen(!open)}
         >
           <ChevronDown className="w-4 h-4" strokeWidth={2} />
         </button>

@@ -112,6 +112,7 @@ export default function FindBuyersPanel({
   const [category, setCategory] = useState('');
   const [location, setLocation] = useState('');
   const [details, setDetails] = useState('');
+  const [openField, setOpenField] = useState<'location' | 'category' | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [lastFound, setLastFound] = useState<number | null>(null);
@@ -451,8 +452,8 @@ export default function FindBuyersPanel({
         <div className="find-buyers__head">
           <h3 className="find-buyers__title">Find buyers in your market</h3>
           <p className="find-buyers__desc">
-            Pick category and location, then add product×buyer lines so the hunt covers the right
-            accounts in that region. Country must match (site, socials, phone codes).
+            Select location and category first, then paste product×buyer lines. Country must match
+            (site, socials, phone codes).
           </p>
         </div>
       )}
@@ -474,12 +475,56 @@ export default function FindBuyersPanel({
         </div>
       )}
 
+      <div className="hunt-search-bar" role="search">
+        <div className="hunt-search-bar__row">
+          <HuntCombobox
+            className="hunt-search-bar__combo hunt-search-bar__combo--location"
+            label="Location"
+            value={location}
+            onChange={setLocation}
+            options={HUNT_LOCATION_OPTIONS}
+            placeholder="Country or city…"
+            disabled={isRunning}
+            icon="pin"
+            allowCustom
+            open={openField === 'location'}
+            onOpenChange={open => setOpenField(open ? 'location' : null)}
+          />
+          <HuntCombobox
+            className="hunt-search-bar__combo hunt-search-bar__combo--category"
+            label="Business category"
+            value={category}
+            onChange={setCategory}
+            options={categoryOptions}
+            placeholder="Business category…"
+            disabled={isRunning}
+            allowCustom
+            open={openField === 'category'}
+            onOpenChange={open => setOpenField(open ? 'category' : null)}
+          />
+          <button
+            type="button"
+            className="btn btn-primary hunt-search-bar__cta"
+            onClick={handleRunClick}
+            disabled={isRunning || !canHunt}
+          >
+            {isRunning ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Search className="w-4 h-4" strokeWidth={2.25} />
+            )}
+            {isRunning ? 'Searching…' : 'Find buyers'}
+          </button>
+        </div>
+      </div>
+
       <label className="hunt-details">
         <span className="hunt-details__label">Hunt description</span>
         <textarea
           className="hunt-details__input"
           value={details}
           onChange={e => setDetails(e.target.value)}
+          onFocus={() => setOpenField(null)}
           disabled={isRunning}
           rows={8}
           placeholder={
@@ -492,50 +537,13 @@ export default function FindBuyersPanel({
           }
         />
         <span className="hunt-details__hint">
-          Each line is a search angle. Combined with category + location so leads stay in-region.
+          Each line is a search angle. Combined with location + category so leads stay in-region.
         </span>
       </label>
 
-      <div className="hunt-search-bar" role="search">
-        <HuntCombobox
-          className="hunt-search-bar__combo hunt-search-bar__combo--category"
-          label="Business category"
-          value={category}
-          onChange={setCategory}
-          options={categoryOptions}
-          placeholder="Business category…"
-          disabled={isRunning}
-          allowCustom
-        />
-        <HuntCombobox
-          className="hunt-search-bar__combo hunt-search-bar__combo--location"
-          label="Location"
-          value={location}
-          onChange={setLocation}
-          options={HUNT_LOCATION_OPTIONS}
-          placeholder="Country or city…"
-          disabled={isRunning}
-          icon="pin"
-          allowCustom
-        />
-        <button
-          type="button"
-          className="btn btn-primary hunt-search-bar__cta"
-          onClick={handleRunClick}
-          disabled={isRunning || !canHunt}
-        >
-          {isRunning ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Search className="w-4 h-4" strokeWidth={2.25} />
-          )}
-          {isRunning ? 'Searching…' : 'Find buyers'}
-        </button>
-      </div>
-
       {!ready && (
         <p className="ui-banner ui-banner--warn hunt-ready-hint" role="status">
-          Add a category, location, or hunt description — or set up a company brief first.
+          Add a location, category, or hunt description — or set up a company brief first.
         </p>
       )}
 

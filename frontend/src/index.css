@@ -4498,14 +4498,26 @@ input:focus, textarea:focus, select:focus {
 .hunt-search-bar {
   position: relative;
   z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  overflow: visible;
+}
+.hunt-search-bar__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.45rem;
 }
 .hunt-search-bar__combo {
   position: relative;
   flex: 1 1 10rem;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
-.hunt-search-bar__combo--category { flex: 1.45 1 12rem; }
-.hunt-search-bar__combo--location { flex: 1 1 10rem; }
+.hunt-search-bar__combo--category { flex: 1.2 1 11rem; }
+.hunt-search-bar__combo--location { flex: 1.35 1 12rem; }
 .hunt-combobox .hunt-search-bar__field {
   width: 100%;
   position: relative;
@@ -4521,21 +4533,24 @@ input:focus, textarea:focus, select:focus {
   cursor: pointer;
   flex-shrink: 0;
 }
+/* In-flow list — pushes content below instead of covering "More buyer filters" */
 .hunt-combobox__list {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(100% + 0.25rem);
-  z-index: 40;
-  max-height: 16rem;
+  position: static;
+  z-index: auto;
+  width: 100%;
+  max-height: 14rem;
   overflow: auto;
-  margin: 0;
+  margin: 0.35rem 0 0;
   padding: 0.25rem 0;
   list-style: none;
   border: 1px solid var(--border);
   border-radius: 0.55rem;
   background: var(--bg-elevated, var(--bg-surface));
-  box-shadow: 0 12px 28px color-mix(in srgb, #000 28%, transparent);
+  box-shadow: none;
+}
+.hunt-combobox.is-open {
+  flex: 1 1 100%;
+  z-index: auto;
 }
 .hunt-combobox__option {
   display: block;
@@ -4559,11 +4574,12 @@ input:focus, textarea:focus, select:focus {
 }
 @media (max-width: 640px) {
   .hunt-search-bar__combo { flex: 1 1 100%; }
+  .hunt-search-bar__cta { width: 100%; }
 }
 
 .hunt-details {
   display: block;
-  margin: 0.85rem 0 0.75rem;
+  margin: 0.9rem 0 0.5rem;
 }
 .hunt-details__label {
   display: block;
@@ -4606,13 +4622,5 @@ input:focus, textarea:focus, select:focus {
   margin-top: 0.65rem;
 }
 .hunt-search-bar {
-  overflow: visible;
-  z-index: 5;
   margin-top: 0.15rem;
-}
-.hunt-combobox.is-open {
-  z-index: 60;
-}
-.hunt-combobox__list {
-  z-index: 70;
 }
