@@ -31,7 +31,7 @@ const HUNT_PHASE_SECONDS = [0, 12, 28, 45, 70];
 const SKIP_SHEETS_PROMPT_KEY = 'nr-hunt-skip-sheets-prompt';
 
 /** Split a past freeform hunt into category + location when possible. */
-export function splitHuntPrompt(prompt: str): { category: string; location: string } {
+export function splitHuntPrompt(prompt: string): { category: string; location: string } {
   const raw = (prompt || '').trim();
   if (!raw) return { category: '', location: '' };
   const m = raw.match(/\s+\b(?:in|near|around|within)\s+(.+)$/i);
