@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Prospect } from '../types';
+import type { OutreachMode, Prospect } from '../types';
 import { ChevronDown, ChevronUp, Loader2, X } from 'lucide-react';
 import { recipientEmail } from '../lib/leadTone';
 import { isDueFollowUp } from '../lib/outcomes';
@@ -7,7 +7,7 @@ import { brandAssets } from '../lib/brandAssets';
 import { useConfirm } from './ConfirmDialog';
 import { FitScoreBadge } from './FitScoreBadge';
 import PageAmbient from './brand/PageAmbient';
-import TemplatesCta from './TemplatesCta';
+import OutreachModeBar from './OutreachModeBar';
 
 interface Props {
   prospects: Prospect[];
@@ -29,6 +29,8 @@ interface Props {
   onGoWorkspace?: () => void;
   templateCount?: number;
   onGoTemplates?: () => void;
+  outreachMode?: OutreachMode;
+  onOutreachModeChange?: (mode: OutreachMode) => void | Promise<void>;
 }
 
 type Filter = 'best_fit' | 'needs_review' | 'follow_up' | 'sent' | 'all';
@@ -67,6 +69,8 @@ export default function OutreachInboxView({
   onGoWorkspace,
   templateCount = 0,
   onGoTemplates,
+  outreachMode = 'ai',
+  onOutreachModeChange,
 }: Props) {
   const confirm = useConfirm();
   const withDrafts = useMemo(
@@ -212,15 +216,13 @@ export default function OutreachInboxView({
               : ' Gmail is not connected — connect it in Workspace to send.'}
           </p>
         </div>
-        {onGoTemplates && (
-          <div className="templates-cta-row nr-enter nr-enter-delay-1">
-            <TemplatesCta templateCount={templateCount} onClick={onGoTemplates} />
-            {templateCount <= 0 && (
-              <p className="templates-cta-row__hint">
-                Add your email templates before preparing outreach.
-              </p>
-            )}
-          </div>
+        {onOutreachModeChange && (
+          <OutreachModeBar
+            mode={outreachMode}
+            templateCount={templateCount}
+            onModeChange={onOutreachModeChange}
+            onGoTemplates={onGoTemplates}
+          />
         )}
         <div className="empty-state nr-enter nr-enter-delay-2">
           <img src={brandAssets.emptyOutreach} alt="" className="empty-state__art" loading="lazy" decoding="async" />
@@ -261,15 +263,13 @@ export default function OutreachInboxView({
         </p>
       </div>
 
-      {onGoTemplates && (
-        <div className="templates-cta-row nr-enter nr-enter-delay-1">
-          <TemplatesCta templateCount={templateCount} onClick={onGoTemplates} />
-          {templateCount <= 0 && (
-            <p className="templates-cta-row__hint">
-              Add templates so Prepare can use your copy by category.
-            </p>
-          )}
-        </div>
+      {onOutreachModeChange && (
+        <OutreachModeBar
+          mode={outreachMode}
+          templateCount={templateCount}
+          onModeChange={onOutreachModeChange}
+          onGoTemplates={onGoTemplates}
+        />
       )}
 
       {!gmailConnected && (

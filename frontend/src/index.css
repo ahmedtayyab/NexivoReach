@@ -1525,6 +1525,47 @@ input:focus, textarea:focus, select:focus {
   align-items: center;
   gap: 0.4rem;
 }
+.outreach-mode-bar {
+  margin: 0 0 0.9rem;
+  display: grid;
+  gap: 0.55rem;
+}
+.outreach-mode-bar__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
+}
+.outreach-mode-bar__label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-label);
+}
+.outreach-mode-bar__seg {
+  flex: 0 1 auto;
+}
+.outreach-mode-bar__edit {
+  margin-left: auto;
+}
+.outreach-mode-bar__status {
+  margin-bottom: 0;
+}
+.outreach-mode-bar__status strong {
+  font-weight: 700;
+  color: inherit;
+}
+.outreach-mode-bar__hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.outreach-mode-bar__hint strong {
+  color: var(--text-secondary);
+  font-weight: 650;
+}
 .outreach-templates--page {
   margin-top: 0;
 }

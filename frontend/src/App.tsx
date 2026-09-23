@@ -956,6 +956,22 @@ export default function App() {
               templatesReturnRef.current = 'outreach';
               navigate('templates');
             }}
+            outreachMode={outreachMode}
+            onOutreachModeChange={async mode => {
+              if (mode === 'templates' && outreachTemplates.length === 0) {
+                templatesReturnRef.current = 'outreach';
+                navigate('templates');
+                return;
+              }
+              await handleSaveOutreachTemplates(outreachTemplates, mode);
+              pushToast(
+                'info',
+                mode === 'templates' ? 'Using your templates' : 'AI drafts active',
+                mode === 'templates'
+                  ? 'Prepare will match leads to your category templates.'
+                  : 'Prepare will write a fresh AI email per lead.',
+              );
+            }}
           />
         )}
         {activeRoute === 'templates' && (
