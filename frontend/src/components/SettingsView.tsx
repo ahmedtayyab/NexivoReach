@@ -858,6 +858,7 @@ function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) 
     connectedAt?: string;
     needsReconnect?: boolean;
     canSend?: boolean;
+    missingSendPermission?: boolean;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
@@ -871,9 +872,9 @@ function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) 
         setStatus(data);
         const ready = Boolean(data?.connected) && !data?.needsReconnect && data?.canSend !== false;
         onReadyChange?.(ready);
-        if (data?.needsReconnect) {
+        if (data?.missingSendPermission || data?.needsReconnect) {
           setMsg(
-            'Gmail is linked but missing send permission. Disconnect, then Connect Gmail again and allow send access. Also confirm Gmail API + gmail.send are enabled on your Google Cloud OAuth consent screen.',
+            "Send permission wasn't granted. Reconnect Gmail and allow access when Google asks.",
           );
         }
       }
@@ -889,16 +890,17 @@ function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) 
     const params = new URLSearchParams(window.location.search);
     const gmail = params.get('gmail');
     if (gmail === 'connected') {
-      setMsg('Gmail connected — you can send to any recipient address.');
+      setMsg('Gmail connected — you can send from Outreach.');
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
       void load();
     } else if (gmail === 'needs_scope') {
       setMsg(
-        'Google did not grant Gmail send access. Enable Gmail API and add gmail.send + gmail.readonly on the OAuth consent screen, then Connect Gmail again.',
+        "Send permission wasn't granted. Reconnect Gmail and allow access when Google asks.",
       );
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+      void load();
     } else if (gmail === 'error') {
-      setMsg('Gmail connect failed. Re-try and grant send + read access (offline consent).');
+      setMsg('Gmail connect failed. Try again and allow send access.');
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
     }
   }, []);
@@ -906,7 +908,14 @@ function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) 
   const disconnect = async () => {
     const resp = await apiFetch('/api/auth/gmail/disconnect', { method: 'POST' });
     if (resp.ok) {
-      setStatus({ connected: false, email: '', connectedAt: '', needsReconnect: false, canSend: false });
+      setStatus({
+        connected: false,
+        email: '',
+        connectedAt: '',
+        needsReconnect: false,
+        canSend: false,
+        missingSendPermission: false,
+      });
       setMsg('Gmail disconnected. Connect again and allow send access.');
       onReadyChange?.(false);
     }
@@ -914,25 +923,26 @@ function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) 
 
   const sendReady =
     Boolean(status?.connected) && !status?.needsReconnect && status?.canSend !== false;
+  const needsPermission = Boolean(status?.missingSendPermission || status?.needsReconnect);
 
   return (
-    <div className="border border-border bg-panel/80 p-5 space-y-4">
+    <div className="border border-border bg-panel/80 p-5 space-y-3">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h3 className="font-display text-[15px] font-semibold text-ink">Gmail</h3>
-          <p className="text-[12.5px] text-ink-secondary mt-0.5">
-            Connect your mailbox to send from Outreach. Grant send access when Google asks — without it, emails will fail.
+          <h3 className="font-display text-[15px] font-semibold text-ink m-0">Gmail</h3>
+          <p className="text-[12.5px] text-ink-secondary mt-0.5 mb-0">
+            Required to send outreach. Allow send access when Google asks.
           </p>
         </div>
         {loading ? (
           <Loader2 className="w-4 h-4 animate-spin text-ink-secondary shrink-0" />
         ) : sendReady ? (
           <span className="flex items-center gap-1.5 text-[12px] font-medium shrink-0" style={{ color: 'var(--green)' }}>
-            <CheckCircle2 className="w-4 h-4" /> Connected
+            <CheckCircle2 className="w-4 h-4" /> Ready
           </span>
-        ) : status?.connected ? (
+        ) : needsPermission ? (
           <span className="flex items-center gap-1.5 text-[12px] font-medium shrink-0" style={{ color: 'var(--warning)' }}>
-            <XCircle className="w-4 h-4" /> Needs reconnect
+            <XCircle className="w-4 h-4" /> Permission missing
           </span>
         ) : (
           <span className="flex items-center gap-1.5 text-[12px] font-medium shrink-0" style={{ color: 'var(--warning)' }}>
@@ -941,35 +951,26 @@ function GmailConnectCard({ onReadyChange }: { onReadyChange?: (ready: boolean) 
         )}
       </div>
       {status?.connected && status.email && (
-        <p className="text-[13px] text-ink-secondary">
+        <p className="text-[13px] text-ink-secondary m-0">
           Sending as <span className="font-medium text-ink">{status.email}</span>
         </p>
       )}
-      {msg && <p className="text-[13px] text-ink-secondary">{msg}</p>}
+      {msg && <p className="text-[13px] text-ink-secondary m-0">{msg}</p>}
       <div className="flex flex-wrap gap-2">
-        {!status?.connected ? (
-          <a
-            href="/api/auth/gmail"
-            className="inline-flex px-3 py-1.5 text-[13px] bg-accent hover:bg-accent-hover text-white font-medium rounded-md nr-btn-press"
+        <a
+          href="/api/auth/gmail"
+          className="inline-flex px-3 py-1.5 text-[13px] bg-accent hover:bg-accent-hover text-white font-medium rounded-md nr-btn-press"
+        >
+          {sendReady ? 'Reconnect Gmail' : needsPermission ? 'Reconnect Gmail' : 'Connect Gmail'}
+        </a>
+        {(status?.connected || needsPermission) && (
+          <button
+            type="button"
+            onClick={disconnect}
+            className="px-3 py-1.5 text-[13px] border border-border rounded-md text-ink-secondary hover:border-ink-muted"
           >
-            Connect Gmail
-          </a>
-        ) : (
-          <>
-            <a
-              href="/api/auth/gmail"
-              className="inline-flex px-3 py-1.5 text-[13px] bg-accent hover:bg-accent-hover text-white font-medium rounded-md nr-btn-press"
-            >
-              {status.needsReconnect ? 'Reconnect Gmail' : 'Reconnect'}
-            </a>
-            <button
-              type="button"
-              onClick={disconnect}
-              className="px-3 py-1.5 text-[13px] border border-border rounded-md text-ink-secondary hover:border-ink-muted"
-            >
-              Disconnect
-            </button>
-          </>
+            Disconnect
+          </button>
         )}
       </div>
     </div>
@@ -996,6 +997,13 @@ function IntegrationsSection({
 }) {
   const confirm = useConfirm();
   const [status, setStatus] = useState<SheetsStatus | null>(null);
+  const [gmailStatus, setGmailStatus] = useState<{
+    connected?: boolean;
+    email?: string;
+    needsReconnect?: boolean;
+    canSend?: boolean;
+    missingSendPermission?: boolean;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [sheetInput, setSheetInput] = useState('');
   const [connectBusy, setConnectBusy] = useState(false);
@@ -1013,14 +1021,27 @@ function IntegrationsSection({
   const [syncLeadsMsg, setSyncLeadsMsg] = useState('');
 
   const sheetsReady = Boolean(status?.userOauthConnected || status?.oauth?.connected);
+  const gmailReady =
+    Boolean(gmailStatus?.connected) &&
+    !gmailStatus?.needsReconnect &&
+    gmailStatus?.canSend !== false;
   useEffect(() => {
     onConnectReadyChange?.(sheetsReady);
   }, [sheetsReady, onConnectReadyChange]);
 
+  const loadGmail = async () => {
+    try {
+      const r = await apiFetch('/api/auth/gmail/status');
+      if (r.ok) setGmailStatus(await r.json());
+    } catch {
+      // ignore
+    }
+  };
+
   const load = async () => {
     setLoading(true);
     try {
-      const r = await apiFetch('/api/sheets/status');
+      const [r] = await Promise.all([apiFetch('/api/sheets/status'), loadGmail()]);
       if (r.ok) {
         const data = await r.json();
         setStatus(data);
@@ -1050,12 +1071,33 @@ function IntegrationsSection({
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sheets = params.get('sheets');
-    if (sheets === 'connected') {
+    const gmail = params.get('gmail');
+    if (sheets === 'connected' && gmail === 'connected') {
+      setConnectMsg('Google connected — create or link a spreadsheet for this company.');
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+      void load();
+    } else if (sheets === 'connected' && gmail === 'needs_scope') {
+      setConnectMsg(
+        "Sheets is connected, but send permission wasn't granted. Reconnect Gmail and allow access when Google asks.",
+      );
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+      void load();
+    } else if (gmail === 'needs_scope') {
+      setConnectMsg(
+        "Send permission wasn't granted. Reconnect Gmail and allow access when Google asks.",
+      );
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+      void load();
+    } else if (sheets === 'connected') {
       setConnectMsg('Google Sheets connected — create or link a spreadsheet for this company.');
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
       void load();
-    } else if (sheets === 'error') {
-      setConnectMsg('Google Sheets connect failed. Grant Sheets & Drive access and try again.');
+    } else if (gmail === 'connected') {
+      setConnectMsg('Gmail connected — you can send from Outreach.');
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+      void load();
+    } else if (sheets === 'error' || gmail === 'error') {
+      setConnectMsg('Google connect failed. Try again and allow the requested access.');
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
     }
   }, []);
@@ -1171,45 +1213,92 @@ function IntegrationsSection({
 
   const platformReady = Boolean(status?.platformReady);
   const userOauth = Boolean(status?.userOauthConnected ?? status?.oauth?.connected);
-  const oauthEmail = status?.oauth?.email || '';
-  const connectedEnough = userOauth;
+  const oauthEmail = status?.oauth?.email || gmailStatus?.email || '';
+  const sheetLinked = Boolean(status?.connected);
+  const gmailPermissionMissing = Boolean(
+    gmailStatus?.missingSendPermission || gmailStatus?.needsReconnect,
+  );
 
   return (
     <div className="space-y-5 max-w-xl">
-      <div className="border border-border bg-panel p-5 space-y-3">
+      <div className="border border-border bg-panel p-5 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 className="font-display text-[15px] font-semibold text-ink m-0">Gmail + Sheets</h3>
+            <h3 className="font-display text-[15px] font-semibold text-ink m-0">Google</h3>
             <p className="text-[12.5px] text-ink-secondary mt-1 mb-0 leading-snug">
-              One Google click. Then create a spreadsheet for this company.
+              Sheets for sync · Gmail for sending
             </p>
           </div>
-          {loading ? (
+          {loading && (
             <Loader2 className="w-4 h-4 animate-spin text-ink-secondary shrink-0" />
-          ) : connectedEnough ? (
-            <span className="flex items-center gap-1.5 text-[12px] font-medium shrink-0" style={{ color: 'var(--green)' }}>
-              <CheckCircle2 className="w-4 h-4" /> Connected
-            </span>
-          ) : (
-            <span className="flex items-center gap-1.5 text-[12px] font-medium shrink-0" style={{ color: 'var(--warning)' }}>
-              <XCircle className="w-4 h-4" /> Needed
-            </span>
           )}
         </div>
 
-        {userOauth && oauthEmail && (
-          <p className="text-[13px] text-ink-secondary m-0">
-            Signed in as <span className="font-medium text-ink">{oauthEmail}</span>
-          </p>
-        )}
+        {!loading && platformReady && (
+          <div className="space-y-3">
+            {/* Sheets row */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[13px] font-medium text-ink m-0">Sheets</p>
+                <p className="text-[12px] text-ink-secondary m-0 mt-0.5">
+                  {userOauth
+                    ? sheetLinked
+                      ? oauthEmail
+                        ? `Linked · ${oauthEmail}`
+                        : 'Linked'
+                      : oauthEmail
+                        ? `Ready · ${oauthEmail}`
+                        : 'Ready — create a spreadsheet below'
+                    : 'Not connected'}
+                </p>
+              </div>
+              {!userOauth ? (
+                <a href="/api/auth/workspace" className="btn btn-primary shrink-0">
+                  Connect Google
+                </a>
+              ) : (
+                <a href="/api/auth/workspace" className="btn btn-secondary shrink-0">
+                  Reconnect Sheets
+                </a>
+              )}
+            </div>
 
-        {!userOauth && platformReady && !loading && (
-          <a
-            href="/api/auth/workspace"
-            className="inline-flex px-4 py-2 text-[13px] bg-accent hover:bg-accent-hover text-white font-medium rounded-md nr-btn-press"
-          >
-            Connect Gmail + Sheets
-          </a>
+            {/* Gmail row */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-border-subtle">
+              <div className="min-w-0">
+                <p className="text-[13px] font-medium text-ink m-0">Gmail</p>
+                <p
+                  className={[
+                    'text-[12px] m-0 mt-0.5',
+                    gmailReady ? '' : gmailPermissionMissing ? '' : 'text-ink-secondary',
+                  ].filter(Boolean).join(' ')}
+                  style={
+                    gmailReady
+                      ? { color: 'var(--green)' }
+                      : gmailPermissionMissing
+                        ? { color: 'var(--warning)' }
+                        : undefined
+                  }
+                >
+                  {gmailReady
+                    ? gmailStatus?.email
+                      ? `Ready · ${gmailStatus.email}`
+                      : 'Ready to send'
+                    : gmailPermissionMissing
+                      ? "Send permission wasn't granted"
+                      : 'Not connected'}
+                </p>
+              </div>
+              <a
+                href="/api/auth/gmail"
+                className={`btn shrink-0 ${gmailReady ? 'btn-secondary' : 'btn-primary'}`}
+              >
+                {gmailReady || gmailPermissionMissing || gmailStatus?.connected
+                  ? 'Reconnect Gmail'
+                  : 'Connect Gmail'}
+              </a>
+            </div>
+          </div>
         )}
 
         {!platformReady && !loading && (
@@ -1218,35 +1307,39 @@ function IntegrationsSection({
           </p>
         )}
 
-        {userOauth && !status?.connected && !loading && (
-          <div className="space-y-3 pt-1 border-t border-border-subtle">
+        {userOauth && !sheetLinked && !loading && (
+          <div className="space-y-2 pt-1 border-t border-border-subtle">
             <p className="text-[12.5px] text-ink-secondary m-0">
               Create a spreadsheet for product and lead sync.
             </p>
-            <button
-              type="button"
-              disabled={createBusy}
-              onClick={handleCreate}
-              className="btn btn-primary"
-            >
-              {createBusy ? 'Creating…' : 'Create spreadsheet'}
-            </button>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                type="text"
-                value={sheetInput}
-                onChange={e => setSheetInput(e.target.value)}
-                placeholder="Or paste spreadsheet URL / ID"
-                className="flex-1 border border-border rounded-md px-3 py-2 text-[13px] text-ink bg-panel"
-              />
+            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
               <button
                 type="button"
-                disabled={connectBusy || !sheetInput.trim()}
-                onClick={handleConnect}
-                className="btn btn-secondary disabled:opacity-40"
+                disabled={createBusy}
+                onClick={handleCreate}
+                className="btn btn-primary shrink-0 self-start"
               >
-                {connectBusy ? 'Linking…' : 'Link sheet'}
+                {createBusy ? 'Creating…' : 'Create spreadsheet'}
               </button>
+              <span className="text-[12px] text-ink-muted shrink-0 hidden sm:inline">or</span>
+              <div className="flex flex-1 gap-2 min-w-0 w-full">
+                <input
+                  type="text"
+                  value={sheetInput}
+                  onChange={e => setSheetInput(e.target.value)}
+                  placeholder="Paste spreadsheet URL / ID"
+                  className="flex-1 min-w-0 border border-border rounded-md px-3 py-2 text-[13px] text-ink bg-panel"
+                  style={{ minHeight: '2.25rem' }}
+                />
+                <button
+                  type="button"
+                  disabled={connectBusy || !sheetInput.trim()}
+                  onClick={handleConnect}
+                  className="btn btn-secondary disabled:opacity-40 shrink-0"
+                >
+                  {connectBusy ? 'Linking…' : 'Link sheet'}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1274,7 +1367,7 @@ function IntegrationsSection({
         >
           {continueLabel}
         </button>
-        {!connectedEnough && (
+        {!userOauth && (
           <span className="text-[12px] text-ink-muted">Optional — connect when you are ready to send or sync.</span>
         )}
       </div>
@@ -1285,11 +1378,11 @@ function IntegrationsSection({
           className="text-[12.5px] text-ink-muted hover:text-ink underline-offset-2 hover:underline"
           onClick={() => setShowAdvanced(true)}
         >
-          More options — Gmail status, restore, sync
+          More options — restore, sync, disconnect
         </button>
       ) : (
         <div className="space-y-6 pt-2 border-t border-border-subtle">
-          <GmailConnectCard />
+          <GmailConnectCard onReadyChange={() => { void loadGmail(); }} />
 
           {status?.connected && (
             <div className="flex flex-wrap gap-2">

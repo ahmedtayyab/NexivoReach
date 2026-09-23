@@ -62,7 +62,7 @@ def _user_payload(user, usage: dict | None = None) -> dict:
         "gmail": (
             gmail_mod.status_payload(user, verify_send=True)
             if isinstance(user, User)
-            else {"connected": False, "email": "", "connectedAt": "", "needsReconnect": False, "canSend": False}
+            else {"connected": False, "email": "", "connectedAt": "", "needsReconnect": False, "canSend": False, "missingSendPermission": False}
         ),
         "sheets": sheets_oauth_mod.status_payload(user) if isinstance(user, User) else {"connected": False, "email": "", "connectedAt": ""},
     }
@@ -240,6 +240,7 @@ def gmail_status(request: Request, user: AuthUser = Depends(get_current_user)):
                 "connectedAt": "",
                 "needsReconnect": False,
                 "canSend": False,
+                "missingSendPermission": False,
             }
         return gmail_mod.status_payload(row, verify_send=True)
 

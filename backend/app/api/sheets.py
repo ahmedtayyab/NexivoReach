@@ -70,12 +70,12 @@ def _require_sheets_oauth(db_user: User) -> None:
     if sheets_mod.oauth_available():
         raise HTTPException(
             status_code=400,
-            detail="Connect Google Sheets first (Settings → Integrations).",
+            detail="Connect Google Sheets first (Workspace → Connect).",
         )
     if not sheets_mod.is_configured(db_user):
         raise HTTPException(
             status_code=400,
-            detail="Google Sheets is not available. Connect Google Sheets in Settings.",
+            detail="Google Sheets is not available. Connect Google Sheets in Workspace → Connect.",
         )
 
 

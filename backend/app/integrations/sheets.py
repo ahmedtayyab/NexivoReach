@@ -194,9 +194,14 @@ def _get_user_client(session: Session, user: User):
     from google.oauth2.credentials import Credentials
 
     access = sheets_oauth_mod.get_valid_access_token(session, user)
+    refresh = (
+        (user.sheets_refresh_token or "").strip()
+        or (user.gmail_refresh_token or "").strip()
+        or None
+    )
     creds = Credentials(
         token=access,
-        refresh_token=(user.sheets_refresh_token or "").strip() or None,
+        refresh_token=refresh,
         token_uri=sheets_oauth_mod.TOKEN_URL,
         client_id=settings.GOOGLE_CLIENT_ID,
         client_secret=settings.GOOGLE_CLIENT_SECRET,
@@ -208,14 +213,63 @@ def _get_user_client(session: Session, user: User):
 def _get_client(session: Session | None = None, user: User | None = None):
     """
     Prefer the user's OAuth Sheets connection; fall back to platform SA.
+    Raises RuntimeError with a clear message when user OAuth is present but unusable.
     """
     if user is not None and session is not None and sheets_oauth_mod.is_connected(user):
-        try:
-            return _get_user_client(session, user)
-        except Exception as exc:
-            log.warning("User Sheets OAuth client failed: %s", exc)
-            return None
+        return _get_user_client(session, user)
     return _get_service_account_client()
+
+
+def create_business_spreadsheet(
+    title: str,
+    *,
+    session: Session | None = None,
+    user: User | None = None,
+    share_with_email: str = "",
+) -> dict:
+    """
+    Create a new spreadsheet in the connected user's Drive (preferred),
+    or via the platform service account (legacy).
+    """
+    try:
+        client = _get_client(session, user)
+    except Exception as exc:
+        log.warning("Sheets client failed before create: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    if client is None:
+        return {
+            "ok": False,
+            "error": "Connect Google Sheets in Workspace → Connect first.",
+        }
+    name = (title or "NexivoReach").strip()[:80] or "NexivoReach"
+    try:
+        sh = client.create(f"NexivoReach — {name}")
+        _get_or_create_sheet(sh, f"{_sanitize_tab_label(name)} - Products", PRODUCT_HEADERS)
+        _get_or_create_sheet(sh, f"{_sanitize_tab_label(name)} - Leads", LEAD_HEADERS)
+        try:
+            default = sh.worksheet("Sheet1")
+            if len(sh.worksheets()) > 1:
+                sh.del_worksheet(default)
+        except Exception:
+            pass
+        # Legacy SA path: share with the human user so they can open it
+        if not sheets_oauth_mod.is_connected(user):
+            email = (share_with_email or "").strip()
+            if email and "@" in email:
+                try:
+                    sh.share(email, perm_type="user", role="writer", notify=True)
+                except Exception as exc:
+                    log.warning("Could not share new spreadsheet with %s: %s", email, exc)
+        return {
+            "ok": True,
+            "spreadsheetId": sh.id,
+            "spreadsheet_title": sh.title,
+            "url": f"https://docs.google.com/spreadsheets/d/{sh.id}",
+            "sharedWith": (share_with_email or "").strip() if not sheets_oauth_mod.is_connected(user) else "",
+        }
+    except Exception as exc:
+        log.warning("Create spreadsheet failed: %s", exc)
+        return {"ok": False, "error": str(exc)}
 
 
 def oauth_available() -> bool:

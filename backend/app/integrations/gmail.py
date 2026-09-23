@@ -65,19 +65,30 @@ def is_connected(user: User) -> bool:
 def status_payload(user: User, *, verify_send: bool = False) -> Dict[str, Any]:
     connected = is_connected(user)
     needs_reconnect = False
-    if connected and verify_send:
+    missing_send_permission = False
+    if verify_send:
         token = (getattr(user, "gmail_access_token", None) or "").strip()
-        # Only flag when tokeninfo succeeds and send is clearly missing.
-        # Expired tokens return empty scopes — leave those for the send path.
+        if not token:
+            token = (getattr(user, "sheets_access_token", None) or "").strip()
         if token:
             scopes = access_token_scopes(token)
             if scopes and GMAIL_SEND_SCOPE not in scopes:
                 needs_reconnect = True
+                missing_send_permission = True
+        # Sheets OAuth succeeded but Gmail send was never stored → treat as permission gap.
+        if (
+            not connected
+            and (getattr(user, "sheets_refresh_token", None) or "").strip()
+            and not (getattr(user, "gmail_refresh_token", None) or "").strip()
+            and not (getattr(user, "gmail_access_token", None) or "").strip()
+        ):
+            missing_send_permission = True
     return {
         "connected": connected,
         "email": (getattr(user, "gmail_email", None) or "") if connected else "",
         "connectedAt": (getattr(user, "gmail_connected_at", None) or "") if connected else "",
         "needsReconnect": needs_reconnect,
+        "missingSendPermission": missing_send_permission,
         "canSend": bool(connected and not needs_reconnect),
         "hasRefresh": bool((getattr(user, "gmail_refresh_token", None) or "").strip()),
         "hasAccess": bool((getattr(user, "gmail_access_token", None) or "").strip()),
