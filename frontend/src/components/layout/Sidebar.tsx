@@ -183,6 +183,9 @@ export default function Sidebar({
             gmailConnected={Boolean(
               user?.gmail?.connected && !user?.gmail?.needsReconnect && user?.gmail?.canSend !== false,
             )}
+            gmailNeedsReconnect={Boolean(
+              user?.gmail?.needsReconnect || (user?.gmail?.connected && user?.gmail?.canSend === false),
+            )}
             gmailEmail={user?.gmail?.email}
             onOpenConnect={() => go('integrations')}
           />

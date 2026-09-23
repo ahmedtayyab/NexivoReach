@@ -63,6 +63,26 @@ async function apiErrorMessage(resp: Response, fallback: string): Promise<string
   }
   return text.trim() || fallback;
 }
+
+function gmailBlockedHint(user: AuthUser | null | undefined): { title: string; body: string } {
+  const g = user?.gmail;
+  if (g?.connected && (g.needsReconnect || g.canSend === false)) {
+    return {
+      title: 'Gmail needs reconnect',
+      body: 'Linked, but send permission is missing. Workspace → Connect → Disconnect Gmail → Connect Gmail again and allow send.',
+    };
+  }
+  if (g?.connected) {
+    return {
+      title: 'Gmail session invalid',
+      body: 'UI shows connected, but send is blocked. Disconnect Gmail, then Connect again (Sheets Linked alone cannot send).',
+    };
+  }
+  return {
+    title: 'Connect Gmail first',
+    body: 'Workspace → Connect → Connect Gmail. Sheets Linked is only for spreadsheets — not sending.',
+  };
+}
 import ThemeToggle from './components/ThemeToggle';
 import { Menu } from 'lucide-react';
 import { brandAssets } from './lib/brandAssets';
@@ -504,13 +524,8 @@ export default function App() {
 
   const handleSendAllReady = async (mode: 'batch' | 'ready' = 'batch') => {
     if (!gmailCanSend(user)) {
-      pushToast(
-        'info',
-        user?.gmail?.connected ? 'Reconnect Gmail' : 'Connect Gmail first',
-        user?.gmail?.connected
-          ? 'Workspace → Connect: Disconnect Gmail, then Connect again and allow send access.'
-          : 'Workspace → Connect, then send in one click.',
-      );
+      const hint = gmailBlockedHint(user);
+      pushToast('info', hint.title, hint.body);
       navigate('integrations');
       return;
     }
@@ -559,19 +574,25 @@ export default function App() {
       console.error(err);
       const msg = err instanceof Error ? err.message : 'Could not send';
       pushToast('error', 'Bulk send failed', msg);
-      if (/connect gmail/i.test(msg)) navigate('integrations');
+      if (/gmail|connect/i.test(msg)) {
+        try {
+          const st = await apiFetch('/api/auth/gmail/status');
+          if (st.ok) {
+            const gmail = await st.json();
+            setUser(prev => (prev ? { ...prev, gmail } : prev));
+          }
+        } catch {
+          /* ignore */
+        }
+        navigate('integrations');
+      }
     }
   };
 
   const handleSendSelected = async (ids: string[]) => {
     if (!gmailCanSend(user)) {
-      pushToast(
-        'info',
-        user?.gmail?.connected ? 'Reconnect Gmail' : 'Connect Gmail first',
-        user?.gmail?.connected
-          ? 'Workspace → Connect: Disconnect Gmail, then Connect again and allow send access.'
-          : 'Workspace → Connect, then send selected emails.',
-      );
+      const hint = gmailBlockedHint(user);
+      pushToast('info', hint.title, hint.body);
       navigate('integrations');
       return;
     }

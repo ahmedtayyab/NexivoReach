@@ -4,6 +4,7 @@ import { apiFetch } from '../lib/api';
 type Props = {
   gmailConnected?: boolean;
   gmailEmail?: string;
+  gmailNeedsReconnect?: boolean;
   onOpenConnect: () => void;
 };
 
@@ -15,11 +16,12 @@ type SheetsSnap = {
 
 /**
  * Persistent integration status — recognition over recall.
- * Lives in chrome so Connect isn't only at the bottom of Workspace.
+ * Gmail Ready ≠ Sheets Linked (send needs Gmail specifically).
  */
 export default function ConnectionStatus({
   gmailConnected = false,
   gmailEmail,
+  gmailNeedsReconnect = false,
   onOpenConnect,
 }: Props) {
   const [sheets, setSheets] = useState<SheetsSnap | null>(null);
@@ -53,14 +55,34 @@ export default function ConnectionStatus({
   const sheetsLinked = Boolean(sheets?.connected);
   const sheetsOauth = Boolean(sheets?.userOauthConnected ?? sheets?.oauth?.connected);
 
+  let gmailState = 'Not connected';
+  let gmailDot = 'is-off';
+  if (gmailConnected) {
+    gmailState = 'Send ready';
+    gmailDot = 'is-on';
+  } else if (gmailNeedsReconnect || gmailEmail) {
+    gmailState = 'Reconnect';
+    gmailDot = 'is-ready';
+  }
+
   return (
     <div className="conn-status" aria-label="Connected accounts">
-      <button type="button" className="conn-status__row" onClick={onOpenConnect} title={gmailEmail || 'Gmail'}>
-        <span className={`conn-dot ${gmailConnected ? 'is-on' : 'is-off'}`} aria-hidden />
+      <button
+        type="button"
+        className="conn-status__row"
+        onClick={onOpenConnect}
+        title={gmailEmail || 'Gmail — required to send outreach'}
+      >
+        <span className={`conn-dot ${gmailDot}`} aria-hidden />
         <span className="conn-status__label">Gmail</span>
-        <span className="conn-status__state">{gmailConnected ? 'Ready' : 'Not connected'}</span>
+        <span className="conn-status__state">{gmailState}</span>
       </button>
-      <button type="button" className="conn-status__row" onClick={onOpenConnect} title={sheets?.oauth?.email || 'Sheets'}>
+      <button
+        type="button"
+        className="conn-status__row"
+        onClick={onOpenConnect}
+        title={sheets?.oauth?.email || 'Sheets — spreadsheet backup (not used for sending)'}
+      >
         <span className={`conn-dot ${sheetsLinked ? 'is-on' : sheetsOauth ? 'is-ready' : 'is-off'}`} aria-hidden />
         <span className="conn-status__label">Sheets</span>
         <span className="conn-status__state">
