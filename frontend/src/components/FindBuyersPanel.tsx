@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product } from '../types';
 import { Check, FileSpreadsheet, Loader2, RotateCcw, Search, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
-import { categoriesFromProducts } from '../data/taxonomy';
+import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
 import {
   HUNT_BUSINESS_CATEGORIES,
   HUNT_LOCATION_OPTIONS,
@@ -10,6 +10,7 @@ import {
 import { isPlaceholderCompanyName } from '../lib/workspace';
 import PageAmbient from './brand/PageAmbient';
 import HuntCombobox from './FindBuyers/HuntCombobox';
+import PredictiveField from './PredictiveField';
 
 interface Props {
   businessInfo: BusinessInfo;
@@ -18,6 +19,7 @@ interface Props {
   onAddProspects: (prospects: Prospect[]) => void;
   onAddLog: (log: AgentRunLog) => void;
   onComplete?: (foundCount: number) => void;
+  onSaveICP?: (icp: IdealCustomerProfile) => void;
   compact?: boolean;
   sheetsConnected?: boolean;
   onGoConnect?: () => void;
@@ -105,6 +107,7 @@ export default function FindBuyersPanel({
   onAddProspects,
   onAddLog,
   onComplete,
+  onSaveICP,
   compact = false,
   sheetsConnected = false,
   onGoConnect,
@@ -112,6 +115,7 @@ export default function FindBuyersPanel({
   const [category, setCategory] = useState('');
   const [location, setLocation] = useState('');
   const [details, setDetails] = useState('');
+  const [buyerTypes, setBuyerTypes] = useState((icp.targetBuyerTypes ?? []).join(', '));
   const [openField, setOpenField] = useState<'location' | 'category' | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [statusText, setStatusText] = useState('');
@@ -161,6 +165,40 @@ export default function FindBuyersPanel({
     const fromCatalog = categoriesFromProducts(products);
     return Array.from(new Set([...HUNT_BUSINESS_CATEGORIES, ...fromCatalog]));
   }, [products]);
+
+  const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
+  const buyerContext = useMemo(
+    () =>
+      [
+        businessInfo.description,
+        ...(businessInfo.primaryCategories ?? []),
+        category,
+        details,
+        buyerTypes,
+        ...catalogCats,
+      ].join(' '),
+    [businessInfo, category, details, buyerTypes, catalogCats],
+  );
+  const buyerSuggestions = useMemo(
+    () => suggestionsForField('buyers', buyerContext, catalogCats),
+    [buyerContext, catalogCats],
+  );
+
+  // Persist optional buyer types into ICP as the user types.
+  useEffect(() => {
+    if (!onSaveICP) return;
+    const timer = window.setTimeout(() => {
+      const nextTypes = buyerTypes.split(',').map(s => s.trim()).filter(Boolean);
+      const prev = (icp.targetBuyerTypes ?? []).join(', ');
+      if (nextTypes.join(', ') === prev) return;
+      onSaveICP({
+        ...icp,
+        targetBuyerTypes: nextTypes,
+      });
+    }, 450);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- draft buyer types only
+  }, [buyerTypes]);
 
   const hasBrief =
     Boolean(businessInfo.description?.trim()) ||
@@ -257,7 +295,15 @@ export default function FindBuyersPanel({
         body: JSON.stringify({
           user_prompt: huntQuery || query,
           products,
-          icp,
+          icp: {
+            ...icp,
+            targetBuyerTypes: buyerTypes.split(',').map(s => s.trim()).filter(Boolean),
+            targetCountries: location.trim()
+              ? [location.trim()]
+              : (icp.targetCountries?.length
+                  ? icp.targetCountries
+                  : businessInfo.targetMarkets || []),
+          },
           business: businessInfo,
           async_mode: true,
         }),
@@ -540,6 +586,22 @@ export default function FindBuyersPanel({
           Each line is a search angle. Combined with location + category so leads stay in-region.
         </span>
       </label>
+
+      <div className="hunt-buyer-types">
+        <PredictiveField
+          label="Buyer types (optional)"
+          hint="Who to prioritize — e.g. distributors, wholesalers, gyms."
+          value={buyerTypes}
+          onChange={setBuyerTypes}
+          suggestions={buyerSuggestions}
+          placeholder="Buyer type"
+          aiContext={{
+            field: 'buyers',
+            description: businessInfo.description,
+            catalogCategories: catalogCats.length ? catalogCats : businessInfo.primaryCategories,
+          }}
+        />
+      </div>
 
       {!ready && (
         <p className="ui-banner ui-banner--warn hunt-ready-hint" role="status">

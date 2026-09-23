@@ -4585,6 +4585,10 @@ input:focus, textarea:focus, select:focus {
   font-size: 12px;
   color: var(--text-muted);
 }
+.hunt-buyer-types {
+  margin-top: 0.85rem;
+  max-width: 36rem;
+}
 .hunt-ready-hint {
   margin-top: 0.55rem;
 }

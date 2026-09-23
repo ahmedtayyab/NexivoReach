@@ -203,6 +203,7 @@ export default function SettingsView({
             onAddProspects={onAddProspects!}
             onAddLog={onAddLog!}
             onComplete={onFindBuyersComplete}
+            onSaveICP={onSaveICP}
             sheetsConnected={sheetsConnected}
             onGoConnect={() => onSectionChange('integrations')}
           />
@@ -258,11 +259,10 @@ export default function SettingsView({
         )}
         {section === 'icp' && (
           <details className="ws-advanced">
-            <summary>More buyer filters (optional)</summary>
+            <summary>More options — company size & signals</summary>
             <ICPSection
               icp={icp}
               businessInfo={businessInfo}
-              products={products}
               onSave={onSaveICP}
             />
           </details>
@@ -911,41 +911,21 @@ function CatalogSection({
 function ICPSection({
   icp,
   businessInfo,
-  products,
   onSave,
 }: {
   icp: IdealCustomerProfile;
   businessInfo: BusinessInfo;
-  products: Product[];
   onSave: (i: IdealCustomerProfile) => void;
 }) {
-  const marketList = (businessInfo.targetMarkets ?? []).join(', ');
-  const marketsMatch =
-    (icp.targetCountries ?? []).join(', ').toLowerCase() === marketList.toLowerCase() ||
-    !(icp.targetCountries ?? []).length;
-  const [buyerTypes, setBuyerTypes] = useState((icp.targetBuyerTypes ?? []).join(', '));
-  const [sameAsMarkets, setSameAsMarkets] = useState(marketsMatch);
-  const [countries, setCountries] = useState(
-    marketsMatch ? marketList : (icp.targetCountries ?? []).join(', '),
-  );
   const [companySize, setCompanySize] = useState(icp.companySize ?? 'Any');
   const [signals] = useState(icp.buyingSignals ?? []);
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  useEffect(() => {
-    if (sameAsMarkets) setCountries(marketList);
-  }, [sameAsMarkets, marketList]);
-
-  // Keep parent ICP in sync so Find buyers picks up typed criteria without an extra Save click.
+  // Keep parent ICP in sync — location comes from the hunt bar, not a second country picker.
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const resolvedCountries = sameAsMarkets
-        ? (businessInfo.targetMarkets ?? [])
-        : countries.split(',').map(s => s.trim()).filter(Boolean);
       onSave({
         ...icp,
-        targetBuyerTypes: buyerTypes.split(',').map(s => s.trim()).filter(Boolean),
-        targetCountries: resolvedCountries,
+        targetCountries: businessInfo.targetMarkets ?? icp.targetCountries ?? [],
         companySize,
         minDealSize: undefined,
         buyingSignals: signals,
@@ -953,125 +933,38 @@ function ICPSection({
     }, 450);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- persist draft fields only
-  }, [buyerTypes, countries, sameAsMarkets, companySize]);
-
-  const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
-  const context = useMemo(
-    () =>
-      [
-        businessInfo.description,
-        ...(businessInfo.primaryCategories ?? []),
-        ...(businessInfo.targetMarkets ?? []),
-        buyerTypes,
-        ...catalogCats,
-      ].join(' '),
-    [businessInfo, buyerTypes, catalogCats],
-  );
-  const buyerSuggestions = useMemo(
-    () => suggestionsForField('buyers', context, catalogCats),
-    [context, catalogCats],
-  );
-  const countrySuggestions = useMemo(
-    () => suggestionsForField('markets', context, catalogCats),
-    [context, catalogCats],
-  );
+  }, [companySize]);
 
   return (
-    <div className="space-y-5 max-w-xl">
-      <PredictiveField
-        label="Buyer types"
-        hint="Who to find — e.g. distributors, gyms."
-        value={buyerTypes}
-        onChange={setBuyerTypes}
-        suggestions={buyerSuggestions}
-        placeholder="Buyer type"
-        aiContext={{
-          field: 'buyers',
-          description: businessInfo.description,
-          catalogCategories: catalogCats.length ? catalogCats : businessInfo.primaryCategories,
-        }}
-      />
-
-      <label className="flex items-start gap-2 text-[13px] text-ink-secondary cursor-pointer">
-        <input
-          type="checkbox"
-          className="mt-0.5 accent-accent"
-          checked={sameAsMarkets}
-          onChange={e => setSameAsMarkets(e.target.checked)}
-        />
-        <span>
-          Same markets as company
-          {marketList ? (
-            <span className="text-ink-muted"> ({marketList})</span>
-          ) : (
-            <span className="text-ink-muted"> — set in Company if needed</span>
-          )}
-        </span>
-      </label>
-      {!sameAsMarkets && (
-        <PredictiveField
-          label="Which countries should we hunt in?"
-          hint="Only if different from company markets."
-          value={countries}
-          onChange={v => setCountries(trimCsvItems(filterKnownCountries(csvItems(v)).join(', '), 8))}
-          suggestions={countrySuggestions}
-          placeholder="Type a country"
-          chipDisplay="none"
-          selectedAsTags
-          searchOnly
-          prefixSearch
-          maxItems={8}
-          aiContext={{
-            field: 'markets',
-            description: businessInfo.description,
-            catalogCategories: catalogCats,
-          }}
-        />
-      )}
-
-      {!showAdvanced ? (
-        <button
-          type="button"
-          className="text-[12.5px] text-ink-muted hover:text-ink underline-offset-2 hover:underline"
-          onClick={() => setShowAdvanced(true)}
+    <div className="space-y-4 max-w-xl">
+      <div>
+        <label className="block text-[12px] font-medium text-ink-secondary mb-1">Company size</label>
+        <select
+          value={companySize}
+          onChange={e => setCompanySize(e.target.value as IdealCustomerProfile['companySize'])}
+          className="w-full border border-border px-3 py-2 text-[13px] text-ink-secondary bg-panel"
         >
-          More options — company size & signals
-        </button>
-      ) : (
-        <div className="space-y-4 pt-1 border-t border-border-subtle">
-          <div>
-            <label className="block text-[12px] font-medium text-ink-secondary mb-1">Company size</label>
-            <select
-              value={companySize}
-              onChange={e => setCompanySize(e.target.value as IdealCustomerProfile['companySize'])}
-              className="w-full border border-border px-3 py-2 text-[13px] text-ink-secondary bg-panel"
-            >
-              {['Any', 'Small', 'Medium', 'Enterprise'].map(size => (
-                <option key={size} value={size}>{size}</option>
-              ))}
-            </select>
-          </div>
-          {signals.length > 0 && (
-            <div>
-              <p className="text-[12px] font-medium text-ink-secondary mb-2">Buying signals (optional)</p>
-              <div className="space-y-3">
-                {signals.map((sig, i) => (
-                  <div key={sig.id || i}>
-                    <p className="text-[13px] font-medium text-ink-secondary">{sig.name}</p>
-                    <p className="text-[12px] text-ink-muted mt-0.5">{sig.description}</p>
-                  </div>
-                ))}
+          {['Any', 'Small', 'Medium', 'Enterprise'].map(size => (
+            <option key={size} value={size}>{size}</option>
+          ))}
+        </select>
+      </div>
+      {signals.length > 0 && (
+        <div>
+          <p className="text-[12px] font-medium text-ink-secondary mb-2">Buying signals (optional)</p>
+          <div className="space-y-3">
+            {signals.map((sig, i) => (
+              <div key={sig.id || i}>
+                <p className="text-[13px] font-medium text-ink-secondary">{sig.name}</p>
+                <p className="text-[12px] text-ink-muted mt-0.5">{sig.description}</p>
               </div>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
       )}
-
-      <div className="pt-1">
-        <p className="text-[12px] text-ink-muted m-0">
-          Criteria save as you type. They refine Find buyers above.
-        </p>
-      </div>
+      <p className="text-[12px] text-ink-muted m-0">
+        Optional refinements. Location is set in Find buyers above.
+      </p>
     </div>
   );
 }
