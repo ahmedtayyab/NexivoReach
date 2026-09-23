@@ -2,18 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog, AuthUser } from '../types';
 import { CheckCircle2, ExternalLink, Loader2, Plus, Trash2, Wand2, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
-import PredictiveField from './PredictiveField';
 import FindBuyersPanel from './FindBuyersPanel';
 import PlanUsageCard from './PlanUsageCard';
 import TeamMembersPanel from './TeamMembersPanel';
 import { useConfirm } from './ConfirmDialog';
-import {
-  categoriesFromProducts,
-  csvItems,
-  isUsefulChipLabel,
-  suggestionsForField,
-  trimCsvItems,
-} from '../data/taxonomy';
 import type { SettingsSection } from '../lib/navigation';
 import {
   nextWorkspaceSection,
@@ -217,7 +209,6 @@ export default function SettingsView({
           <CompanySection
             key={businessInfo.id ?? 'company'}
             businessInfo={businessInfo}
-            products={products}
             continueLabel={nextLabel || 'Continue'}
             onSave={info => {
               onSaveBusiness(info);
@@ -270,12 +261,10 @@ export default function SettingsView({
 
 function CompanySection({
   businessInfo,
-  products,
   onSave,
   continueLabel = 'Continue',
 }: {
   businessInfo: BusinessInfo;
-  products: Product[];
   onSave: (b: BusinessInfo) => void;
   continueLabel?: string;
 }) {
