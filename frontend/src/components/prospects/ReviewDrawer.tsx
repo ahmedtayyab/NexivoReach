@@ -2,6 +2,8 @@ import type { Prospect } from '../../types';
 import { X, ArrowLeft, ExternalLink, CheckCircle, Mail, Phone, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { recipientEmail } from '../../lib/leadTone';
+import LeadRationaleChips from './LeadRationaleChips';
+import LeadBrief from './LeadBrief';
 
 interface Props {
   prospect: Prospect | null;
@@ -164,11 +166,12 @@ export default function ReviewDrawer({
 
         <div className="px-5 pt-5 pb-5 border-b border-border-subtle">
           <div className="flex items-start justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <h1 className="text-[15px] font-semibold text-ink">{prospect.companyName}</h1>
               <p className="text-[13px] text-ink-muted mt-0.5">
                 {[prospect.location?.trim() || 'Location not confirmed', prospect.industry].filter(Boolean).join(' · ')}
               </p>
+              <LeadRationaleChips prospect={prospect} className="mt-2.5" />
             </div>
             <div className="text-right shrink-0">
               <span className={`text-base font-bold tabular-nums ${scoreClass}`}>{prospect.fitScore}</span>
@@ -227,6 +230,13 @@ export default function ReviewDrawer({
                   pages.push({ value: c.value, label: c.label });
                 }
               }
+              const bestTo = recipientEmail(prospect) || emails[0] || '';
+              const enrich = breakdown?.contactEnrich;
+              const enrichNote = enrich
+                ? enrich.status === 'found'
+                  ? `Last enrich: found via ${(enrich.sources || []).join(', ') || 'site'}${enrich.lastEnrichAt ? ` · ${enrich.lastEnrichAt.slice(0, 16).replace('T', ' ')}` : ''}`
+                  : `Last enrich: no public email${enrich.lastEnrichAt ? ` · ${enrich.lastEnrichAt.slice(0, 16).replace('T', ' ')}` : ''}`
+                : '';
               if (!emails.length && !phones.length && !pages.length) {
                 return (
                   <div className="space-y-3">
@@ -234,6 +244,7 @@ export default function ReviewDrawer({
                       No public email on this company&apos;s site yet. Deep contact crawl often finishes after the hunt —
                       try Find email again.
                     </p>
+                    {enrichNote && <p className="text-[12px] text-ink-muted">{enrichNote}</p>}
                     {onRefreshContacts && (
                       <button
                         type="button"
@@ -263,10 +274,18 @@ export default function ReviewDrawer({
               }
               return (
                 <div className="space-y-2.5 text-[13px]">
+                  {bestTo && (
+                    <p className="text-[12px] text-ink-muted">
+                      Best To: <span className="text-ink-secondary font-medium">{bestTo}</span>
+                    </p>
+                  )}
                   {emails.map(e => (
                     <a key={e} href={`mailto:${e}`} className="flex items-center gap-2 text-accent hover:underline">
                       <Mail className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} />
-                      <span className="break-all">{e}</span>
+                      <span className="break-all">
+                        {e}
+                        {bestTo && e === bestTo.toLowerCase() ? ' · best' : ''}
+                      </span>
                     </a>
                   ))}
                   {phones.map(p => (
@@ -287,6 +306,7 @@ export default function ReviewDrawer({
                       <ExternalLink className="w-3 h-3" strokeWidth={1.5} />
                     </a>
                   ))}
+                  {enrichNote && <p className="text-[12px] text-ink-muted pt-1">{enrichNote}</p>}
                   {onRefreshContacts && (
                     <button
                       type="button"
@@ -324,6 +344,8 @@ export default function ReviewDrawer({
               Contact again (follow-up allowed)
             </label>
           </section>
+
+          <LeadBrief prospect={prospect} />
 
           <section>
             <h2 className="section-label mb-2.5">Qualification</h2>

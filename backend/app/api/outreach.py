@@ -779,6 +779,16 @@ async def refresh_contacts(
         row.phone = phone or row.phone
         row.contacts = contacts
         row.agent_timeline = timeline
+        sources = list(found.get("sources") or [])
+        breakdown = dict(row.fit_breakdown or {})
+        breakdown["contactEnrich"] = {
+            "status": "found" if email else "none",
+            "sources": sources,
+            "hunterConfigured": bool(found.get("hunterConfigured")),
+            "lastEnrichAt": _clock(),
+            "bestTo": email or "",
+        }
+        row.fit_breakdown = breakdown
         if row.outreach_draft and isinstance(row.outreach_draft, dict) and email:
             draft = dict(row.outreach_draft)
             if not (draft.get("toEmail") or "").strip():
@@ -791,7 +801,7 @@ async def refresh_contacts(
             "prospect": prospect_to_frontend(row),
             "email": email,
             "found": bool(email),
-            "sources": found.get("sources") or [],
+            "sources": sources,
             "hunterConfigured": bool(found.get("hunterConfigured")),
         }
 

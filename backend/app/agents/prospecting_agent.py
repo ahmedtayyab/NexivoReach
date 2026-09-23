@@ -143,6 +143,26 @@ class ProspectingAgent:
 
         classified.sort(key=_serp_rank, reverse=True)
         stats = summarize_classifications(classified)
+        reject_samples: List[Dict[str, Any]] = []
+        seen_reject_domains: set[str] = set()
+        for row in classified:
+            if not row.get("reject"):
+                continue
+            domain = (_domain(row.get("website")) or "").lower()
+            if domain and domain in seen_reject_domains:
+                continue
+            if domain:
+                seen_reject_domains.add(domain)
+            reject_samples.append({
+                "domain": domain or (row.get("company_name") or "unknown"),
+                "entityType": row.get("entity_type") or "junk",
+                "reason": row.get("reject_reason") or "filtered",
+            })
+            if len(reject_samples) >= 18:
+                break
+        reject_lines = [
+            f"{s['domain']} — {s['entityType']}: {s['reason']}" for s in reject_samples
+        ]
         decisions_log.append({
             "step": 2,
             "observation": (
@@ -152,7 +172,11 @@ class ProspectingAgent:
             ),
             "decision": "Inspect SERP patterns before more searches.",
             "toolCalled": "SerpClassifier",
-            "toolResultSnippet": f"rejected={stats['rejected']} seeds={len(stats['competitor_names'])}",
+            "toolResultSnippet": (
+                f"rejected={stats['rejected']} seeds={len(stats['competitor_names'])}"
+                + (f"\nFiltered out:\n" + "\n".join(reject_lines) if reject_lines else "")
+            ),
+            "filteredOut": reject_samples,
         })
 
         wave2 = plan_wave2(profile, stats, stats.get("learned_terms"))[:WAVE2_QUERY_CAP]

@@ -87,6 +87,13 @@ export interface Prospect {
     discoveryPool?: string;
     whyNow?: string;
     evidence?: ProspectEvidence[];
+    contactEnrich?: {
+      status?: 'found' | 'none' | string;
+      sources?: string[];
+      hunterConfigured?: boolean;
+      lastEnrichAt?: string;
+      bestTo?: string;
+    };
   };
   whyThisProspect: string;
   whyNow?: string;
@@ -173,6 +180,11 @@ export interface AgentRunLog {
     decision: string;
     toolCalled?: string;
     toolResultSnippet?: string;
+    filteredOut?: {
+      domain: string;
+      entityType?: string;
+      reason?: string;
+    }[];
   }[];
 }
 

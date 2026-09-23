@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product } from '../types';
-import { Check, FileSpreadsheet, Loader2, X } from 'lucide-react';
+import { Check, FileSpreadsheet, Loader2, RotateCcw, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
 import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
@@ -18,6 +18,15 @@ interface Props {
   sheetsConnected?: boolean;
   onGoConnect?: () => void;
 }
+
+type RecentHunt = {
+  jobId: string;
+  status: string;
+  userPrompt?: string;
+  foundCount?: number;
+  createdAt?: string;
+  requestPayload?: { user_prompt?: string };
+};
 
 const HUNT_PHASE_SECONDS = [0, 12, 28, 45, 70];
 const SKIP_SHEETS_PROMPT_KEY = 'nr-hunt-skip-sheets-prompt';
@@ -67,6 +76,22 @@ export default function FindBuyersPanel({
   const [skipSheetsPrompt, setSkipSheetsPrompt] = useState(() => loadSkipSheetsPrompt());
   const [serverPhase, setServerPhase] = useState('');
   const [serverProgress, setServerProgress] = useState(0);
+  const [recentHunts, setRecentHunts] = useState<RecentHunt[]>([]);
+
+  const loadRecentHunts = async () => {
+    try {
+      const resp = await apiFetch('/api/discovery/jobs?limit=8');
+      if (!resp.ok) return;
+      const rows = (await resp.json()) as RecentHunt[];
+      setRecentHunts(Array.isArray(rows) ? rows : []);
+    } catch {
+      /* ignore — history is optional */
+    }
+  };
+
+  useEffect(() => {
+    void loadRecentHunts();
+  }, []);
 
   const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
   const placeHint = useMemo(() => {
@@ -141,8 +166,10 @@ export default function FindBuyersPanel({
     return Math.min(94, 89 + Math.floor((t - 90) / 15));
   }, [isRunning, elapsedSec, serverProgress]);
 
-  const runHunt = async () => {
-    if (!canHunt || isRunning) return;
+  const runHunt = async (promptOverride?: string) => {
+    const huntQuery = (promptOverride ?? query).trim();
+    if (promptOverride !== undefined) setQuery(promptOverride);
+    if ((!huntQuery && !hasBrief) || isRunning) return;
     setShowSheetsPrompt(false);
     setIsRunning(true);
     setStatusText(phases[0]);
@@ -154,7 +181,7 @@ export default function FindBuyersPanel({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_prompt: query,
+          user_prompt: huntQuery || query,
           products,
           icp,
           business: businessInfo,
@@ -218,6 +245,7 @@ export default function FindBuyersPanel({
             : 'No accounts this round — try a clearer product, buyer type, or place.',
       );
       onComplete?.(foundCount);
+      void loadRecentHunts();
     } catch (err: unknown) {
       console.error('Discovery failed', err);
       setStatusText(err instanceof Error ? err.message : 'Discovery failed');
@@ -235,6 +263,18 @@ export default function FindBuyersPanel({
       return;
     }
     void runHunt();
+  };
+
+  const rerunHunt = (hunt: RecentHunt) => {
+    if (isRunning) return;
+    const prompt = (hunt.requestPayload?.user_prompt || hunt.userPrompt || '').trim();
+    if (!prompt && !hasBrief) return;
+    setQuery(prompt);
+    if (!sheetsConnected && !skipSheetsPrompt) {
+      setShowSheetsPrompt(true);
+      return;
+    }
+    void runHunt(prompt);
   };
 
   const continueWithoutSheets = () => {
@@ -399,6 +439,48 @@ export default function FindBuyersPanel({
           catalogCategories: catalogCats.length ? catalogCats : businessInfo.primaryCategories,
         }}
       />
+
+      {recentHunts.length > 0 && !isRunning && (
+        <div className="saved-hunts">
+          <p className="saved-hunts__label">Recent hunts</p>
+          <ul className="saved-hunts__list">
+            {recentHunts.slice(0, 5).map(hunt => {
+              const prompt = (hunt.requestPayload?.user_prompt || hunt.userPrompt || '').trim()
+                || '(brief-only hunt)';
+              const when = (hunt.createdAt || '').slice(0, 10);
+              const count = typeof hunt.foundCount === 'number' ? hunt.foundCount : null;
+              return (
+                <li key={hunt.jobId}>
+                  <button
+                    type="button"
+                    className="saved-hunts__item"
+                    disabled={isRunning}
+                    onClick={() => setQuery(prompt === '(brief-only hunt)' ? '' : prompt)}
+                    title="Load into search"
+                  >
+                    <span className="saved-hunts__prompt">{prompt}</span>
+                    <span className="saved-hunts__meta">
+                      {when}
+                      {count !== null ? ` · ${count} leads` : ''}
+                      {hunt.status && hunt.status !== 'completed' ? ` · ${hunt.status}` : ''}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="saved-hunts__rerun"
+                    disabled={isRunning}
+                    aria-label={`Run again: ${prompt}`}
+                    title="Run again"
+                    onClick={() => rerunHunt(hunt)}
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       <div className="find-buyers__actions">
         <div className="find-buyers__status-block" aria-live="polite">

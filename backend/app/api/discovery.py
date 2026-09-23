@@ -331,6 +331,33 @@ def list_runs(request: Request, user: AuthUser = Depends(get_current_user)):
         return [run_to_frontend(r) for r in rows]
 
 
+@router.get("/jobs")
+def list_discovery_jobs(
+    request: Request,
+    user: AuthUser = Depends(get_current_user),
+    limit: int = 12,
+):
+    """Recent hunts for this workspace — used for re-run presets."""
+    cap = max(1, min(int(limit or 12), 30))
+    with Session(engine) as session:
+        business_id = resolve_business_id(request, user, session)
+        rows = session.exec(
+            select(DiscoveryJob)
+            .where(DiscoveryJob.business_id == business_id)
+            .order_by(DiscoveryJob.created_at.desc())
+            .limit(cap)
+        ).all()
+        out = []
+        for job in rows:
+            item = _job_to_dict(job)
+            payload = job.request_payload or {}
+            item["requestPayload"] = {
+                "user_prompt": payload.get("user_prompt") or job.user_prompt or "",
+            }
+            out.append(item)
+        return out
+
+
 @router.get("/jobs/{job_id}")
 def get_discovery_job(job_id: str, request: Request, user: AuthUser = Depends(get_current_user)):
     with Session(engine) as session:

@@ -133,7 +133,31 @@ export default function ActivityView({
                       <span className="activity-step__v activity-step__v--emph">{dec.decision}</span>
                     </p>
                     {dec.toolResultSnippet && (
-                      <pre className="activity-step__snippet">{dec.toolResultSnippet}</pre>
+                      <pre className="activity-step__snippet">
+                        {(dec.filteredOut?.length
+                          ? dec.toolResultSnippet.split('\nFiltered out:')[0]
+                          : dec.toolResultSnippet
+                        ).trim()}
+                      </pre>
+                    )}
+                    {dec.filteredOut && dec.filteredOut.length > 0 && (
+                      <details className="activity-filtered">
+                        <summary>
+                          Filtered out ({dec.filteredOut.length}
+                          {dec.filteredOut.length >= 18 ? '+' : ''})
+                        </summary>
+                        <ul className="activity-filtered__list">
+                          {dec.filteredOut.map((row, i) => (
+                            <li key={`${row.domain}-${i}`}>
+                              <span className="activity-filtered__domain">{row.domain}</span>
+                              <span className="activity-filtered__meta">
+                                {row.entityType || 'junk'}
+                                {row.reason ? ` — ${row.reason}` : ''}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
                     )}
                   </article>
                 ))}
