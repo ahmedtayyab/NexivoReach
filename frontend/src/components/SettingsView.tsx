@@ -104,7 +104,7 @@ export default function SettingsView({
     company: 'Name and website are enough.',
     integrations: 'Needed for Gmail and Sheets.',
     catalog: 'Optional — products + outreach templates.',
-    icp: 'One product, one buyer, one place per hunt.',
+    icp: 'Pick a market, then hunt.',
   };
 
   useEffect(() => {
@@ -215,12 +215,12 @@ export default function SettingsView({
             <button type="button" className="linkish" onClick={() => onSectionChange('catalog')}>
               Product catalog
             </button>
-            <span className="ws-find__secondary-hint"> — optional spreadsheet backup</span>
           </p>
         </div>
       )}
 
-      <div className={section === 'integrations' || section === 'icp' ? 'ws-panel ws-panel--wide' : 'ws-panel'}>
+      {section !== 'icp' && (
+      <div className={section === 'integrations' ? 'ws-panel ws-panel--wide' : 'ws-panel'}>
         {section === 'company' && (
           <CompanySection
             key={businessInfo.id ?? 'company'}
@@ -257,16 +257,6 @@ export default function SettingsView({
             )}
           </>
         )}
-        {section === 'icp' && (
-          <details className="ws-advanced">
-            <summary>More options — company size & signals</summary>
-            <ICPSection
-              icp={icp}
-              businessInfo={businessInfo}
-              onSave={onSaveICP}
-            />
-          </details>
-        )}
         {section === 'integrations' && (
           <>
             <IntegrationsSection
@@ -290,6 +280,7 @@ export default function SettingsView({
           </>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -908,66 +899,7 @@ function CatalogSection({
 }
 
 
-function ICPSection({
-  icp,
-  businessInfo,
-  onSave,
-}: {
-  icp: IdealCustomerProfile;
-  businessInfo: BusinessInfo;
-  onSave: (i: IdealCustomerProfile) => void;
-}) {
-  const [companySize, setCompanySize] = useState(icp.companySize ?? 'Any');
-  const [signals] = useState(icp.buyingSignals ?? []);
 
-  // Keep parent ICP in sync — location comes from the hunt bar, not a second country picker.
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      onSave({
-        ...icp,
-        targetCountries: businessInfo.targetMarkets ?? icp.targetCountries ?? [],
-        companySize,
-        minDealSize: undefined,
-        buyingSignals: signals,
-      });
-    }, 450);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- persist draft fields only
-  }, [companySize]);
-
-  return (
-    <div className="space-y-4 max-w-xl">
-      <div>
-        <label className="block text-[12px] font-medium text-ink-secondary mb-1">Company size</label>
-        <select
-          value={companySize}
-          onChange={e => setCompanySize(e.target.value as IdealCustomerProfile['companySize'])}
-          className="w-full border border-border px-3 py-2 text-[13px] text-ink-secondary bg-panel"
-        >
-          {['Any', 'Small', 'Medium', 'Enterprise'].map(size => (
-            <option key={size} value={size}>{size}</option>
-          ))}
-        </select>
-      </div>
-      {signals.length > 0 && (
-        <div>
-          <p className="text-[12px] font-medium text-ink-secondary mb-2">Buying signals (optional)</p>
-          <div className="space-y-3">
-            {signals.map((sig, i) => (
-              <div key={sig.id || i}>
-                <p className="text-[13px] font-medium text-ink-secondary">{sig.name}</p>
-                <p className="text-[12px] text-ink-muted mt-0.5">{sig.description}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      <p className="text-[12px] text-ink-muted m-0">
-        Optional refinements. Location is set in Find buyers above.
-      </p>
-    </div>
-  );
-}
 
 // ── Integrations Section ─────────────────────────────────────────────────────
 

@@ -497,10 +497,6 @@ export default function FindBuyersPanel({
       {!compact && (
         <div className="find-buyers__head">
           <h3 className="find-buyers__title">Find buyers in your market</h3>
-          <p className="find-buyers__desc">
-            Select location and category first, then paste product×buyer lines. Country must match
-            (site, socials, phone codes).
-          </p>
         </div>
       )}
 
@@ -574,7 +570,6 @@ export default function FindBuyersPanel({
           disabled={isRunning}
           rows={8}
           placeholder={
-            'Paste product × buyer lines for this market, e.g.\n' +
             'Fitness / Bodybuilding\n' +
             'weightlifting straps distributors\n' +
             'weightlifting straps wholesalers\n' +
@@ -582,15 +577,11 @@ export default function FindBuyersPanel({
             'wrist wraps distributors'
           }
         />
-        <span className="hunt-details__hint">
-          Each line is a search angle. Combined with location + category so leads stay in-region.
-        </span>
       </label>
 
       <div className="hunt-buyer-types">
         <PredictiveField
           label="Buyer types (optional)"
-          hint="Who to prioritize — e.g. distributors, wholesalers, gyms."
           value={buyerTypes}
           onChange={setBuyerTypes}
           suggestions={buyerSuggestions}
@@ -659,9 +650,7 @@ export default function FindBuyersPanel({
               {statusText ||
                 (lastFound !== null
                   ? `Last run added ${lastFound} lead${lastFound === 1 ? '' : 's'}.`
-                  : location.trim()
-                    ? `Country must match ${location.trim()} — checked via site, socials, and phone codes.`
-                    : 'Usually under a minute for ~20–40 leads.')}
+                  : 'Usually under a minute for ~20–40 leads.')}
             </p>
           )}
         </div>
