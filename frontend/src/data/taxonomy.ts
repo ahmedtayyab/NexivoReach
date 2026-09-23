@@ -202,7 +202,86 @@ const GENERIC_CATEGORIES = [
   'Wholesale',
   'Export Goods',
   'Custom Manufacturing',
+  'Sportswear',
+  'Fitness & Bodybuilding',
+  'Gym Equipment',
+  'Teamwear',
+  'Protective Gear',
+  'Apparel',
+  'Footwear',
+  'Bags & Accessories',
+  'Textiles',
+  'Industrial Equipment',
+  'Machinery Parts',
+  'OEM Components',
+  'Safety Equipment',
+  'Tools',
+  'Raw Materials',
+  'Food Ingredients',
+  'Packaged Foods',
+  'Beverages',
+  'Food Packaging',
+  'Private Label Food',
+  'SaaS',
+  'B2B Software',
+  'Developer Tools',
+  'Analytics',
+  'Automation',
+  'Security Software',
+  'Medical Devices',
+  'Healthcare Supplies',
+  'Lab Equipment',
+  'Diagnostics',
+  'Consumables',
+  'Skincare',
+  'Cosmetics',
+  'Personal Care',
+  'Salon Products',
+  'Private Label Beauty',
+  'Greeting Cards',
+  'Personalized Gifts',
+  'Gift Baskets',
+  'Mugs & Drinkware',
+  'Stationery',
+  'Corporate Gifts',
+  'Promotional Products',
+  'Freight',
+  'Warehousing',
+  '3PL',
+  'Last-Mile Delivery',
+  'Supply Chain Software',
+  'Building Materials',
+  'Construction Tools',
+  'HVAC',
+  'Interior Finishes',
+  'Safety Gear',
+  'Home Decor',
+  'Furniture',
+  'Lighting',
+  'Kitchenware',
+  'Electronics',
+  'Mobile Accessories',
+  'Home Appliances',
+  'Packaging',
+  'Printing',
+  'Chemicals',
+  'Plastics',
+  'Automotive Parts',
+  'Agriculture',
+  'Pet Products',
+  'Toys & Kids',
+  'Office Supplies',
+  'Workwear',
+  'Uniforms',
 ];
+
+/** Full product-category pool for workspace filters (packs + generics, deduped). */
+export function allProductCategories(): string[] {
+  return uniquePreserve([
+    ...INDUSTRY_PACKS.flatMap(p => p.categories),
+    ...GENERIC_CATEGORIES,
+  ]).sort((a, b) => a.localeCompare(b));
+}
 
 const GENERIC_BUYERS = [
   'Distributors',
@@ -305,13 +384,10 @@ export function suggestionsForField(
     return uniquePreserve([...fromPacks, ...COUNTRY_LIST]);
   }
   if (field === 'categories') {
-    // Prefer matched pack categories over stale catalog labels when packs fire
+    // Matched pack categories first, then the full taxonomy pool for typeahead.
     const fromPacks = packs.flatMap(p => p.categories);
     const fromCatalog = catalogCategories.filter(Boolean);
-    if (fromPacks.length) {
-      return uniquePreserve([...fromPacks, ...fromCatalog, ...GENERIC_CATEGORIES]).slice(0, 16);
-    }
-    return uniquePreserve([...fromCatalog, ...GENERIC_CATEGORIES]).slice(0, 16);
+    return uniquePreserve([...fromPacks, ...fromCatalog, ...allProductCategories()]);
   }
   if (field === 'buyers') {
     const fromPacks = packs.flatMap(p => p.buyers);

@@ -11,7 +11,6 @@ import { useConfirm } from './ConfirmDialog';
 import {
   categoriesFromProducts,
   csvItems,
-  filterKnownCountries,
   isUsefulChipLabel,
   suggestionsForField,
   trimCsvItems,
@@ -301,14 +300,8 @@ function CompanySection({
   const [name, setName] = useState(businessInfo.name ?? '');
   const [website, setWebsite] = useState(businessInfo.website ?? '');
   const [description, setDescription] = useState(businessInfo.description ?? '');
-  const [markets, setMarkets] = useState(() =>
-    trimCsvItems(filterKnownCountries(businessInfo.targetMarkets ?? []).join(', '), 8),
-  );
   const [categories, setCategories] = useState(() =>
-    trimCsvItems((businessInfo.primaryCategories ?? []).filter(isUsefulChipLabel).join(', '), 8),
-  );
-  const [showMore, setShowMore] = useState(
-    Boolean((businessInfo.targetMarkets ?? []).length || (businessInfo.primaryCategories ?? []).length),
+    trimCsvItems((businessInfo.primaryCategories ?? []).filter(isUsefulChipLabel).join(', '), 12),
   );
   const [extracting, setExtracting] = useState(false);
   const [error, setError] = useState('');
@@ -316,12 +309,7 @@ function CompanySection({
   const [categorySuggesting, setCategorySuggesting] = useState(false);
 
   const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
-  // Taxonomy is a soft fallback only — live AI chips come from the description.
   const suggestionContext = `${name} ${description} ${catalogCats.join(' ')}`;
-  const marketSuggestions = useMemo(
-    () => suggestionsForField('markets', suggestionContext, catalogCats),
-    [suggestionContext, catalogCats],
-  );
   const categorySuggestions = useMemo(() => {
     const local = suggestionsForField('categories', suggestionContext, catalogCats);
     const seen = new Set<string>();
@@ -332,7 +320,6 @@ function CompanySection({
       if (!key || seen.has(key) || !isUsefulChipLabel(trimmed)) continue;
       seen.add(key);
       out.push(trimmed);
-      if (out.length >= 24) break;
     }
     return out;
   }, [liveCategorySuggestions, catalogCats, suggestionContext]);
@@ -359,7 +346,7 @@ function CompanySection({
         if (!resp.ok || cancelled) return;
         const data = await resp.json();
         const items: string[] = Array.isArray(data.suggestions) ? data.suggestions : [];
-        if (!cancelled) setLiveCategorySuggestions(items.filter(Boolean).slice(0, 10));
+        if (!cancelled) setLiveCategorySuggestions(items.filter(Boolean).slice(0, 12));
       } catch {
         if (!cancelled) setLiveCategorySuggestions([]);
       } finally {
@@ -390,21 +377,15 @@ function CompanySection({
       if (data.name) setName(data.name);
       if (data.website) setWebsite(data.website);
       if (data.description && (!brief || fromWebsite)) setDescription(data.description);
-      if (Array.isArray(data.targetMarkets) && data.targetMarkets.length) {
-        setMarkets(trimCsvItems(filterKnownCountries(data.targetMarkets).join(', '), 8));
-        setShowMore(true);
-      }
       if (Array.isArray(data.primaryCategories) && data.primaryCategories.length) {
         setCategories(
           trimCsvItems(
             data.primaryCategories.filter((c: string) => isUsefulChipLabel(String(c))).join(', '),
-            8,
+            12,
           ),
         );
-        setShowMore(true);
       } else if (liveCategorySuggestions.length) {
-        setCategories(trimCsvItems(liveCategorySuggestions.slice(0, 6).join(', '), 8));
-        setShowMore(true);
+        setCategories(trimCsvItems(liveCategorySuggestions.slice(0, 6).join(', '), 12));
       }
     } catch (e) {
       console.warn(e);
@@ -420,8 +401,8 @@ function CompanySection({
       name,
       website,
       description,
-      targetMarkets: filterKnownCountries(csvItems(markets)).slice(0, 8),
-      primaryCategories: csvItems(categories).filter(isUsefulChipLabel).slice(0, 8),
+      targetMarkets: businessInfo.targetMarkets ?? [],
+      primaryCategories: csvItems(categories).filter(isUsefulChipLabel).slice(0, 12),
     });
   };
 
@@ -449,7 +430,7 @@ function CompanySection({
             onClick={() => void handleExtract(true)}
             disabled={extracting || !website.trim()}
             className="btn-autofill"
-            title="Read the website and fill name, description, markets, and categories"
+            title="Read the website and fill name, description, and categories"
           >
             {extracting ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.75} />
@@ -475,54 +456,24 @@ function CompanySection({
         {error && <p className="text-[12.5px] mt-1" style={{ color: 'var(--warning)' }}>{error}</p>}
       </div>
 
-      {!showMore ? (
-        <button
-          type="button"
-          className="text-[12.5px] text-ink-muted hover:text-ink underline-offset-2 hover:underline"
-          onClick={() => setShowMore(true)}
-        >
-          More options — markets & categories
-        </button>
-      ) : (
-        <div className="space-y-4 pt-1 border-t border-border-subtle">
-          <PredictiveField
-            label="Which countries do you sell to?"
-            hint="Search and add up to 8."
-            value={markets}
-            onChange={v => setMarkets(trimCsvItems(filterKnownCountries(csvItems(v)).join(', '), 8))}
-            suggestions={marketSuggestions}
-            placeholder="Type a country"
-            chipDisplay="none"
-            selectedAsTags
-            searchOnly
-            prefixSearch
-            maxItems={8}
-            aiContext={{
-              field: 'markets',
-              description,
-              catalogCategories: catalogCats,
-            }}
-          />
-          <PredictiveField
-            label="Product categories"
-            hint={categorySuggesting ? 'Suggesting…' : 'Pick or type up to 8.'}
-            value={categories}
-            onChange={v => setCategories(trimCsvItems(v, 8))}
-            suggestions={categorySuggestions}
-            placeholder="Type a category"
-            chipDisplay="rotate"
-            selectedAsTags
-            searchOnly
-            rotateCount={5}
-            maxItems={8}
-            aiContext={{
-              field: 'categories',
-              description,
-              catalogCategories: catalogCats,
-            }}
-          />
-        </div>
-      )}
+      <PredictiveField
+        label="Product categories"
+        hint={categorySuggesting ? 'Suggesting…' : undefined}
+        value={categories}
+        onChange={v => setCategories(trimCsvItems(v, 12))}
+        suggestions={categorySuggestions}
+        placeholder="Type a category"
+        chipDisplay="rotate"
+        selectedAsTags
+        searchOnly
+        rotateCount={12}
+        maxItems={12}
+        aiContext={{
+          field: 'categories',
+          description,
+          catalogCategories: catalogCats,
+        }}
+      />
 
       <div className="pt-1">
         <button type="button" onClick={handleSave} className="btn btn-primary">
