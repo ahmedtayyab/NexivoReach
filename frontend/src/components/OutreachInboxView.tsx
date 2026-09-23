@@ -36,7 +36,7 @@ interface Props {
   templates?: OutreachTemplate[];
 }
 
-type Filter = 'best_fit' | 'needs_review' | 'no_email' | 'follow_up' | 'sent' | 'all';
+type Filter = 'best_fit' | 'needs_review' | 'with_email' | 'no_email' | 'follow_up' | 'sent' | 'all';
 
 function isBestFit(p: Prospect): boolean {
   const summary = (p.fitBreakdown?.fitSummary || '').toLowerCase();
@@ -91,6 +91,9 @@ export default function OutreachInboxView({
         return (st === 'Draft' || st === 'Approved') && isBestFit(p);
       }
       if (filter === 'needs_review') return st === 'Draft' || st === 'Approved';
+      if (filter === 'with_email') {
+        return (st === 'Draft' || st === 'Approved') && Boolean(recipientEmail(p));
+      }
       if (filter === 'no_email') {
         return (st === 'Draft' || st === 'Approved') && !recipientEmail(p);
       }
@@ -162,6 +165,14 @@ export default function OutreachInboxView({
   };
   const clearSelection = () => setSelectedIds([]);
 
+  const withEmailCount = useMemo(
+    () =>
+      withDrafts.filter(p => {
+        const st = p.outreachDraft?.status;
+        return (st === 'Draft' || st === 'Approved') && Boolean(recipientEmail(p));
+      }).length,
+    [withDrafts],
+  );
   const noEmailCount = useMemo(
     () =>
       withDrafts.filter(p => {
@@ -341,24 +352,28 @@ export default function OutreachInboxView({
           </button>
         )}
         {onSendSelected && filtered.length > 0 && (
-          <>
-            <button
-              type="button"
-              onClick={selectAllVisible}
-              className={`btn btn-ghost${allVisibleSelected ? ' is-active' : ''}`}
-            >
-              Select all ({visibleIds.length})
-            </button>
-            <button
-              type="button"
-              onClick={selectAllWithEmail}
-              disabled={withEmailIds.length === 0}
-              className={`btn btn-ghost${allWithEmailSelected && !allVisibleSelected ? ' is-active' : ''}`}
-              title="Select only leads that have a recipient email"
-            >
-              Select with email ({withEmailIds.length})
-            </button>
-          </>
+          <button
+            type="button"
+            onClick={selectAllVisible}
+            className={`btn btn-ghost${allVisibleSelected ? ' is-active' : ''}`}
+            title={
+              filter === 'with_email'
+                ? 'Select all visible leads (no-email leads are already hidden)'
+                : 'Select all visible leads. Switch to With email first to ignore leads without email.'
+            }
+          >
+            Select all ({visibleIds.length})
+          </button>
+        )}
+        {onSendSelected && filter !== 'with_email' && withEmailIds.length > 0 && withEmailIds.length < visibleIds.length && (
+          <button
+            type="button"
+            onClick={selectAllWithEmail}
+            className={`btn btn-ghost${allWithEmailSelected && !allVisibleSelected ? ' is-active' : ''}`}
+            title="Select only leads that have a recipient email"
+          >
+            Select with email ({withEmailIds.length})
+          </button>
         )}
         {gmailConnected && onSendSelected && selectedIds.length > 0 && (
           <button
@@ -413,6 +428,7 @@ export default function OutreachInboxView({
             [
               ['best_fit', 'Best fit'],
               ['needs_review', 'All drafts'],
+              ['with_email', withEmailCount > 0 ? `With email (${withEmailCount})` : 'With email'],
               ['no_email', noEmailCount > 0 ? `No email (${noEmailCount})` : 'No email'],
               ['follow_up', followUpCount > 0 ? `Follow-up (${followUpCount})` : 'Follow-up'],
               ['sent', 'Sent'],
@@ -437,7 +453,9 @@ export default function OutreachInboxView({
             <p className="p-4 text-[13px] text-ink-muted">
               {filter === 'best_fit'
                 ? 'No best-fit drafts yet. Prepare outreach on high-fit Leads, or switch to All drafts.'
-                : 'Nothing in this filter.'}
+                : filter === 'with_email'
+                  ? 'No drafts with a recipient email yet.'
+                  : 'Nothing in this filter.'}
             </p>
           ) : (
             <div key={filter} className="nr-stagger">

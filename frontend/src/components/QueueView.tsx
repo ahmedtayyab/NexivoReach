@@ -47,7 +47,7 @@ type SortDir = 'asc' | 'desc';
 
 const INTENT_RANK: Record<string, number> = { high: 3, low: 2, none: 1 };
 type PriorityFilter = 'all' | 'priority' | 'nurture' | 'review' | 'low';
-type CadenceFilter = 'all' | 'due' | 'missing_email';
+type CadenceFilter = 'all' | 'due' | 'missing_email' | 'has_email';
 
 export default function QueueView({
   prospects,
@@ -119,6 +119,7 @@ export default function QueueView({
     const rows = qualityFiltered.filter(p => {
       if (cadenceFilter === 'due' && !isDueFollowUp(p)) return false;
       if (cadenceFilter === 'missing_email' && hasEmail(p)) return false;
+      if (cadenceFilter === 'has_email' && !hasEmail(p)) return false;
       if (filter === 'All') return true;
       return normalizeStage(p.stage) === filter;
     });
@@ -389,6 +390,7 @@ export default function QueueView({
           >
             <option value="all">All</option>
             <option value="due">Due follow-up ({outcomes.dueFollowUp})</option>
+            <option value="has_email">With email ({outcomes.withEmail})</option>
             <option value="missing_email">Missing email ({outcomes.missingEmail})</option>
           </select>
         </label>
@@ -450,13 +452,24 @@ export default function QueueView({
       <div className="seg mb-4 overflow-x-auto max-w-full nr-enter nr-enter-delay-2" role="group" aria-label="Lead stage">
         <button
           type="button"
-          className={filter === 'All' && cadenceFilter !== 'missing_email' ? 'is-active' : undefined}
+          className={filter === 'All' && cadenceFilter === 'all' ? 'is-active' : undefined}
           onClick={() => {
             setFilter('All');
             setCadenceFilter('all');
           }}
         >
           All {stageCounts.All || 0}
+        </button>
+        <button
+          type="button"
+          className={cadenceFilter === 'has_email' ? 'is-active' : undefined}
+          onClick={() => {
+            setFilter('All');
+            setCadenceFilter('has_email');
+          }}
+          title="Hide leads without email — then use Select all"
+        >
+          With email {outcomes.withEmail || 0}
         </button>
         <button
           type="button"
@@ -472,10 +485,12 @@ export default function QueueView({
           <button
             key={s}
             type="button"
-            className={filter === s && cadenceFilter !== 'missing_email' ? 'is-active' : undefined}
+            className={filter === s && cadenceFilter === 'all' ? 'is-active' : undefined}
             onClick={() => {
               setFilter(s);
-              if (cadenceFilter === 'missing_email') setCadenceFilter('all');
+              if (cadenceFilter === 'missing_email' || cadenceFilter === 'has_email') {
+                setCadenceFilter('all');
+              }
             }}
           >
             {s} {stageCounts[s] || 0}
