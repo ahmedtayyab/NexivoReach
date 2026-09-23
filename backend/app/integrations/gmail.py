@@ -133,7 +133,7 @@ async def get_valid_access_token(session: Session, user: User) -> str:
         if rt and rt not in candidates:
             candidates.append(rt)
     if not candidates:
-        raise RuntimeError("Gmail is not connected. Connect Gmail in Settings → Integrations.")
+        raise RuntimeError("Gmail is not connected. Connect Gmail in Workspace → Connect.")
 
     last_detail = ""
     async with httpx.AsyncClient(timeout=20.0) as client:

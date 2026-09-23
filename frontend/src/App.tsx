@@ -48,6 +48,21 @@ function gmailCanSend(user: AuthUser | null | undefined): boolean {
   if (g.canSend === false) return false;
   return true;
 }
+
+async function apiErrorMessage(resp: Response, fallback: string): Promise<string> {
+  const text = await resp.text();
+  try {
+    const body = JSON.parse(text) as { detail?: unknown };
+    if (typeof body.detail === 'string' && body.detail.trim()) return body.detail.trim();
+    if (Array.isArray(body.detail)) {
+      const first = body.detail[0] as { msg?: string } | undefined;
+      if (first?.msg) return String(first.msg);
+    }
+  } catch {
+    // plain text
+  }
+  return text.trim() || fallback;
+}
 import ThemeToggle from './components/ThemeToggle';
 import { Menu } from 'lucide-react';
 import { brandAssets } from './lib/brandAssets';
@@ -496,6 +511,7 @@ export default function App() {
           ? 'Workspace → Connect: Disconnect Gmail, then Connect again and allow send access.'
           : 'Workspace → Connect, then send in one click.',
       );
+      navigate('integrations');
       return;
     }
     const label = mode === 'ready'
@@ -516,7 +532,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bestFitOnly: true, limit: 20 }),
       });
-      if (!resp.ok) throw new Error(await resp.text());
+      if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Could not send'));
       const data = await resp.json();
       const updated = (data.prospects || []) as Prospect[];
       if (updated.length) {
@@ -541,7 +557,9 @@ export default function App() {
       }
     } catch (err) {
       console.error(err);
-      pushToast('error', 'Bulk send failed', err instanceof Error ? err.message : 'Could not send');
+      const msg = err instanceof Error ? err.message : 'Could not send';
+      pushToast('error', 'Bulk send failed', msg);
+      if (/connect gmail/i.test(msg)) navigate('integrations');
     }
   };
 
@@ -554,6 +572,7 @@ export default function App() {
           ? 'Workspace → Connect: Disconnect Gmail, then Connect again and allow send access.'
           : 'Workspace → Connect, then send selected emails.',
       );
+      navigate('integrations');
       return;
     }
     if (!ids.length) return;
@@ -563,7 +582,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids, limit: ids.length }),
       });
-      if (!resp.ok) throw new Error(await resp.text());
+      if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Could not send'));
       const data = await resp.json();
       const updated = (data.prospects || []) as Prospect[];
       if (updated.length) {
@@ -588,7 +607,9 @@ export default function App() {
       }
     } catch (err) {
       console.error(err);
-      pushToast('error', 'Send selected failed', err instanceof Error ? err.message : 'Could not send');
+      const msg = err instanceof Error ? err.message : 'Could not send';
+      pushToast('error', 'Send selected failed', msg);
+      if (/connect gmail/i.test(msg)) navigate('integrations');
     }
   };
 
@@ -951,6 +972,7 @@ export default function App() {
             onSendSelected={handleSendSelected}
             gmailConnected={gmailCanSend(user)}
             onGoWorkspace={() => navigate(preferredWorkspaceRoute(businessInfo))}
+            onGoConnect={() => navigate('integrations')}
             templateCount={outreachTemplates.length}
             onGoTemplates={() => {
               templatesReturnRef.current = 'outreach';

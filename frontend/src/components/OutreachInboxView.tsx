@@ -27,6 +27,8 @@ interface Props {
   onSendSelected?: (ids: string[]) => Promise<void> | void;
   gmailConnected?: boolean;
   onGoWorkspace?: () => void;
+  /** Opens Workspace → Connect (Gmail / Sheets). */
+  onGoConnect?: () => void;
   templateCount?: number;
   onGoTemplates?: () => void;
   outreachMode?: OutreachMode;
@@ -67,6 +69,7 @@ export default function OutreachInboxView({
   onSendSelected,
   gmailConnected = false,
   onGoWorkspace,
+  onGoConnect,
   templateCount = 0,
   onGoTemplates,
   outreachMode = 'ai',
@@ -274,11 +277,12 @@ export default function OutreachInboxView({
 
       {!gmailConnected && (
         <p className="ui-banner ui-banner--warn nr-enter" role="status">
-          Gmail is not connected. You can prepare drafts, but sending is blocked until you connect Gmail in Workspace → Connect.
-          {onGoWorkspace && (
+          Gmail is not connected. You can prepare drafts, but sending is blocked until you connect
+          Gmail in Workspace → Connect.
+          {(onGoConnect || onGoWorkspace) && (
             <>
               {' '}
-              <button type="button" className="linkish" onClick={onGoWorkspace}>
+              <button type="button" className="linkish" onClick={onGoConnect || onGoWorkspace}>
                 Connect Gmail
               </button>
             </>

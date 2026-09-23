@@ -594,7 +594,7 @@ async def send_batch(
         if not db_user or not gmail_mod.is_connected(db_user):
             raise HTTPException(
                 status_code=400,
-                detail="Connect Gmail in Settings → Integrations to send in one click",
+                detail="Connect Gmail in Workspace → Connect to send in one click",
             )
 
         rows = session.exec(
@@ -674,7 +674,7 @@ async def send_ready(
         if not db_user or not gmail_mod.is_connected(db_user):
             raise HTTPException(
                 status_code=400,
-                detail="Connect Gmail in Settings → Integrations to send in one click",
+                detail="Connect Gmail in Workspace → Connect to send in one click",
             )
         seller = _seller_name(session, business_id)
         rows = session.exec(
@@ -1087,7 +1087,7 @@ async def sync_replies(
         business_id = resolve_business_id(request, user, session)
         db_user = session.get(User, user.id)
         if not db_user or not gmail_mod.is_connected(db_user):
-            raise HTTPException(status_code=400, detail="Connect Gmail in Settings → Integrations first")
+            raise HTTPException(status_code=400, detail="Connect Gmail in Workspace → Connect first")
 
         rows = session.exec(
             select(ProspectRecord).where(ProspectRecord.business_id == business_id)
