@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog, AuthUser } from '../types';
+import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog, AuthUser, OutreachTemplate, OutreachMode } from '../types';
 import { CheckCircle2, ExternalLink, Loader2, Plus, Trash2, Wand2, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import PredictiveField from './PredictiveField';
 import FindBuyersPanel from './FindBuyersPanel';
 import PlanUsageCard from './PlanUsageCard';
 import TeamMembersPanel from './TeamMembersPanel';
+import OutreachTemplatesSection from './workspace/OutreachTemplatesSection';
 import { useConfirm } from './ConfirmDialog';
 import {
   categoriesFromProducts,
@@ -46,6 +47,9 @@ interface Props {
   onSaveBusiness: (info: BusinessInfo) => void;
   onSaveProducts: (products: Product[]) => void;
   onSaveICP: (icp: IdealCustomerProfile) => void;
+  outreachTemplates?: OutreachTemplate[];
+  outreachMode?: OutreachMode;
+  onSaveOutreachTemplates?: (templates: OutreachTemplate[], mode: OutreachMode) => void | Promise<void>;
   onAddProspects?: (prospects: Prospect[]) => void;
   onAddLog?: (log: AgentRunLog) => void;
   onFindBuyersComplete?: (foundCount: number) => void;
@@ -68,6 +72,9 @@ export default function SettingsView({
   onSaveBusiness,
   onSaveProducts,
   onSaveICP,
+  outreachTemplates = [],
+  outreachMode = 'ai',
+  onSaveOutreachTemplates,
   onAddProspects,
   onAddLog,
   onFindBuyersComplete,
@@ -96,7 +103,7 @@ export default function SettingsView({
   const blurb: Record<SettingsSection, string> = {
     company: 'Name and website are enough.',
     integrations: 'Needed for Gmail and Sheets.',
-    catalog: 'Optional — richer product matches.',
+    catalog: 'Optional — products + outreach templates.',
     icp: 'One product, one buyer, one place per hunt.',
   };
 
@@ -226,17 +233,28 @@ export default function SettingsView({
           />
         )}
         {section === 'catalog' && (
-          <CatalogSection
-            products={products}
-            sheetsConnected={sheetsConnected}
-            continueLabel={nextLabel || 'Continue'}
-            onGoConnect={() => onSectionChange('integrations')}
-            onContinue={() => advanceAfter('catalog', true)}
-            onSave={nextProducts => {
-              onSaveProducts(nextProducts);
-            }}
-            companyWebsite={businessInfo.website}
-          />
+          <>
+            <CatalogSection
+              products={products}
+              sheetsConnected={sheetsConnected}
+              continueLabel={nextLabel || 'Continue'}
+              onGoConnect={() => onSectionChange('integrations')}
+              onContinue={() => advanceAfter('catalog', true)}
+              onSave={nextProducts => {
+                onSaveProducts(nextProducts);
+              }}
+              companyWebsite={businessInfo.website}
+            />
+            {onSaveOutreachTemplates && (
+              <OutreachTemplatesSection
+                key={`${businessInfo.id || 'biz'}-${outreachTemplates.length}-${outreachMode}`}
+                templates={outreachTemplates}
+                outreachMode={outreachMode}
+                products={products}
+                onSave={onSaveOutreachTemplates}
+              />
+            )}
+          </>
         )}
         {section === 'icp' && (
           <details className="ws-advanced">

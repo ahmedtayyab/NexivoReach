@@ -71,11 +71,63 @@ US_STATE_ALIASES: dict[str, tuple[str, ...]] = {
 
 COUNTRY_ALIASES: dict[str, tuple[str, ...]] = {
     "united states": ("usa", "u.s.", "u.s.a.", "united states", "america"),
-    "united kingdom": ("uk", "britain", "england", "united kingdom"),
-    "united arab emirates": ("uae", "dubai", "abu dhabi"),
-    "canada": ("canada",),
-    "germany": ("germany", "deutschland"),
-    "pakistan": ("pakistan",),
+    "united kingdom": ("uk", "britain", "england", "scotland", "wales", "united kingdom"),
+    "united arab emirates": ("uae", "dubai", "abu dhabi", "sharjah"),
+    "saudi arabia": ("saudi", "ksa", "riyadh", "jeddah", "dammam"),
+    "canada": ("canada", "toronto", "vancouver", "montreal"),
+    "germany": ("germany", "deutschland", "berlin", "munich", "hamburg"),
+    "france": ("france", "paris", "lyon"),
+    "netherlands": ("netherlands", "holland", "amsterdam", "rotterdam"),
+    "australia": ("australia", "sydney", "melbourne"),
+    "india": ("india", "mumbai", "delhi", "bangalore", "chennai"),
+    "pakistan": ("pakistan", "karachi", "lahore", "islamabad"),
+    "qatar": ("qatar", "doha"),
+    "singapore": ("singapore",),
+    "malaysia": ("malaysia", "kuala lumpur"),
+    "turkey": ("turkey", "istanbul", "ankara"),
+    "south africa": ("south africa", "johannesburg", "cape town"),
+    "spain": ("spain", "madrid", "barcelona"),
+    "italy": ("italy", "milan", "rome"),
+    "mexico": ("mexico", "guadalajara", "monterrey"),
+    "brazil": ("brazil", "são paulo", "sao paulo", "rio de janeiro"),
+}
+
+# E.164 country calling codes → canonical country label (longest prefix wins).
+# +1 is North America — treated as United States unless Canada evidence is stronger.
+PHONE_DIAL_TO_COUNTRY: dict[str, str] = {
+    "971": "United Arab Emirates",
+    "966": "Saudi Arabia",
+    "974": "Qatar",
+    "92": "Pakistan",
+    "91": "India",
+    "90": "Turkey",
+    "86": "China",
+    "81": "Japan",
+    "82": "South Korea",
+    "65": "Singapore",
+    "60": "Malaysia",
+    "61": "Australia",
+    "64": "New Zealand",
+    "55": "Brazil",
+    "52": "Mexico",
+    "49": "Germany",
+    "48": "Poland",
+    "47": "Norway",
+    "46": "Sweden",
+    "45": "Denmark",
+    "44": "United Kingdom",
+    "43": "Austria",
+    "41": "Switzerland",
+    "40": "Romania",
+    "39": "Italy",
+    "34": "Spain",
+    "33": "France",
+    "32": "Belgium",
+    "31": "Netherlands",
+    "27": "South Africa",
+    "20": "Egypt",
+    "7": "Russia",
+    "1": "United States",
 }
 
 
@@ -163,7 +215,7 @@ def places_mentioned(blob: str, places: List[str]) -> Optional[bool]:
 
 def location_conflicts_with_targets(location: str, places: List[str]) -> bool:
     """
-    True when an address/location string names a different US state than the hunt.
+    True when an address/location string names a different US state or country than the hunt.
     'Edison, NJ' conflicts with Massachusetts; 'ships to Boston' alone is not a location.
     """
     loc = (location or "").strip()
@@ -175,6 +227,7 @@ def location_conflicts_with_targets(location: str, places: List[str]) -> bool:
     target_keys = {p.lower() for p in places}
     for p in places:
         target_keys.update(a.lower() for a in place_aliases(p))
+
     for state, aliases in US_STATE_ALIASES.items():
         if state in target_keys:
             continue
@@ -186,13 +239,123 @@ def location_conflicts_with_targets(location: str, places: List[str]) -> bool:
         for city in aliases[1:]:
             if _word_hit(low, city):
                 return True
+
+    # Country-level conflict (must match when hunt named a country)
+    for country, aliases in COUNTRY_ALIASES.items():
+        if country in target_keys or any(a in target_keys for a in aliases):
+            continue
+        if _word_hit(low, country):
+            return True
+        for a in aliases:
+            if len(a) > 2 and _word_hit(low, a):
+                return True
     return False
+
+
+def countries_from_phone_text(text: str) -> List[str]:
+    """Infer countries from +dial / 00-dial phone numbers in page text."""
+    blob = text or ""
+    if not blob.strip():
+        return []
+    found: List[str] = []
+    seen = set()
+    # +971 50… / +1-702-… / 00 44 …
+    for match in re.finditer(r"(?:\+|00)\s*(\d{1,3})[\s\-.]?\d", blob):
+        digits = re.sub(r"\D", "", match.group(1) or "")
+        if not digits:
+            continue
+        country = None
+        for length in (3, 2, 1):
+            prefix = digits[:length]
+            if prefix in PHONE_DIAL_TO_COUNTRY:
+                country = PHONE_DIAL_TO_COUNTRY[prefix]
+                break
+        if not country:
+            continue
+        key = country.lower()
+        if key in seen:
+            continue
+        # +1 Canada vs US: if "canada" appears near the number, prefer Canada
+        if key == "united states":
+            window = blob[max(0, match.start() - 40) : match.end() + 40].lower()
+            if "canada" in window or "toronto" in window or "vancouver" in window:
+                country = "Canada"
+                key = "canada"
+                if key in seen:
+                    continue
+        seen.add(key)
+        found.append(country)
+    return found[:4]
+
+
+def social_location_hints(text: str) -> str:
+    """
+    Pull location cues near Facebook / Instagram mentions and common 'based in' lines.
+    Does not invent places — only returns text windows that may contain geo for format_location_display.
+    """
+    blob = text or ""
+    if not blob.strip():
+        return ""
+    chunks: List[str] = []
+    low = blob.lower()
+    for needle in (
+        "facebook.com",
+        "fb.com",
+        "instagram.com",
+        "linkedin.com",
+        "twitter.com",
+        "x.com",
+        "based in",
+        "located in",
+        "headquartered in",
+        "hq in",
+        "our office",
+        "visit us",
+        "find us",
+        "contact us",
+    ):
+        start = 0
+        while True:
+            idx = low.find(needle, start)
+            if idx < 0:
+                break
+            window = blob[max(0, idx - 80) : idx + len(needle) + 120]
+            chunks.append(window)
+            start = idx + len(needle)
+            if len(chunks) >= 8:
+                break
+        if len(chunks) >= 8:
+            break
+    return "\n".join(chunks)
+
+
+def enrich_geo_blob(
+    *,
+    site_text: str = "",
+    title: str = "",
+    snippet: str = "",
+    phones: Optional[List[str]] = None,
+) -> str:
+    """Combine page copy, social windows, and phone dial-code countries for geo checks."""
+    phone_blob = " ".join(p for p in (phones or []) if p)
+    dial_countries = countries_from_phone_text(f"{site_text}\n{phone_blob}")
+    social = social_location_hints(site_text)
+    return "\n".join(
+        [
+            title or "",
+            snippet or "",
+            site_text or "",
+            social,
+            phone_blob,
+            " ".join(dial_countries),
+        ]
+    )
 
 
 def extract_places_from_prompt(prompt: str) -> Tuple[List[str], bool]:
     """
     Pull state/city/country from Discover text.
-    Returns (places, strict) — strict=True when user named a US state or specific city.
+    Returns (places, strict) — strict=True when user named a place that must match.
     """
     text = (prompt or "").strip()
     if not text:
@@ -201,22 +364,24 @@ def extract_places_from_prompt(prompt: str) -> Tuple[List[str], bool]:
     found: List[str] = []
     strict = False
 
+    # Explicit "in <place>" / "near <place>" → always treat as strict hunt geo
+    if re.search(r"\b(?:in|near|around|within)\s+[a-z]", low):
+        strict = True
+
     # Multi-word states first
     for state in sorted(US_STATE_ALIASES.keys(), key=len, reverse=True):
         if _word_hit(low, state):
             found.append(" ".join(w.capitalize() for w in state.split()))
             strict = True
             continue
-        # abbrev only with postal-safe context (never bare "in" → Indiana)
         abbrev = US_STATE_ALIASES[state][0] if US_STATE_ALIASES[state] else ""
         if abbrev and _abbrev_hit(low, abbrev):
             found.append(" ".join(w.capitalize() for w in state.split()))
             strict = True
 
-    # Cities that map to states (if state not already added)
     for state, aliases in US_STATE_ALIASES.items():
         state_label = " ".join(w.capitalize() for w in state.split())
-        for city in aliases[1:]:  # skip abbrev
+        for city in aliases[1:]:
             if _word_hit(low, city):
                 if state_label not in found:
                     found.append(state_label)
@@ -226,12 +391,14 @@ def extract_places_from_prompt(prompt: str) -> Tuple[List[str], bool]:
         label = " ".join(w.capitalize() for w in country.split())
         if any(_word_hit(low, a) for a in (country, *aliases)):
             if label not in found and country not in {p.lower() for p in found}:
-                # Don't add "United States" alone as strict city/state
-                if country == "united states" and strict:
+                if country == "united states" and any(
+                    p.lower() in US_STATE_ALIASES for p in found
+                ):
+                    # State already set — country is redundant, keep strict from state
                     continue
                 found.append(label)
+                strict = True  # country hunts must match country
 
-    # Dedup preserving order
     seen = set()
     out = []
     for p in found:

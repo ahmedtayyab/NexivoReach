@@ -52,6 +52,20 @@ export interface ProductFitMatch {
   reasoning: string;
 }
 
+export interface OutreachTemplate {
+  id: string;
+  name: string;
+  category: string;
+  tags: string[];
+  subject: string;
+  body: string;
+  specializeLines: string[];
+  sortOrder?: number;
+  updatedAt?: string;
+}
+
+export type OutreachMode = 'ai' | 'templates';
+
 export interface ProspectEvidence {
   claim: 'icp' | 'offer' | 'motion' | 'intent' | string;
   statement: string;
@@ -135,6 +149,10 @@ export interface Prospect {
     gmailThreadId?: string;
     sentVia?: string;
     sentAt?: string;
+    draftSource?: 'ai' | 'template' | 'ai_fallback' | string;
+    templateId?: string;
+    templateName?: string;
+    templateCategory?: string;
     outreachRationale?: {
       primary_signal?: string;
       signal_source?: string;
@@ -144,6 +162,10 @@ export interface Prospect {
       value_proposition?: string;
       cta_strategy?: string;
       angle?: string;
+      template_id?: string;
+      template_name?: string;
+      template_category?: string;
+      match_reason?: string;
     };
   };
   stage:

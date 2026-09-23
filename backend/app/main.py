@@ -17,6 +17,7 @@ from app.api import (
     suggestions,
     companies,
     outreach,
+    outreach_templates,
     admin,
     notifications,
     support,
@@ -60,6 +61,7 @@ app.include_router(products.router)
 app.include_router(icp.router)
 app.include_router(prospects.router)
 app.include_router(outreach.router)
+app.include_router(outreach_templates.router)
 app.include_router(sheets.router)
 app.include_router(suggestions.router)
 app.include_router(companies.router)

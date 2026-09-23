@@ -14,11 +14,17 @@ from app.api.serializers import prospect_to_frontend
 from app.database.session import engine
 from app.integrations import gmail as gmail_mod
 from app.integrations import sheets as sheets_mod
-from app.models.schemas import Business, ProspectRecord, User
+from app.models.schemas import Business, ProspectRecord, User, OutreachTemplate, ProductItem
 from app.providers.factory import get_ai_provider
 from app.services import access as access_mod
 from app.tools.contact_finder import discover_contacts, resolve_lead_email, email_from_contacts
 from app.tools.web_search import WebSearchTool
+from app.agents.template_selector import (
+    build_lead_signals,
+    select_outreach_template,
+    fill_outreach_template,
+)
+from app.api.outreach_templates import template_to_frontend
 import logging
 
 log = logging.getLogger(__name__)
@@ -249,22 +255,109 @@ async def _prepare_one(
             session.refresh(row)
         return row
 
-    provider = get_ai_provider()
     fb = row.fit_breakdown or {}
-    draft = await provider.generate_personalized_outreach(
-        company_name=row.company_name or "there",
-        why_prospect=row.why_this_prospect or "",
-        signals=row.buying_signals or [],
-        matched_products=row.product_fit or [],
-        seller_name=seller,
-        why_now=getattr(row, "why_now", None) or fb.get("whyNow") or "",
-        evidence=fb.get("evidence") or [],
-        location=row.location or "",
-        industry=row.industry or "",
-        recommended_approach=row.recommended_approach or "",
-        fit_summary=fb.get("fitSummary") or "",
-        intent=fb.get("intent") or "",
-    )
+    draft_source = "ai"
+    template_meta: Dict[str, Any] = {}
+    draft: Dict[str, Any] = {}
+
+    biz = session.get(Business, row.business_id) if row.business_id else None
+    mode = (getattr(biz, "outreach_mode", None) or "ai").strip().lower()
+    if mode == "templates" and row.business_id:
+        tpl_rows = session.exec(
+            select(OutreachTemplate).where(OutreachTemplate.business_id == row.business_id)
+        ).all()
+        catalog = session.exec(
+            select(ProductItem).where(ProductItem.business_id == row.business_id)
+        ).all()
+        catalog_dicts = [
+            {"name": p.name or "", "category": p.category or ""} for p in catalog
+        ]
+        signals = build_lead_signals(
+            company_name=row.company_name or "",
+            industry=row.industry or "",
+            why_prospect=row.why_this_prospect or "",
+            why_now=getattr(row, "why_now", None) or fb.get("whyNow") or "",
+            product_fit=row.product_fit or [],
+            catalog_products=catalog_dicts,
+            fit_breakdown=fb,
+        )
+        templates = [template_to_frontend(t) for t in tpl_rows]
+        # selector expects specialize_lines key internally via specializeLines from frontend shape
+        for t in templates:
+            t["specialize_lines"] = t.get("specializeLines") or []
+        picked = select_outreach_template(templates, signals)
+        if picked:
+            top_product = (signals.get("topProducts") or [""])[0] or ""
+            if not top_product and (row.product_fit or []):
+                top_product = str(
+                    (row.product_fit[0] or {}).get("productName")
+                    or (row.product_fit[0] or {}).get("product_name")
+                    or ""
+                )
+            subject, body = fill_outreach_template(
+                subject=picked.get("subject") or f"Introduction — {seller}",
+                body=picked.get("body") or "",
+                specialize_lines=picked.get("specializeLines") or picked.get("specialize_lines") or [],
+                vars={
+                    "company": row.company_name or "there",
+                    "seller": seller,
+                    "product": top_product,
+                    "location": row.location or "",
+                    "industry": row.industry or "",
+                    "website": row.website or "",
+                },
+            )
+            draft = {
+                "subject": subject,
+                "body": body,
+                "personalizedReason": (
+                    f"Used your “{picked.get('name') or 'template'}” template"
+                    f" ({picked.get('_matchReason') or 'category match'})."
+                ),
+                "outreachRationale": {
+                    "angle": "user_template",
+                    "matched_product": top_product,
+                    "template_id": picked.get("id"),
+                    "template_name": picked.get("name"),
+                    "template_category": picked.get("category"),
+                    "match_reason": picked.get("_matchReason"),
+                    "match_score": picked.get("_matchScore"),
+                    "primary_signal": (signals.get("matchedCategories") or [None])[0]
+                    or top_product
+                    or picked.get("category"),
+                },
+            }
+            draft_source = "template"
+            template_meta = {
+                "templateId": picked.get("id"),
+                "templateName": picked.get("name"),
+                "templateCategory": picked.get("category"),
+            }
+
+    if draft_source != "template":
+        provider = get_ai_provider()
+        draft = await provider.generate_personalized_outreach(
+            company_name=row.company_name or "there",
+            why_prospect=row.why_this_prospect or "",
+            signals=row.buying_signals or [],
+            matched_products=row.product_fit or [],
+            seller_name=seller,
+            why_now=getattr(row, "why_now", None) or fb.get("whyNow") or "",
+            evidence=fb.get("evidence") or [],
+            location=row.location or "",
+            industry=row.industry or "",
+            recommended_approach=row.recommended_approach or "",
+            fit_summary=fb.get("fitSummary") or "",
+            intent=fb.get("intent") or "",
+        )
+        if mode == "templates":
+            draft_source = "ai_fallback"
+            reason = draft.get("personalizedReason") or ""
+            draft["personalizedReason"] = (
+                "No safe template match for this lead’s category — generated with AI instead. "
+                + reason
+            ).strip()
+
     now = _now()
     to_addr = email or _recipient_email(row)
     outreach = {
@@ -276,12 +369,28 @@ async def _prepare_one(
         "status": "Draft",
         "createdAt": now,
         "toEmail": to_addr or "",
+        "draftSource": draft_source,
+        **template_meta,
     }
     row.outreach_draft = outreach
     if to_addr and not (row.email or "").strip():
         row.email = to_addr
     timeline = list(row.agent_timeline or [])
-    timeline.append({"time": _clock(), "action": "Drafted personalized outreach (awaiting human approval)"})
+    if draft_source == "template":
+        timeline.append({
+            "time": _clock(),
+            "action": (
+                f"Filled template “{template_meta.get('templateName') or 'template'}”"
+                f" ({template_meta.get('templateCategory') or 'category'}) — awaiting approval"
+            ),
+        })
+    elif draft_source == "ai_fallback":
+        timeline.append({
+            "time": _clock(),
+            "action": "No safe template match — drafted with AI (awaiting human approval)",
+        })
+    else:
+        timeline.append({"time": _clock(), "action": "Drafted personalized outreach (awaiting human approval)"})
     if to_addr:
         timeline.append({"time": _clock(), "action": f"Recipient {to_addr}"})
     elif phone:

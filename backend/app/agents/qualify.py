@@ -203,12 +203,24 @@ def qualify_account(
         if not why_this:
             why_this = f"{name} is a local Maps listing matching the ICP buyer type; website evidence is still thin."
 
-    # Strict geo from Discover prompt (e.g. "in Massachusetts") — address wins.
-    # Do not treat "ships to Boston" on a NJ site as operating in Massachusetts.
+    # Strict geo from Discover prompt (e.g. "in Massachusetts" / "in UAE") — address wins.
+    # Also use phone dial codes + social/footer windows when homepage address is thin.
     if getattr(profile, "strict_geo", False) and profile.places:
-        from app.agents.geo import location_conflicts_with_targets, places_mentioned
+        from app.agents.geo import location_conflicts_with_targets, places_mentioned, enrich_geo_blob
 
         loc = (location or "").strip()
+        phones = []
+        if row.get("phone"):
+            phones.append(str(row.get("phone")))
+        if row.get("phones"):
+            phones.extend(str(p) for p in (row.get("phones") or []) if p)
+        evidence_blob = enrich_geo_blob(
+            site_text=site_text or "",
+            title=str(row.get("title") or ""),
+            snippet=snippet or "",
+            phones=phones,
+        )
+
         if loc and location_conflicts_with_targets(loc, profile.places):
             persist = False
             priority = "reject"
@@ -217,9 +229,13 @@ def qualify_account(
                 f"{', '.join(profile.places[:2])}."
             )
         elif loc:
-            # Soften: unknown place alias is not an automatic reject when homepage evidence exists.
             mentioned = places_mentioned(loc, profile.places)
-            if mentioned is False or (
+            if mentioned is True:
+                pass
+            elif places_mentioned(evidence_blob, profile.places) is True:
+                # Phone/social/footer confirms target country even if address line is vague
+                pass
+            elif mentioned is False or (
                 mentioned is not True
                 and source_type != "homepage"
                 and (row.get("source") or "") != "maps"
@@ -231,14 +247,17 @@ def qualify_account(
                     f"{', '.join(profile.places[:2])}."
                 )
         else:
-            # No address: require target place in snippet/title only (not full site body)
+            # No address: require target place in SERP, site, social window, or phone dial code
             geo_hit = _geo_ok(f"{snippet}\n{row.get('title') or ''}", profile.places)
+            if geo_hit is not True:
+                geo_hit = _geo_ok(evidence_blob, profile.places)
             if geo_hit is not True and (row.get("source") or "") != "maps":
                 persist = False
                 priority = "reject"
                 why_this = (
                     f"{name}: skipped — no clear evidence they operate in "
-                    f"{', '.join(profile.places[:2])}."
+                    f"{', '.join(profile.places[:2])} "
+                    f"(checked site, social links, and phone country codes)."
                 )
 
     return {
@@ -444,18 +463,27 @@ def _geo_ok(blob: str, places: List[str]) -> Optional[bool]:
 
 
 def _resolve_location(row: Dict[str, Any], site_text: str, profile: SellerProfile) -> str:
-    """Prefer Maps/SERP location; else pull city/state from homepage copy."""
-    from app.agents.geo import format_location_display, location_conflicts_with_targets
+    """Prefer Maps/SERP location; else homepage, social windows, and phone dial codes."""
+    from app.agents.geo import (
+        format_location_display,
+        location_conflicts_with_targets,
+        enrich_geo_blob,
+        countries_from_phone_text,
+    )
+
+    phones = []
+    if row.get("phone"):
+        phones.append(str(row.get("phone")))
+    if row.get("phones"):
+        phones.extend(str(p) for p in (row.get("phones") or []) if p)
 
     existing = (row.get("location") or "").strip()
     if existing and len(existing) >= 3:
-        # Never rewrite an out-of-state Maps address toward the hunt state via site copy
         if getattr(profile, "strict_geo", False) and profile.places:
             if location_conflicts_with_targets(existing, profile.places):
                 return existing[:80]
-        # Enrich bare "Nevada" with city from site when possible
         site_loc = format_location_display(
-            f"{existing}\n{site_text or ''}",
+            enrich_geo_blob(site_text=site_text or "", phones=phones, title=existing),
             prefer_places=profile.places,
         )
         if site_loc and len(site_loc) > len(existing):
@@ -464,8 +492,25 @@ def _resolve_location(row: Dict[str, Any], site_text: str, profile: SellerProfil
                     return existing[:80]
             return site_loc[:80]
         return existing[:80]
-    blob = f"{row.get('title') or ''}\n{row.get('snippet') or ''}\n{site_text or ''}"
-    return format_location_display(blob, prefer_places=profile.places)[:80]
+
+    blob = enrich_geo_blob(
+        site_text=site_text or "",
+        title=str(row.get("title") or ""),
+        snippet=str(row.get("snippet") or ""),
+        phones=phones,
+    )
+    resolved = format_location_display(blob, prefer_places=profile.places)
+    if resolved:
+        return resolved[:80]
+    # Last resort: dial-code country if it aligns with hunt places
+    for country in countries_from_phone_text(blob):
+        if not profile.places:
+            return country[:80]
+        from app.agents.geo import places_mentioned
+
+        if places_mentioned(country, profile.places) is True:
+            return country[:80]
+    return ""
 
 
 def _primary_buyer_hit(text: str, profile: SellerProfile) -> bool:

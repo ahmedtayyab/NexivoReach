@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog, AuthUser } from './types';
+import type { BusinessInfo, Product, IdealCustomerProfile, Prospect, AgentRunLog, AuthUser, OutreachTemplate, OutreachMode } from './types';
 import {
   emptyBusinessInfo,
   emptyProducts,
@@ -64,6 +64,8 @@ export default function App() {
   const [activeCompanyId, setActiveCompanyIdState] = useState<string | null>(null);
   const [businessInfo, setBusinessInfo] = useState<BusinessInfo>(emptyBusinessInfo);
   const [products, setProducts] = useState<Product[]>(emptyProducts);
+  const [outreachTemplates, setOutreachTemplates] = useState<OutreachTemplate[]>([]);
+  const [outreachMode, setOutreachMode] = useState<OutreachMode>('ai');
   const [icp, setIcp] = useState<IdealCustomerProfile>(emptyICP);
   const [prospects, setProspects] = useState<Prospect[]>(emptyProspects);
   const [agentLogs, setAgentLogs] = useState<AgentRunLog[]>(emptyAgentLogs);
@@ -140,12 +142,13 @@ export default function App() {
   }, []);
 
   const loadCompanyData = useCallback(async () => {
-    const [prospectsResp, logsResp, profileResp, productsResp, icpResp] = await Promise.all([
+    const [prospectsResp, logsResp, profileResp, productsResp, icpResp, templatesResp] = await Promise.all([
       apiFetch('/api/prospects/'),
       apiFetch('/api/discovery/runs'),
       apiFetch('/api/onboarding/profile'),
       apiFetch('/api/products/'),
       apiFetch('/api/icp/'),
+      apiFetch('/api/outreach-templates/'),
     ]);
 
     if (prospectsResp.ok) {
@@ -175,6 +178,14 @@ export default function App() {
       setIcp(parseIcpResponse(await icpResp.json()));
     } else {
       setIcp(emptyICP);
+    }
+    if (templatesResp.ok) {
+      const data = await templatesResp.json();
+      setOutreachMode(data?.outreachMode === 'templates' ? 'templates' : 'ai');
+      setOutreachTemplates(Array.isArray(data?.templates) ? (data.templates as OutreachTemplate[]) : []);
+    } else {
+      setOutreachMode('ai');
+      setOutreachTemplates([]);
     }
   }, []);
 
@@ -767,6 +778,24 @@ export default function App() {
     });
   };
 
+  const handleSaveOutreachTemplates = async (next: OutreachTemplate[], mode: OutreachMode) => {
+    setOutreachTemplates(next);
+    setOutreachMode(mode);
+    const resp = await apiFetch('/api/outreach-templates/save', {
+      method: 'POST',
+      body: JSON.stringify({ templates: next, outreachMode: mode }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(text || 'Could not save templates');
+    }
+    const data = await resp.json();
+    if (Array.isArray(data?.templates)) setOutreachTemplates(data.templates as OutreachTemplate[]);
+    if (data?.outreachMode === 'templates' || data?.outreachMode === 'ai') {
+      setOutreachMode(data.outreachMode);
+    }
+  };
+
   const handleRestoredFromSheets = async (payload: {
     company?: BusinessInfo;
     products?: Product[];
@@ -928,6 +957,9 @@ export default function App() {
             onSaveBusiness={handleSaveBusiness}
             onSaveProducts={handleSaveProducts}
             onSaveICP={handleSaveICP}
+            outreachTemplates={outreachTemplates}
+            outreachMode={outreachMode}
+            onSaveOutreachTemplates={handleSaveOutreachTemplates}
             onAddProspects={handleAddProspects}
             onAddLog={handleAddLog}
             onFindBuyersComplete={(n) => {

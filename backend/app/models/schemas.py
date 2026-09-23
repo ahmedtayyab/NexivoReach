@@ -15,6 +15,29 @@ class Business(SQLModel, table=True):
     # Per-company Google Sheet (not shared across users/businesses)
     sheets_spreadsheet_id: Optional[str] = Field(default=None)
     sheets_spreadsheet_title: Optional[str] = Field(default=None)
+    # ai = always generate; templates = use user templates (AI only if no safe match)
+    outreach_mode: str = "ai"
+
+
+class OutreachTemplate(SQLModel, table=True):
+    """User-authored outreach templates matched by category/tags to each lead."""
+
+    __tablename__ = "outreach_template"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    business_id: str = Field(index=True)
+    user_id: Optional[str] = Field(default=None, index=True)
+    name: str = ""
+    # Primary category for matching (e.g. Boxing, Weightlifting, Industrial Equipment)
+    category: str = ""
+    # Extra keywords so "boxing gloves buyer" hits Boxing, not Weightlifting
+    tags: List[str] = Field(default=[], sa_type=JSON)
+    subject: str = ""
+    body: str = ""
+    # Optional bullet lines shown under "We specialize in:" if body uses {{specialize}}
+    specialize_lines: List[str] = Field(default=[], sa_type=JSON)
+    sort_order: int = 0
+    updated_at: str = ""
 
 
 class ProductItem(SQLModel, table=True):

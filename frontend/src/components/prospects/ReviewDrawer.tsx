@@ -479,34 +479,43 @@ export default function ReviewDrawer({
                   />
                 </div>
 
-                {draft.outreachRationale ? (
+                {draft.outreachRationale || draft.personalizedReason || draft.draftSource ? (
                   <div className="text-[12px] text-ink-muted border-t border-border-subtle pt-4 space-y-1.5">
-                    <p className="font-medium text-ink-secondary">Outreach rationale</p>
-                    {draft.outreachRationale.primary_signal && (
+                    {(draft.draftSource === 'template' || draft.templateName) && (
+                      <p className="font-medium text-ink-secondary">
+                        Template: {draft.templateName || draft.outreachRationale?.template_name || 'Yours'}
+                        {(draft.templateCategory || draft.outreachRationale?.template_category)
+                          ? ` · ${draft.templateCategory || draft.outreachRationale?.template_category}`
+                          : ''}
+                      </p>
+                    )}
+                    {draft.draftSource === 'ai_fallback' && (
+                      <p className="font-medium text-ink-secondary">
+                        AI fallback — no safe template match for this lead’s category
+                      </p>
+                    )}
+                    {draft.outreachRationale?.match_reason && (
+                      <p><span className="text-ink-muted">Match:</span> {draft.outreachRationale.match_reason}</p>
+                    )}
+                    {draft.outreachRationale?.primary_signal && (
                       <p><span className="text-ink-muted">Signal:</span> {draft.outreachRationale.primary_signal}</p>
                     )}
-                    {draft.outreachRationale.pain_hypothesis && (
+                    {draft.outreachRationale?.pain_hypothesis && (
                       <p><span className="text-ink-muted">Pain hypothesis:</span> {draft.outreachRationale.pain_hypothesis}</p>
                     )}
-                    {draft.outreachRationale.matched_product && (
+                    {draft.outreachRationale?.matched_product && (
                       <p><span className="text-ink-muted">Matched product:</span> {draft.outreachRationale.matched_product}</p>
                     )}
-                    <p>
-                      {draft.outreachRationale.angle && (
-                        <><span className="text-ink-muted">Approach:</span> {draft.outreachRationale.angle}</>
-                      )}
-                      {draft.outreachRationale.signal_confidence && (
-                        <>
-                          {draft.outreachRationale.angle ? ' · ' : null}
-                          <span className="text-ink-muted">Confidence:</span> {draft.outreachRationale.signal_confidence}
-                        </>
-                      )}
-                    </p>
+                    {draft.outreachRationale?.angle && draft.outreachRationale.angle !== 'user_template' && (
+                      <p><span className="text-ink-muted">Approach:</span> {draft.outreachRationale.angle}</p>
+                    )}
+                    {!draft.outreachRationale && draft.personalizedReason ? (
+                      <p>Personalized using: {draft.personalizedReason}</p>
+                    ) : null}
+                    {draft.outreachRationale && draft.personalizedReason && draft.draftSource !== 'ai' ? (
+                      <p>{draft.personalizedReason}</p>
+                    ) : null}
                   </div>
-                ) : draft.personalizedReason ? (
-                  <p className="text-[12px] text-ink-muted border-t border-border-subtle pt-4">
-                    Personalized using: {draft.personalizedReason}
-                  </p>
                 ) : null}
               </div>
             </section>

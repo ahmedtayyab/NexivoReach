@@ -24,6 +24,7 @@ def init_db():
     _ensure_user_gmail_columns()
     _ensure_user_sheets_oauth_columns()
     _ensure_business_sheets_columns()
+    _ensure_business_outreach_mode_column()
     _ensure_user_access_columns()
     _ensure_support_ticket_attachments_column()
     _ensure_user_billing_columns()
@@ -121,6 +122,16 @@ def _ensure_business_sheets_columns():
                 conn.commit()
             except Exception:
                 conn.rollback()
+
+
+def _ensure_business_outreach_mode_column():
+    """Business.outreach_mode: ai | templates."""
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE business ADD COLUMN outreach_mode VARCHAR DEFAULT 'ai'"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
 
 
 def _ensure_prospect_contact_columns():

@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product } from '../types';
-import { Check, FileSpreadsheet, Loader2, RotateCcw, X } from 'lucide-react';
+import { Check, FileSpreadsheet, Loader2, MapPin, RotateCcw, Search, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
-import PredictiveField from './PredictiveField';
-import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
+import { categoriesFromProducts, COUNTRY_LIST, MARKET_SUGGESTIONS, suggestionsForField } from '../data/taxonomy';
 import { isPlaceholderCompanyName } from '../lib/workspace';
 import PageAmbient from './brand/PageAmbient';
 
@@ -31,6 +30,30 @@ type RecentHunt = {
 const HUNT_PHASE_SECONDS = [0, 12, 28, 45, 70];
 const SKIP_SHEETS_PROMPT_KEY = 'nr-hunt-skip-sheets-prompt';
 
+/** Split a past freeform hunt into category + location when possible. */
+export function splitHuntPrompt(prompt: str): { category: string; location: string } {
+  const raw = (prompt || '').trim();
+  if (!raw) return { category: '', location: '' };
+  const m = raw.match(/\s+\b(?:in|near|around|within)\s+(.+)$/i);
+  if (m) {
+    return {
+      category: raw.slice(0, m.index).trim(),
+      location: (m[1] || '').trim(),
+    };
+  }
+  return { category: raw, location: '' };
+}
+
+export function composeHuntPrompt(category: string, location: string): string {
+  const cat = (category || '').trim();
+  const loc = (location || '').trim();
+  if (cat && loc) {
+    if (/\b(?:in|near|around|within)\s+/i.test(cat)) return cat;
+    return `${cat} in ${loc}`;
+  }
+  return cat || loc;
+}
+
 function buildPhases(query: string, placeHint: string): string[] {
   const focus = (query || '').trim() || 'matching buyers';
   const short = focus.length > 48 ? `${focus.slice(0, 48)}…` : focus;
@@ -53,7 +76,7 @@ function loadSkipSheetsPrompt(): boolean {
 }
 
 /**
- * Primary product action: describe who to find, then hunt.
+ * Primary product action: category + location bar → hunt.
  */
 export default function FindBuyersPanel({
   businessInfo,
@@ -66,7 +89,8 @@ export default function FindBuyersPanel({
   sheetsConnected = false,
   onGoConnect,
 }: Props) {
-  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState('');
+  const [location, setLocation] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [lastFound, setLastFound] = useState<number | null>(null);
@@ -78,6 +102,8 @@ export default function FindBuyersPanel({
   const [serverProgress, setServerProgress] = useState(0);
   const [recentHunts, setRecentHunts] = useState<RecentHunt[]>([]);
 
+  const query = useMemo(() => composeHuntPrompt(category, location), [category, location]);
+
   const loadRecentHunts = async () => {
     try {
       const resp = await apiFetch('/api/discovery/jobs?limit=8');
@@ -85,7 +111,7 @@ export default function FindBuyersPanel({
       const rows = (await resp.json()) as RecentHunt[];
       setRecentHunts(Array.isArray(rows) ? rows : []);
     } catch {
-      /* ignore — history is optional */
+      /* ignore */
     }
   };
 
@@ -93,29 +119,47 @@ export default function FindBuyersPanel({
     void loadRecentHunts();
   }, []);
 
+  // Prefill location from ICP / markets when empty
+  useEffect(() => {
+    if (location.trim()) return;
+    const fromIcp = (icp.targetCountries || []).filter(Boolean)[0];
+    const fromBiz = (businessInfo.targetMarkets || []).filter(Boolean)[0];
+    const hint = fromIcp || fromBiz || '';
+    if (hint) setLocation(hint);
+    // only on mount / company change — intentional
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [businessInfo.id]);
+
   const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
-  const placeHint = useMemo(() => {
-    const fromIcp = (icp.targetCountries || []).filter(Boolean);
-    const fromBiz = (businessInfo.targetMarkets || []).filter(Boolean);
-    return [...fromIcp, ...fromBiz][0] || '';
-  }, [icp.targetCountries, businessInfo.targetMarkets]);
+  const placeHint = location.trim() || (icp.targetCountries || [])[0] || '';
 
   const context = useMemo(
     () =>
       [
-        query,
+        category,
+        location,
         businessInfo.description,
         ...(businessInfo.primaryCategories ?? []),
         ...(icp.targetBuyerTypes ?? []),
         ...(icp.targetCountries ?? []),
         ...catalogCats,
       ].join(' '),
-    [query, businessInfo, icp, catalogCats],
+    [category, location, businessInfo, icp, catalogCats],
   );
-  const suggestions = useMemo(
-    () => suggestionsForField('discover', context, catalogCats).slice(0, 3),
+  const categorySuggestions = useMemo(
+    () => suggestionsForField('discover', context, catalogCats).slice(0, 4),
     [context, catalogCats],
   );
+  const locationSuggestions = useMemo(() => {
+    const fromIcp = (icp.targetCountries || []).filter(Boolean);
+    const fromBiz = (businessInfo.targetMarkets || []).filter(Boolean);
+    const typed = location.trim().toLowerCase();
+    const pool = Array.from(
+      new Set([...fromIcp, ...fromBiz, ...MARKET_SUGGESTIONS, ...COUNTRY_LIST.slice(0, 40)]),
+    );
+    if (!typed) return pool.slice(0, 6);
+    return pool.filter(p => p.toLowerCase().includes(typed)).slice(0, 6);
+  }, [icp.targetCountries, businessInfo.targetMarkets, location]);
 
   const hasBrief =
     Boolean(businessInfo.description?.trim()) ||
@@ -124,7 +168,7 @@ export default function FindBuyersPanel({
     (businessInfo.primaryCategories || []).length > 0 ||
     (icp.targetBuyerTypes || []).length > 0;
 
-  const ready = Boolean(query.trim()) || hasBrief;
+  const ready = Boolean(category.trim()) || Boolean(location.trim()) || hasBrief;
   const canHunt = ready;
   const phases = useMemo(() => buildPhases(query, placeHint), [query, placeHint]);
 
@@ -155,7 +199,6 @@ export default function FindBuyersPanel({
     return `Still working · ${elapsedSec}s — large markets take longer`;
   }, [isRunning, elapsedSec]);
 
-  // Prefer server progress when available; else soft elapsed climb.
   const progressPct = useMemo(() => {
     if (!isRunning) return 0;
     if (serverProgress > 0) return Math.min(99, serverProgress);
@@ -166,9 +209,15 @@ export default function FindBuyersPanel({
     return Math.min(94, 89 + Math.floor((t - 90) / 15));
   }, [isRunning, elapsedSec, serverProgress]);
 
+  const applyPrompt = (prompt: string) => {
+    const parts = splitHuntPrompt(prompt);
+    setCategory(parts.category);
+    if (parts.location) setLocation(parts.location);
+  };
+
   const runHunt = async (promptOverride?: string) => {
     const huntQuery = (promptOverride ?? query).trim();
-    if (promptOverride !== undefined) setQuery(promptOverride);
+    if (promptOverride !== undefined) applyPrompt(promptOverride);
     if ((!huntQuery && !hasBrief) || isRunning) return;
     setShowSheetsPrompt(false);
     setIsRunning(true);
@@ -242,7 +291,7 @@ export default function FindBuyersPanel({
             } — filter Strong vs Average on Leads.${sheetsNote}`
           : skipped
             ? `All matches were already in your list (${skipped}). Try a different hunt.`
-            : 'No accounts this round — try a clearer product, buyer type, or place.',
+            : 'No accounts this round — try a clearer category or location.',
       );
       onComplete?.(foundCount);
       void loadRecentHunts();
@@ -269,7 +318,7 @@ export default function FindBuyersPanel({
     if (isRunning) return;
     const prompt = (hunt.requestPayload?.user_prompt || hunt.userPrompt || '').trim();
     if (!prompt && !hasBrief) return;
-    setQuery(prompt);
+    applyPrompt(prompt);
     if (!sheetsConnected && !skipSheetsPrompt) {
       setShowSheetsPrompt(true);
       return;
@@ -282,28 +331,22 @@ export default function FindBuyersPanel({
     try {
       sessionStorage.setItem(SKIP_SHEETS_PROMPT_KEY, '1');
     } catch {
-      // ignore
+      /* ignore */
     }
+    setShowSheetsPrompt(false);
     void runHunt();
   };
 
   return (
-    <div className={`find-buyers find-buyers--primary page-shell ${compact ? 'find-buyers--compact' : ''}`}>
+    <div className={`find-buyers${compact ? ' find-buyers--compact' : ' find-buyers--primary'}`}>
       {!compact && <PageAmbient variant="leads" tone="whisper" />}
       {isRunning && (
         <div className="find-buyers__overlay" role="status" aria-live="polite">
-          <p className="find-buyers__overlay-title">Finding buyers</p>
-          <p className="find-buyers__overlay-phase inline-flex items-center gap-2">
-            <Loader2 className="w-4 h-4 animate-spin shrink-0 text-[var(--cta)]" strokeWidth={1.75} />
-            {serverPhase || phases[phaseIndex]}
-          </p>
+          <Loader2 className="w-5 h-5 animate-spin text-[var(--cta)]" />
+          <p className="find-buyers__overlay-title">Hunting buyers</p>
+          <p className="find-buyers__overlay-phase">{serverPhase || phases[phaseIndex]}</p>
           <div className="find-buyers__overlay-track" aria-hidden="true">
-            <div
-              className="find-buyers__overlay-fill"
-              style={{
-                width: `${progressPct}%`,
-              }}
-            />
+            <div className="find-buyers__overlay-fill" style={{ width: `${progressPct}%` }} />
           </div>
           <p className="find-buyers__overlay-eta">{progressLabel}</p>
         </div>
@@ -337,25 +380,25 @@ export default function FindBuyersPanel({
               Recommended: connect Google Sheets
             </h2>
             <p className="sheets-prompt__lede">
-              You can hunt now — leads always save in NexivoReach. Sheets makes the experience better:
+              You can hunt now — leads always save in NexivoReach. Sheets makes the experience better.
             </p>
             <ul className="sheets-prompt__perks">
               <li>
                 <Check className="w-3.5 h-3.5" strokeWidth={2.25} aria-hidden />
                 <span>
-                  <strong>Spreadsheet backup</strong> you can open in Google Sheets anytime
+                  <strong>Spreadsheet backup</strong> you can open anytime
                 </span>
               </li>
               <li>
                 <Check className="w-3.5 h-3.5" strokeWidth={2.25} aria-hidden />
                 <span>
-                  <strong>Share leads</strong> with teammates who live in spreadsheets
+                  <strong>Share leads</strong> with teammates
                 </span>
               </li>
               <li>
                 <Check className="w-3.5 h-3.5" strokeWidth={2.25} aria-hidden />
                 <span>
-                  <strong>Auto-sync</strong> after each hunt and when stages change
+                  <strong>Auto-sync</strong> after each hunt
                 </span>
               </li>
             </ul>
@@ -382,23 +425,13 @@ export default function FindBuyersPanel({
 
       {!compact && (
         <div className="find-buyers__head">
-          <h3 className="find-buyers__title">Find buyers</h3>
+          <h3 className="find-buyers__title">Find buyers in your market</h3>
           <p className="find-buyers__desc">
-            Product, buyer type, and place. Results go to Leads.
+            Enter a buyer category and location. We match country strictly — using the website,
+            social links, and phone country codes when the address is unclear.
           </p>
         </div>
       )}
-
-      <div className="hunt-howto" aria-label="Hunt writing tips">
-        <p className="hunt-howto__lede">
-          One hunt at a time. Run again for another market.
-        </p>
-        <p className="hunt-howto__examples">
-          e.g. <em>belt importers in Nevada</em>
-          {' · '}
-          <em>hoodie wholesalers in Texas</em>
-        </p>
-      </div>
 
       {!sheetsConnected && (
         <div className="sheets-recommend" role="status">
@@ -407,8 +440,7 @@ export default function FindBuyersPanel({
             <p className="sheets-recommend__title">Sheets recommended</p>
           </div>
           <p className="sheets-recommend__body">
-            Leads save in the app either way. Connect Google Sheets for a spreadsheet backup and
-            easier sharing.
+            Leads save in the app either way. Connect Google Sheets for a spreadsheet backup.
           </p>
           {onGoConnect && (
             <button type="button" className="linkish sheets-recommend__link" onClick={onGoConnect}>
@@ -420,33 +452,94 @@ export default function FindBuyersPanel({
 
       {!ready && (
         <p className="ui-banner ui-banner--warn" role="status">
-          Type a hunt below, or add a company brief first.
+          Enter a category and location, or add a company brief first.
         </p>
       )}
 
-      <PredictiveField
-        label="What are you looking for?"
-        hint="One product · one buyer · one place"
-        value={query}
-        onChange={setQuery}
-        suggestions={suggestions}
-        placeholder="e.g. belt importers in Nevada"
-        single
-        hideSuggestionsWhenFilled
-        aiContext={{
-          field: 'discover',
-          description: businessInfo.description,
-          catalogCategories: catalogCats.length ? catalogCats : businessInfo.primaryCategories,
-        }}
-      />
+      <div className="hunt-search-bar" role="search">
+        <label className="hunt-search-bar__field hunt-search-bar__field--category">
+          <span className="sr-only">Business category</span>
+          <input
+            type="text"
+            value={category}
+            onChange={e => setCategory(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && canHunt && !isRunning) handleRunClick();
+            }}
+            placeholder="Business category… (e.g. belt importers)"
+            list="hunt-category-suggestions"
+            disabled={isRunning}
+            autoComplete="off"
+          />
+          <datalist id="hunt-category-suggestions">
+            {categorySuggestions.map(s => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
+        </label>
+        <label className="hunt-search-bar__field hunt-search-bar__field--location">
+          <span className="sr-only">Location</span>
+          <MapPin className="hunt-search-bar__pin" aria-hidden strokeWidth={1.75} />
+          <input
+            type="text"
+            value={location}
+            onChange={e => setLocation(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && canHunt && !isRunning) handleRunClick();
+            }}
+            placeholder="City, state, or country (e.g. Nevada, UAE)"
+            list="hunt-location-suggestions"
+            disabled={isRunning}
+            autoComplete="off"
+          />
+          <datalist id="hunt-location-suggestions">
+            {locationSuggestions.map(s => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
+        </label>
+        <button
+          type="button"
+          className="btn btn-primary hunt-search-bar__cta"
+          onClick={handleRunClick}
+          disabled={isRunning || !canHunt}
+        >
+          {isRunning ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Search className="w-4 h-4" strokeWidth={2.25} />
+          )}
+          {isRunning ? 'Searching…' : 'Find buyers'}
+        </button>
+      </div>
+
+      {categorySuggestions.length > 0 && !category.trim() && !isRunning && (
+        <div className="hunt-search-bar__chips" aria-label="Suggested categories">
+          {categorySuggestions.map(s => (
+            <button
+              key={s}
+              type="button"
+              className="hunt-search-bar__chip"
+              onClick={() => {
+                const parts = splitHuntPrompt(s);
+                setCategory(parts.category || s);
+                if (parts.location) setLocation(parts.location);
+              }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
 
       {recentHunts.length > 0 && !isRunning && (
         <div className="saved-hunts">
           <p className="saved-hunts__label">Recent hunts</p>
           <ul className="saved-hunts__list">
             {recentHunts.slice(0, 5).map(hunt => {
-              const prompt = (hunt.requestPayload?.user_prompt || hunt.userPrompt || '').trim()
-                || '(brief-only hunt)';
+              const prompt =
+                (hunt.requestPayload?.user_prompt || hunt.userPrompt || '').trim() ||
+                '(brief-only hunt)';
               const when = (hunt.createdAt || '').slice(0, 10);
               const count = typeof hunt.foundCount === 'number' ? hunt.foundCount : null;
               return (
@@ -455,7 +548,7 @@ export default function FindBuyersPanel({
                     type="button"
                     className="saved-hunts__item"
                     disabled={isRunning}
-                    onClick={() => setQuery(prompt === '(brief-only hunt)' ? '' : prompt)}
+                    onClick={() => applyPrompt(prompt === '(brief-only hunt)' ? '' : prompt)}
                     title="Load into search"
                   >
                     <span className="saved-hunts__prompt">{prompt}</span>
@@ -482,25 +575,19 @@ export default function FindBuyersPanel({
         </div>
       )}
 
-      <div className="find-buyers__actions">
+      <div className="find-buyers__actions find-buyers__actions--status-only">
         <div className="find-buyers__status-block" aria-live="polite">
           {!isRunning && (
             <p className="find-buyers__status">
               {statusText ||
                 (lastFound !== null
                   ? `Last run added ${lastFound} lead${lastFound === 1 ? '' : 's'}.`
-                  : 'Usually under a minute for ~20–40 leads.')}
+                  : location.trim()
+                    ? `Country must match ${location.trim()} — checked via site, socials, and phone codes.`
+                    : 'Usually under a minute for ~20–40 leads.')}
             </p>
           )}
         </div>
-        <button
-          type="button"
-          onClick={handleRunClick}
-          disabled={isRunning || !canHunt}
-          className="btn btn-primary find-buyers__cta"
-        >
-          {isRunning ? 'Searching…' : 'Find buyers'}
-        </button>
       </div>
     </div>
   );
