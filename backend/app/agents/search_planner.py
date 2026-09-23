@@ -351,11 +351,12 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
     detail_lines = extract_hunt_detail_lines(prompt) if prompt else []
 
     if prompt and detail_lines:
-        # Primary path: each hunt-description line is an exact SERP query (+ location).
+        # Primary path: each hunt-description line is its own SERP query with location.
+        # e.g. "weightlifting straps distributors" + NYC → "weightlifting straps distributors in New York"
         for line in detail_lines:
             qn = line
             if place and place.lower() not in line.lower():
-                qn = f"{line} {place}"
+                qn = f"{line} in {place}"
             qn = re.sub(r"\s+", " ", qn).strip()
             if qn and not any(x.query.lower() == qn.lower() for x in queries):
                 queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
@@ -364,7 +365,7 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
             for line in detail_lines[:12]:
                 if extra_place.lower() in line.lower():
                     continue
-                qn = f"{line} {extra_place}"
+                qn = f"{line} in {extra_place}"
                 if not any(x.query.lower() == qn.lower() for x in queries):
                     queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
         # Skip broad catalog paraphrases — they pull gym-machinery noise for accessory hunts.
