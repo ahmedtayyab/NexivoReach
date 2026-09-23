@@ -1501,6 +1501,11 @@ input:focus, textarea:focus, select:focus {
 .ws-find__secondary-hint {
   color: var(--text-muted);
 }
+.ws-find__templates {
+  margin-top: 1.25rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--border-subtle);
+}
 .setup-desk__back {
   display: inline-block;
   margin: 0 0 0.35rem;

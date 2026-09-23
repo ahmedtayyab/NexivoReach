@@ -102,7 +102,7 @@ export default function SettingsView({
   const blurb: Record<SettingsSection, string> = {
     company: 'Name and website are enough.',
     integrations: 'Needed for Gmail and Sheets.',
-    catalog: 'Optional — products + outreach templates.',
+    catalog: 'Optional — products you sell.',
     icp: 'Pick a market, then hunt.',
   };
 
@@ -214,7 +214,22 @@ export default function SettingsView({
             <button type="button" className="linkish" onClick={() => onSectionChange('catalog')}>
               Product catalog
             </button>
+            <span aria-hidden="true"> · </span>
+            <a className="linkish" href="#outreach-templates">
+              Outreach templates
+            </a>
           </p>
+          {onSaveOutreachTemplates && (
+            <div id="outreach-templates" className="ws-find__templates">
+              <OutreachTemplatesSection
+                key={`${businessInfo.id || 'biz'}-hunt-${outreachTemplates.length}-${outreachMode}`}
+                templates={outreachTemplates}
+                outreachMode={outreachMode}
+                products={products}
+                onSave={onSaveOutreachTemplates}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -233,28 +248,17 @@ export default function SettingsView({
           />
         )}
         {section === 'catalog' && (
-          <>
-            <CatalogSection
-              products={products}
-              sheetsConnected={sheetsConnected}
-              continueLabel={nextLabel || 'Continue'}
-              onGoConnect={() => onSectionChange('integrations')}
-              onContinue={() => advanceAfter('catalog', true)}
-              onSave={nextProducts => {
-                onSaveProducts(nextProducts);
-              }}
-              companyWebsite={businessInfo.website}
-            />
-            {onSaveOutreachTemplates && (
-              <OutreachTemplatesSection
-                key={`${businessInfo.id || 'biz'}-${outreachTemplates.length}-${outreachMode}`}
-                templates={outreachTemplates}
-                outreachMode={outreachMode}
-                products={products}
-                onSave={onSaveOutreachTemplates}
-              />
-            )}
-          </>
+          <CatalogSection
+            products={products}
+            sheetsConnected={sheetsConnected}
+            continueLabel={nextLabel || 'Continue'}
+            onGoConnect={() => onSectionChange('integrations')}
+            onContinue={() => advanceAfter('catalog', true)}
+            onSave={nextProducts => {
+              onSaveProducts(nextProducts);
+            }}
+            companyWebsite={businessInfo.website}
+          />
         )}
         {section === 'integrations' && (
           <>

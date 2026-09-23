@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { OutreachMode, OutreachTemplate, Product } from '../../types';
 import { Plus, Trash2 } from 'lucide-react';
-import { categoriesFromProducts } from '../../data/taxonomy';
+import { categoriesFromProducts, allProductCategories } from '../../data/taxonomy';
 
 const PLACEHOLDER_HINT =
   'Use {{company}}, {{seller}}, {{product}}, {{location}}, {{industry}}, {{website}}, {{specialize}}';
@@ -51,9 +51,9 @@ export default function OutreachTemplatesSection({
   const categoryOptions = useMemo(() => {
     const fromCatalog = categoriesFromProducts(products);
     const fromTemplates = rows.map(r => r.category).filter(Boolean);
-    return Array.from(new Set([...fromCatalog, ...fromTemplates])).sort((a, b) =>
-      a.localeCompare(b),
-    );
+    return Array.from(
+      new Set([...fromCatalog, ...fromTemplates, ...allProductCategories()]),
+    ).sort((a, b) => a.localeCompare(b));
   }, [products, rows]);
 
   const updateRow = (id: string, patch: Partial<OutreachTemplate>) => {
