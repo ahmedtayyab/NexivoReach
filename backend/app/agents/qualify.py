@@ -395,8 +395,17 @@ def _offer_fit(
     ev = []
     if not site_text:
         return "unknown", ev
-    # Prefer category tokens over long SKU names full of noise words.
-    cats = [c for c in profile.categories if c]
+    # Prefer concrete product / hunt keywords over broad category labels (e.g. "fitness").
+    cats = [c for c in profile.categories if c and len(str(c).split()) >= 1]
+    # Broad single-word categories are weak alone (fitness, gym, sports…)
+    weak_broad = {
+        "fitness", "gym", "sports", "sport", "equipment", "gear", "apparel",
+        "wholesale", "training", "bodybuilding", "martial", "combat",
+    }
+    specific_cats = [
+        c for c in cats
+        if len(str(c).split()) >= 2 or str(c).lower() not in weak_broad
+    ]
     product_tokens: List[str] = []
     for p in (products or [])[:20]:
         for part in (p.get("name"), p.get("category")):
@@ -406,26 +415,43 @@ def _offer_fit(
                 t = tok.lower()
                 if len(t) >= 4 and t not in {
                     "with", "from", "that", "this", "padded", "training", "quick", "kind",
+                    *weak_broad,
                 }:
                     product_tokens.append(t)
+    # Profile categories from hunt lines (e.g. "weightlifting straps") → tokens
+    for c in specific_cats:
+        for tok in re.split(r"[^a-zA-Z0-9]+", str(c)):
+            t = tok.lower()
+            if len(t) >= 4 and t not in weak_broad:
+                product_tokens.append(t)
     blob = (text or "").lower()
-    cat_hits = _token_hits(cats, text)
+    cat_hits = _token_hits(specific_cats, text)
     unique_tokens = sorted(set(product_tokens), key=len, reverse=True)
     token_hits = [t for t in unique_tokens[:40] if re.search(rf"\b{re.escape(t)}\b", blob)]
-    strong = len(cat_hits) + (1 if len(token_hits) >= 3 else 0) + (1 if len(token_hits) >= 6 else 0)
+    # Multi-word hunt phrases present on the page are strong signal
+    phrase_hits = [
+        c for c in specific_cats
+        if len(str(c).split()) >= 2 and str(c).lower() in blob
+    ]
+    strong = (
+        len(phrase_hits)
+        + (1 if len(token_hits) >= 2 else 0)
+        + (1 if len(token_hits) >= 4 else 0)
+        + (1 if cat_hits and len(token_hits) >= 1 else 0)
+    )
 
-    if strong >= 2 or (cat_hits and len(token_hits) >= 2):
-        label = ", ".join((cat_hits + token_hits)[:4])
-        ev.append(_evidence("offer", f"Site text overlaps catalog terms: {label}.", _excerpt(text, re.escape(cat_hits[0] if cat_hits else token_hits[0])), url, source_type, 0.65))
+    if phrase_hits or strong >= 2:
+        label = ", ".join((phrase_hits + cat_hits + token_hits)[:4])
+        seed = phrase_hits[0] if phrase_hits else (cat_hits[0] if cat_hits else token_hits[0])
+        ev.append(_evidence("offer", f"Site text overlaps hunt/product terms: {label}.", _excerpt(text, re.escape(str(seed).split()[0])), url, source_type, 0.7))
         return "high", ev
     if cat_hits or len(token_hits) >= 2:
         label = cat_hits[0] if cat_hits else token_hits[0]
-        ev.append(_evidence("offer", f"Partial catalog overlap ({label}); not proof they buy this SKU.", _excerpt(text, re.escape(label)), url, source_type, 0.45))
+        ev.append(_evidence("offer", f"Partial product overlap ({label}); not proof they buy this SKU.", _excerpt(text, re.escape(label)), url, source_type, 0.45))
         return "medium", ev
     if token_hits:
-        ev.append(_evidence("offer", f"Weak catalog token overlap ({token_hits[0]}).", token_hits[0], url, source_type, 0.3))
+        ev.append(_evidence("offer", f"Weak product token overlap ({token_hits[0]}).", token_hits[0], url, source_type, 0.3))
         return "low", ev
-    # No catalog tokens is unknown — not proof of a bad offer fit.
     return "unknown", ev
 
 

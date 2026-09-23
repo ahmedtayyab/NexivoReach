@@ -63,10 +63,9 @@ export function isCompanySetupComplete(business: BusinessInfo): boolean {
   return description.length >= 24;
 }
 
-/** Catalog tab: at least one product, or categories already set on the company. */
-export function isCatalogSetupComplete(products: Product[], business: BusinessInfo): boolean {
-  if ((products || []).length > 0) return true;
-  return (business.primaryCategories || []).some(c => (c || '').trim());
+/** Catalog tab: at least one product. */
+export function isCatalogSetupComplete(products: Product[], _business: BusinessInfo): boolean {
+  return (products || []).length > 0;
 }
 
 /** Buyers tab: at least one buyer type (optional now — hunt text can carry this). */

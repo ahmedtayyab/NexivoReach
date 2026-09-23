@@ -49,6 +49,7 @@ PRODUCT_HEADERS = [
 
 LEAD_HEADERS = [
     "Seller Company", "Lead Name", "Website", "Email", "Phone", "Location",
+    "City", "Country",
     "Industry", "Source", "Status", "Contact again", "Next action", "Fit Score", "Intent",
     "Why this", "Why now", "Reply note", "Discovered", "Last Updated",
 ]
@@ -94,11 +95,11 @@ def _apply_lead_status_row_colors(ws) -> int:
     try:
         status_idx = headers.index("status")
     except ValueError:
-        status_idx = 8
+        status_idx = 10
     try:
         reply_idx = headers.index("reply note")
     except ValueError:
-        reply_idx = 15
+        reply_idx = 17
 
     requests = []
     sheet_id = ws.id
@@ -478,12 +479,40 @@ def _get_or_create_sheet(spreadsheet, title: str, headers: list[str]):
     except Exception:
         ws = spreadsheet.add_worksheet(title=title, rows=1000, cols=len(headers))
 
-    # Ensure header row
+    # Ensure header row — update in place; never wipe data when columns are added.
     existing = ws.row_values(1)
     if existing != headers:
-        ws.clear()
-        ws.append_row(headers, value_input_option="USER_ENTERED")
+        try:
+            if ws.col_count < len(headers):
+                ws.resize(rows=max(ws.row_count, 1000), cols=len(headers))
+        except Exception:
+            pass
+        if not existing or (len(existing) == 1 and not (existing[0] or "").strip()):
+            ws.append_row(headers, value_input_option="USER_ENTERED")
+        else:
+            ws.update("A1", [headers], value_input_option="USER_ENTERED")
     return ws
+
+
+def _col_letter(n: int) -> str:
+    """1-based column index → A, B, … Z, AA, …"""
+    s = ""
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def _lead_city_country(location: str) -> tuple[str, str]:
+    try:
+        from app.agents.geo import split_city_country
+        return split_city_country(location or "")
+    except Exception:
+        text = (location or "").strip()
+        if "," in text:
+            left, _, right = text.partition(",")
+            return left.strip()[:80], right.strip()[:80]
+        return text[:80], ""
 
 
 def ensure_company_tabs(
@@ -730,13 +759,20 @@ def sync_leads(
         contact_again = p.get("contact_again")
         if contact_again is None:
             contact_again = p.get("contactAgain", True)
+        location = p.get("location") or ""
+        city, country = _lead_city_country(location)
+        # Prefer explicit fields when callers already split them
+        city = (p.get("city") or city or "").strip()
+        country = (p.get("country") or country or "").strip()
         row_data = [
             seller,
             name,
             website,
             p.get("email") or "",
             p.get("phone") or "",
-            p.get("location") or "",
+            location,
+            city,
+            country,
             p.get("industry") or "",
             p.get("source") or "web",
             stage,
@@ -753,8 +789,9 @@ def sync_leads(
         match = index_by_web.get(website.lower()) if website else None
         if not match:
             match = index_by_name.get(name.lower())
+        end_col = _col_letter(len(LEAD_HEADERS))
         if match:
-            updates.append((f"A{match}:R{match}", row_data))
+            updates.append((f"A{match}:{end_col}{match}", row_data))
         else:
             appends.append(row_data)
 
@@ -910,7 +947,11 @@ def fetch_leads_from_tab(
             "companyName": name,
             "website": cell(row, "Website"),
             "phone": cell(row, "Phone"),
-            "location": cell(row, "Location"),
+            "location": cell(row, "Location") or ", ".join(
+                x for x in (cell(row, "City"), cell(row, "Country")) if x
+            ),
+            "city": cell(row, "City"),
+            "country": cell(row, "Country"),
             "industry": cell(row, "Industry"),
             "source": cell(row, "Source") or "web",
             "stage": cell(row, "Status") or "To contact",

@@ -21,7 +21,8 @@ def _specialize_block(lines: Sequence[str]) -> str:
     cleaned = [str(x).strip() for x in (lines or []) if str(x).strip()]
     if not cleaned:
         return ""
-    return "We specialize in:\n" + "\n".join(f"• {line}" for line in cleaned)
+    # Blank line after the intro so bullets stay a real list in plain-text email
+    return "We specialize in:\n\n" + "\n".join(f"• {line}" for line in cleaned)
 
 
 def fill_outreach_template(
@@ -50,6 +51,8 @@ def fill_outreach_template(
     filled_body = repl(body).strip()
     # Drop empty specialize placeholder lines if unused
     filled_body = re.sub(r"\n{3,}", "\n\n", filled_body)
+    filled_body = re.sub(r",{2,}", ",", filled_body)
+    filled_body = re.sub(r"\s+:", ":", filled_body)
     return filled_subject, filled_body
 
 
@@ -125,69 +128,80 @@ def build_lead_signals(
 
 def score_template(template: Dict[str, Any], signals: Dict[str, Any]) -> Tuple[float, str]:
     """
-    Score a template against lead signals.
-    Returns (score, reason). Score < threshold means "do not use".
+    Score a template against lead signals using tags, product keywords, and specialize lines.
+    Category is a weak hint only — never required.
     """
     cat = str(template.get("category") or "").strip()
     tags = [str(t).strip() for t in (template.get("tags") or []) if str(t).strip()]
     name = str(template.get("name") or "").strip()
+    specialize = [
+        str(x).strip()
+        for x in (template.get("specializeLines") or template.get("specialize_lines") or [])
+        if str(x).strip()
+    ]
+    body = str(template.get("body") or "")
     cat_n = _norm(cat)
     tag_norms = [_norm(t) for t in tags]
+    specialize_norms = [_norm(s) for s in specialize]
     lead_cats = [_norm(c) for c in (signals.get("matchedCategories") or [])]
+    top_products = [_norm(p) for p in (signals.get("topProducts") or []) if p]
     blob = signals.get("blob") or ""
     tokens: set[str] = set(signals.get("tokens") or set())
 
     score = 0.0
     reasons: List[str] = []
 
-    # Strong: exact / containment match with catalog-derived category from productFit
-    if cat_n and lead_cats:
-        if cat_n in lead_cats:
-            score += 100
-            reasons.append(f"category matches product fit ({cat})")
-        elif any(cat_n in lc or lc in cat_n for lc in lead_cats if lc):
-            score += 80
-            reasons.append(f"category overlaps product fit ({cat})")
-
-    # Tags / category tokens in lead blob (product names, why, discovery query)
-    cat_tokens = _tokens(cat)
+    # Strong: tags / specialize product phrases in lead products or text
     tag_hits = []
-    for tn in tag_norms:
+    for tn in tag_norms + specialize_norms:
         if len(tn) < 3:
             continue
         if tn in blob or any(tn == tok or tn in tok or tok in tn for tok in tokens):
             tag_hits.append(tn)
+        elif any(tn in tp or tp in tn for tp in top_products if tp):
+            tag_hits.append(tn)
     if tag_hits:
-        score += 18 * min(len(tag_hits), 4)
-        reasons.append(f"tags hit: {', '.join(tag_hits[:4])}")
+        score += 28 * min(len(tag_hits), 5)
+        reasons.append(f"tags/products hit: {', '.join(tag_hits[:4])}")
 
-    # Category word presence in lead text
+    # Soft: category label overlaps product fit (optional)
+    if cat_n and lead_cats:
+        if cat_n in lead_cats:
+            score += 35
+            reasons.append(f"category matches product fit ({cat})")
+        elif any(cat_n in lc or lc in cat_n for lc in lead_cats if lc):
+            score += 20
+            reasons.append(f"category overlaps product fit ({cat})")
+
+    cat_tokens = _tokens(cat)
     cat_token_hits = [t for t in cat_tokens if t in tokens or t in blob]
-    if cat_token_hits and score < 80:
-        score += 12 * min(len(cat_token_hits), 3)
-        reasons.append(f"category words in lead: {', '.join(cat_token_hits[:3])}")
+    if cat_token_hits and score < 60:
+        score += 10 * min(len(cat_token_hits), 3)
+        reasons.append(f"keywords in lead: {', '.join(cat_token_hits[:3])}")
 
-    # Name words (weak)
     name_hits = [t for t in _tokens(name) if t in tokens]
     if name_hits and score < 50:
         score += 5 * min(len(name_hits), 2)
 
-    # Penalty: other lead categories strongly present that conflict
-    # e.g. lead matchedCategories = boxing, template = weightlifting → don't boost
-    if lead_cats and cat_n and cat_n not in lead_cats and not any(
-        cat_n in lc or lc in cat_n for lc in lead_cats
-    ):
-        # If tags also don't hit, kill the score
-        if not tag_hits:
-            score = min(score, 15)
-            reasons.append("blocked: lead product category differs")
+    # Body product nouns (e.g. straps, wraps) vs lead
+    body_tokens = _tokens(re.sub(r"\{\{[^}]+\}\}", " ", body))
+    body_hits = [t for t in body_tokens if len(t) >= 4 and (t in tokens or t in blob)]
+    if body_hits and score < 70:
+        score += 4 * min(len(set(body_hits)), 4)
+
+    # Soft penalty only when tags clearly conflict and nothing hit
+    if lead_cats and cat_n and tag_hits == []:
+        aligned = cat_n in lead_cats or any(cat_n in lc or lc in cat_n for lc in lead_cats)
+        if not aligned and cat_tokens and not any(t in tokens for t in cat_tokens):
+            score = min(score, 25)
+            reasons.append("weak keyword overlap")
 
     reason = "; ".join(reasons) if reasons else "weak match"
     return score, reason
 
 
-# Minimum score to accept a template. Below this → AI fallback (never wrong category).
-MIN_TEMPLATE_SCORE = 40
+# Minimum score to accept a template. Below this → AI fallback (never wrong product).
+MIN_TEMPLATE_SCORE = 35
 
 
 def select_outreach_template(
@@ -197,9 +211,7 @@ def select_outreach_template(
     min_score: float = MIN_TEMPLATE_SCORE,
 ) -> Optional[Dict[str, Any]]:
     """
-    Pick the best template, or None if no safe match.
-    Guarantees: when lead has clear product categories, never return a template
-    whose category conflicts with all of them unless tags strongly hit.
+    Pick the best template by tags / product keywords, or None if no safe match.
     """
     if not templates:
         return None
@@ -216,28 +228,6 @@ def select_outreach_template(
 
     scored.sort(key=lambda x: x[0], reverse=True)
     best_score, best_reason, best = scored[0]
-
-    lead_cats = [_norm(c) for c in (signals.get("matchedCategories") or [])]
-    best_cat = _norm(str(best.get("category") or ""))
-
-    # Hard guard: if we know the lead's product category, reject mismatched winners
-    if lead_cats and best_cat:
-        aligned = best_cat in lead_cats or any(best_cat in lc or lc in best_cat for lc in lead_cats)
-        if not aligned:
-            # Allow only if tag score alone was very strong AND no competing aligned template
-            aligned_candidates = [
-                x for x in scored
-                if _norm(str(x[2].get("category") or "")) in lead_cats
-                or any(
-                    _norm(str(x[2].get("category") or "")) in lc
-                    or lc in _norm(str(x[2].get("category") or ""))
-                    for lc in lead_cats
-                )
-            ]
-            if aligned_candidates:
-                best_score, best_reason, best = aligned_candidates[0]
-            elif best_score < 70:
-                return None
 
     if best_score < min_score:
         return None

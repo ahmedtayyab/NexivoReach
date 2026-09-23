@@ -161,15 +161,32 @@ def apply_prompt_roles(profile: SellerProfile, user_prompt: str) -> SellerProfil
 
 def apply_prompt_focus(profile: SellerProfile, user_prompt: str) -> SellerProfile:
     """
-    Put product/offer terms from the free-text hunt first so SERP queries follow
-    what the user asked for (e.g. 'fleece hood') instead of a broad catalog category.
+    Hunt description lines / product keywords drive categories — not workspace product categories.
     """
-    from app.agents.geo import extract_offer_terms_from_prompt
+    from app.agents.geo import extract_offer_terms_from_prompt, extract_hunt_detail_lines
 
     terms = extract_offer_terms_from_prompt(user_prompt)
-    if not terms:
+    detail_lines = extract_hunt_detail_lines(user_prompt)
+    if not terms and not detail_lines:
         return profile
-    cats = _uniq([*terms, *profile.categories], 6)
+    # When the user pasted concrete hunt lines, those replace catalog categories entirely.
+    if detail_lines:
+        cats = _uniq([*terms], 10) or _uniq(
+            [
+                re.sub(
+                    r"\s+(distributors?|wholesalers?|importers?|retailers?|buyers?|dealers?)\s*$",
+                    "",
+                    line,
+                    flags=re.I,
+                ).strip()
+                for line in detail_lines
+            ],
+            10,
+        )
+    else:
+        cats = _uniq([*terms, *profile.categories], 8)
+    if not cats:
+        return profile
     return SellerProfile(
         offer_class=profile.offer_class,
         sales_motion=profile.sales_motion,
@@ -322,27 +339,37 @@ def _place(profile: SellerProfile, index: int = 0) -> str:
 
 def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQuery]:
     queries: List[PlannedQuery] = []
-    cat = profile.categories[0]
+    cat = profile.categories[0] if profile.categories else "wholesale"
     cat2 = profile.categories[1] if len(profile.categories) > 1 else cat
     place = _place(profile)
-    buyer = profile.buyers[0]
+    buyer = profile.buyers[0] if profile.buyers else "distributors"
     neg = _neg(profile)
     prompt = (user_prompt or "").strip()
 
-    if prompt:
-        queries.append(PlannedQuery(prompt, "user", "direct_icp", False, 1))
-        from app.agents.geo import extract_hunt_detail_lines
+    from app.agents.geo import extract_hunt_detail_lines
 
-        # Client multi-line description: each product×buyer line becomes a geo-scoped query
-        for line in extract_hunt_detail_lines(prompt):
+    detail_lines = extract_hunt_detail_lines(prompt) if prompt else []
+
+    if prompt and detail_lines:
+        # Primary path: each hunt-description line is an exact SERP query (+ location).
+        for line in detail_lines:
             qn = line
             if place and place.lower() not in line.lower():
                 qn = f"{line} {place}"
             qn = re.sub(r"\s+", " ", qn).strip()
             if qn and not any(x.query.lower() == qn.lower() for x in queries):
                 queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
-
-        # Extra paraphrases anchored on the hunt focus (product + role + place)
+        # Fan out extra places for the same product×buyer lines
+        for extra_place in (profile.places or [])[1:3]:
+            for line in detail_lines[:12]:
+                if extra_place.lower() in line.lower():
+                    continue
+                qn = f"{line} {extra_place}"
+                if not any(x.query.lower() == qn.lower() for x in queries):
+                    queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
+        # Skip broad catalog paraphrases — they pull gym-machinery noise for accessory hunts.
+    elif prompt:
+        queries.append(PlannedQuery(prompt, "user", "direct_icp", False, 1))
         role = (buyer or "buyer").rstrip("s")
         if place:
             add_early = [
@@ -351,32 +378,20 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
                 f'"{cat}" {place} wholesale',
                 f"{cat} distributor {place}",
                 f"{cat} wholesaler {place}",
-                f"{buyer} {cat} {place} directory OR list OR companies",
             ]
             for q in add_early:
                 qn = re.sub(r"\s+", " ", q).strip()
                 if qn and not any(x.query.lower() == qn.lower() for x in queries):
                     queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
-        # Second category from prompt/catalog
         if cat2 and cat2.lower() != cat.lower() and place:
             qn = f"{cat2} {role} {place}"
             if not any(x.query.lower() == qn.lower() for x in queries):
                 queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
-        # Fan out extra places from the prompt (Nevada + Texas, UAE + Germany, …)
         for extra_place in (profile.places or [])[1:3]:
             for c in _uniq([cat, cat2], 2):
                 qn = f"{c} {role} {extra_place}"
                 if qn and not any(x.query.lower() == qn.lower() for x in queries):
                     queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
-                if "import" in (buyer or "").lower():
-                    qn2 = f"{c} importer {extra_place}"
-                    if not any(x.query.lower() == qn2.lower() for x in queries):
-                        queries.append(PlannedQuery(qn2, "user", "direct_icp", False, 1))
-            for line in extract_hunt_detail_lines(prompt)[:6]:
-                qn = f"{line} {extra_place}"
-                if place and extra_place.lower() != place.lower():
-                    if not any(x.query.lower() == qn.lower() for x in queries):
-                        queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
 
     def add(q: str, family: str, pool: str, maps: bool = False) -> None:
         q = re.sub(r"\s+", " ", q).strip()
@@ -385,6 +400,10 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
         if any(x.query.lower() == q.lower() for x in queries):
             return
         queries.append(PlannedQuery(q, family, pool, maps and profile.use_maps, 1))
+
+    # When hunt lines drive the wave, skip pool fan-out that reintroduces broad categories.
+    if detail_lines:
+        return queries[:40]
 
     if profile.pools.get("direct_icp") in ("primary", "sample"):
         add(f"{buyer} {cat} {place} {neg}", "icp_retrieval", "direct_icp")

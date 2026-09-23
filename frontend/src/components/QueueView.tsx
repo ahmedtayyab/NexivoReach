@@ -450,17 +450,33 @@ export default function QueueView({
       <div className="seg mb-4 overflow-x-auto max-w-full nr-enter nr-enter-delay-2" role="group" aria-label="Lead stage">
         <button
           type="button"
-          className={filter === 'All' ? 'is-active' : undefined}
-          onClick={() => setFilter('All')}
+          className={filter === 'All' && cadenceFilter !== 'missing_email' ? 'is-active' : undefined}
+          onClick={() => {
+            setFilter('All');
+            setCadenceFilter('all');
+          }}
         >
           All {stageCounts.All || 0}
+        </button>
+        <button
+          type="button"
+          className={cadenceFilter === 'missing_email' ? 'is-active' : undefined}
+          onClick={() => {
+            setFilter('All');
+            setCadenceFilter('missing_email');
+          }}
+        >
+          No email {outcomes.missingEmail || 0}
         </button>
         {LEAD_STAGES.map(s => (
           <button
             key={s}
             type="button"
-            className={filter === s ? 'is-active' : undefined}
-            onClick={() => setFilter(s)}
+            className={filter === s && cadenceFilter !== 'missing_email' ? 'is-active' : undefined}
+            onClick={() => {
+              setFilter(s);
+              if (cadenceFilter === 'missing_email') setCadenceFilter('all');
+            }}
           >
             {s} {stageCounts[s] || 0}
           </button>

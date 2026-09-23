@@ -491,7 +491,7 @@ export default function ReviewDrawer({
                     )}
                     {draft.draftSource === 'ai_fallback' && (
                       <p className="font-medium text-ink-secondary">
-                        AI fallback — no safe template match for this lead’s category
+                        AI fallback — no matching template for this lead’s products/tags
                       </p>
                     )}
                     {draft.outreachRationale?.match_reason && (

@@ -33,6 +33,8 @@ def export_prospects_csv(request: Request, user: AuthUser = Depends(get_current_
         for r in rows:
             front = prospect_to_frontend(r)
             fit = front.get("fitBreakdown") or {}
+            location = front.get("location") or ""
+            city, country = sheets_mod._lead_city_country(location)
             writer.writerow(
                 [
                     "",  # Seller Company filled by Sheets sync; leave blank here
@@ -44,7 +46,9 @@ def export_prospects_csv(request: Request, user: AuthUser = Depends(get_current_
                         to_email=((front.get("outreachDraft") or {}).get("toEmail") or ""),
                     ),
                     front.get("phone") or "",
-                    front.get("location") or "",
+                    location,
+                    city,
+                    country,
                     front.get("industry") or "",
                     front.get("source") or "",
                     front.get("stage") or "",

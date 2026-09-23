@@ -90,9 +90,72 @@ _SIGN_OFF_RE = re.compile(
     r"warm regards|cheers)[,!]?\s*\n+.+)\s*$"
 )
 _GREETING_RE = re.compile(
-    r"(?is)^(hi|hello|dear)\b[^\n]{0,100},?\s*(?:\n+|$)"
+    r"(?is)^(hey|hi|hello|dear|good\s+morning|good\s+afternoon|good\s+evening)"
+    r"\b[^\n]{0,120},?\s*(?:\n+|$)"
+)
+_LIST_LINE_RE = re.compile(r"^\s*(?:[•\-\*\u2022▪●]|\d+[.)])\s+\S")
+_LABEL_LINE_RE = re.compile(
+    r"(?i)^\s*(?:insta(?:gram)?|web(?:site)?|email|e-?mail|tel|phone|mobile|whatsapp|"
+    r"linkedin|twitter|facebook|fax|address|url|www)\s*:"
 )
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'])")
+
+
+def _light_cleanup(text: str) -> str:
+    """Normalize whitespace without rewriting the author's structure."""
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r",{2,}", ",", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\s+:", ":", text)  # "or :" → "or:"
+    return text.strip() + "\n"
+
+
+def _body_is_structured(text: str) -> bool:
+    """True when the body already has scannable paragraphs / lists / contact lines."""
+    paras = [p for p in re.split(r"\n\s*\n", (text or "").strip()) if p.strip()]
+    lines = [ln.strip() for ln in (text or "").split("\n") if ln.strip()]
+    structured = sum(
+        1 for ln in lines if _LIST_LINE_RE.match(ln) or _LABEL_LINE_RE.match(ln)
+    )
+    if structured >= 2:
+        return True
+    # Multiple short paragraphs = intentional layout. A single dense wall still needs reflow.
+    if len(paras) >= 3 and max(len(p) for p in paras) < 320:
+        return True
+    return False
+
+
+def _soft_join_paragraph(paragraph: str) -> str:
+    """Join soft line wraps, but keep lists, contact labels, and short intentional breaks."""
+    raw = (paragraph or "").strip()
+    if not raw:
+        return ""
+    lines = [ln.strip() for ln in raw.split("\n") if ln.strip()]
+    if len(lines) <= 1:
+        return lines[0] if lines else ""
+    if any(_LIST_LINE_RE.match(ln) or _LABEL_LINE_RE.match(ln) for ln in lines):
+        return "\n".join(lines)
+    # "We specialize in:" followed by bullets (bullets may be on later lines already joined)
+    if any(ln.lower().startswith("we specialize in") for ln in lines) and len(lines) > 1:
+        return "\n".join(lines)
+    # Two+ short lines → intentional breaks (contact / CTA blocks), not prose wrap
+    if sum(1 for ln in lines if len(ln) <= 72) >= 2:
+        return "\n".join(lines)
+    # Soft-wrap: join only when a line continues mid-sentence onto the next
+    out: List[str] = [lines[0]]
+    for ln in lines[1:]:
+        prev = out[-1]
+        if (
+            prev
+            and not re.search(r"[.!?:]$", prev)
+            and ln
+            and ln[0].islower()
+        ):
+            out[-1] = f"{prev} {ln}"
+        else:
+            out.append(ln)
+    return "\n".join(out)
 
 
 def format_outreach_body(
@@ -100,10 +163,12 @@ def format_outreach_body(
     *,
     company_name: str = "",
     seller_name: str = "",
+    preserve_structure: bool = False,
 ) -> str:
     """
     Ensure plain-text cold emails have scannable paragraph spacing.
     Models often return greeting + one dense wall + sign-off; split the wall.
+    Well-structured bodies (templates or careful AI) are left intact.
     """
     text = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
@@ -113,19 +178,32 @@ def format_outreach_body(
     if "\\n" in text and text.count("\n") < 2:
         text = text.replace("\\n", "\n")
 
+    # Templates + already-structured AI drafts: light cleanup only
+    if preserve_structure or _body_is_structured(text):
+        return _light_cleanup(text)
+
     greeting = ""
     sign_off = ""
     mid = text
 
     g = _GREETING_RE.match(text)
     if g:
-        greeting = re.sub(r",?\s*$", ",", g.group(0).split("\n")[0].strip())
+        greeting = g.group(0).split("\n")[0].strip()
+        greeting = re.sub(r",+\s*$", ",", greeting)
+        if not greeting.endswith(","):
+            greeting = greeting.rstrip(",.!") + ","
         # Prefer "Hi Company team," over bare "Hello," when we know the company
         if re.match(r"(?i)^hello,?$", greeting.rstrip(",")) and company_name:
             greeting = f"Hi {company_name.strip()} team,"
         mid = text[g.end():].strip()
     elif company_name:
-        greeting = f"Hi {company_name.strip()} team,"
+        # Only inject a greeting when the body has none (AI walls without salutation)
+        first = text.split("\n", 1)[0].strip()
+        if not re.match(
+            r"(?i)^(hey|hi|hello|dear|good\s+morning|good\s+afternoon|good\s+evening)\b",
+            first,
+        ):
+            greeting = f"Hi {company_name.strip()} team,"
 
     sm = _SIGN_OFF_RE.match(mid)
     if sm:
@@ -140,26 +218,43 @@ def format_outreach_body(
                 closer = lines[0].rstrip(",!")
             name = lines[1] if len(lines) > 1 else (seller_name or "")
             sign_off = f"{closer},\n{name}".strip() if name else f"{closer},"
-    elif seller_name:
+    elif seller_name and not re.search(
+        r"(?im)^(best(?:\s+regards)?|regards|thanks|thank you)\b", mid
+    ):
         sign_off = f"Best regards,\n{seller_name}"
 
     mid = re.sub(r"[ \t]+", " ", mid)
     mid = re.sub(r"\n{3,}", "\n\n", mid).strip()
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", mid) if p.strip()]
-    # Single newlines inside a "paragraph" → treat as soft wraps, join
-    paragraphs = [re.sub(r"\s*\n\s*", " ", p).strip() for p in paragraphs]
+    paragraphs = [_soft_join_paragraph(p) for p in paragraphs]
 
     needs_reflow = (
         len(paragraphs) <= 1
         or (len(paragraphs) == 2 and sum(len(p) for p in paragraphs) > 420)
-        or any(len(p) > 380 for p in paragraphs)
+        or any(
+            len(p) > 380
+            and not any(_LIST_LINE_RE.match(ln) or _LABEL_LINE_RE.match(ln) for ln in p.split("\n"))
+            for p in paragraphs
+        )
     )
     if needs_reflow:
-        flat = " ".join(paragraphs)
-        sentences = [s.strip() for s in _SENTENCE_RE.split(flat) if s.strip()]
-        if len(sentences) <= 1 and flat:
-            sentences = [flat]
-        paragraphs = _group_sentences_into_paragraphs(sentences)
+        # Don't reflow specialize / bullet / contact blocks into a single line
+        flat_parts: List[str] = []
+        list_parts: List[str] = []
+        for p in paragraphs:
+            if (
+                any(_LIST_LINE_RE.match(ln) or _LABEL_LINE_RE.match(ln) for ln in p.split("\n"))
+                or p.lower().startswith("we specialize in")
+            ):
+                list_parts.append(p)
+            else:
+                flat_parts.append(p)
+        if flat_parts:
+            flat = " ".join(flat_parts)
+            sentences = [s.strip() for s in _SENTENCE_RE.split(flat) if s.strip()]
+            if len(sentences) <= 1 and flat:
+                sentences = [flat]
+            paragraphs = _group_sentences_into_paragraphs(sentences) + list_parts
 
     parts: List[str] = []
     if greeting:
@@ -167,7 +262,8 @@ def format_outreach_body(
     parts.extend(paragraphs)
     if sign_off:
         parts.append(sign_off)
-    return "\n\n".join(p for p in parts if p).strip() + "\n"
+    out = "\n\n".join(p for p in parts if p).strip()
+    return _light_cleanup(out)
 
 
 def sanitize_subject(subject: str, *, first_touch: bool = True) -> str:
@@ -205,12 +301,14 @@ def sanitize_outreach_body(
     company_name: str = "",
     seller_name: str = "",
     first_touch: bool = True,
+    preserve_structure: bool = False,
 ) -> str:
     """Reduce spam-filter risk while keeping the message readable and useful."""
     text = format_outreach_body(
         body,
         company_name=company_name,
         seller_name=seller_name,
+        preserve_structure=preserve_structure,
     )
     # Soften spammy phrases without gutting the email
     replacements = (
@@ -262,6 +360,7 @@ def sanitize_outreach_body(
         text.strip(),
         company_name=company_name,
         seller_name=seller_name,
+        preserve_structure=preserve_structure,
     )
 
 
@@ -271,6 +370,7 @@ def sanitize_outreach_draft(
     company_name: str = "",
     seller_name: str = "",
     first_touch: bool = True,
+    preserve_structure: bool = False,
 ) -> Dict[str, Any]:
     """Apply subject + body deliverability cleanup to a draft dict."""
     out = dict(draft or {})
@@ -282,6 +382,7 @@ def sanitize_outreach_draft(
         company_name=company,
         seller_name=seller,
         first_touch=first_touch,
+        preserve_structure=preserve_structure,
     )
     cands = out.get("subjectCandidates")
     if isinstance(cands, list):

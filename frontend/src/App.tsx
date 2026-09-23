@@ -1018,6 +1018,7 @@ export default function App() {
             onGoWorkspace={() => navigate(preferredWorkspaceRoute(businessInfo))}
             onGoConnect={() => navigate('integrations')}
             templateCount={outreachTemplates.length}
+            templates={outreachTemplates}
             onGoTemplates={() => {
               templatesReturnRef.current = 'outreach';
               navigate('templates');
@@ -1034,7 +1035,7 @@ export default function App() {
                 'info',
                 mode === 'templates' ? 'Custom email templates active' : 'AI drafts active',
                 mode === 'templates'
-                  ? 'Prepare will match leads to your category templates.'
+                  ? 'Prepare will match leads by product tags and keywords.'
                   : 'Prepare will write a fresh AI email per lead.',
               );
             }}

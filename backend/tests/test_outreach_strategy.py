@@ -92,6 +92,84 @@ def test_format_outreach_body_breaks_wall_of_text():
     assert len(mid) >= 3
 
 
+def test_format_preserves_hey_greeting_and_bullet_list():
+    """Templates that start with Hey must not get a second Hi…team greeting;
+    specialize bullets must stay on separate lines."""
+    raw = (
+        "Hey Texas Forge Taekwondo,\n\n"
+        "I hope you are fine. I came across your business and wanted to introduce you to Alwasi.\n\n"
+        "We specialize in:\n"
+        "• Boxing gloves\n"
+        "• MMA gloves\n"
+        "• Hand Wraps\n\n"
+        "Looking forward to hearing from you.\n"
+        "Best regards,\n"
+        "Alwasi Enterprises"
+    )
+    out = format_outreach_body(
+        raw,
+        company_name="Texas Forge Taekwondo",
+        seller_name="Alwasi Enterprises",
+    )
+    assert out.startswith("Hey Texas Forge Taekwondo,")
+    assert "Hi Texas Forge Taekwondo team" not in out
+    assert "• Boxing gloves\n• MMA gloves\n• Hand Wraps" in out
+    assert "• Boxing gloves • MMA" not in out
+
+
+def test_format_preserves_contact_lines_for_ai_and_templates():
+    """Insta/Web lines must not be smashed onto one line — same for AI drafts."""
+    raw = (
+        "Hey Acme,\n\n"
+        "I hope you are fine. I came across your business and wanted to introduce you to Alwasi, "
+        "a manufacturer and exporter of premium equipment.\n\n"
+        "We specialize in:\n\n"
+        "• Boxing gloves\n"
+        "• MMA gloves\n\n"
+        "We provide competitive wholesale pricing.\n\n"
+        "You can reach us at the same email or :\n"
+        "Insta: Alwasi Enterprises\n"
+        "web: alwasi-ent\n\n"
+        "Looking forward to hearing from you.\n"
+        "Best regards,\n"
+        "Alwasi Enterprises"
+    )
+    # Without preserve_structure flag — AI path must still keep structure
+    out = format_outreach_body(raw, company_name="Acme", seller_name="Alwasi Enterprises")
+    assert out.startswith("Hey Acme,")
+    assert "Hi Acme team" not in out
+    assert "or:" in out
+    assert "or :" not in out
+    assert "Insta: Alwasi Enterprises\nweb: alwasi-ent" in out or (
+        "Insta: Alwasi Enterprises\nWeb: alwasi-ent" in out
+    )
+    assert "Insta: Alwasi Enterprises web:" not in out
+    assert "• Boxing gloves\n• MMA gloves" in out
+
+
+def test_sanitize_template_preserve_structure():
+    raw = {
+        "subject": "Wholesale Combat Products",
+        "body": (
+            "Hey Acme,\n\n"
+            "We specialize in:\n"
+            "• Gloves\n"
+            "• Wraps\n\n"
+            "Best regards,\nSeller"
+        ),
+    }
+    clean = sanitize_outreach_draft(
+        raw,
+        company_name="Acme",
+        seller_name="Seller",
+        first_touch=True,
+        preserve_structure=True,
+    )
+    assert clean["body"].startswith("Hey Acme,")
+    assert "Hi Acme team" not in clean["body"]
+    assert "• Gloves\n• Wraps" in clean["body"]
+
+
 def test_brief_prefers_expansion_signal_over_weak_copy():
     brief = build_outreach_brief(
         company_name="ABC Fitness",

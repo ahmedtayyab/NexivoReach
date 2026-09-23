@@ -22,6 +22,10 @@ const EMPTY_TEMPLATE = (): OutreachTemplate => ({
     'We provide competitive wholesale pricing, reliable quality, customization options, and worldwide shipping.',
     'I would be pleased to share our product catalog, pricing, and MOQ if you are currently sourcing.',
     '',
+    'You can reach us at the same email, or:',
+    'Insta: {{seller}}',
+    'Web: your-site',
+    '',
     'Looking forward to hearing from you.',
     'Best regards,',
     '{{seller}}',
@@ -257,13 +261,13 @@ export default function OutreachTemplatesSection({
                           />
                         </label>
                         <label className="block">
-                          <span className="field-label">Category (required for matching)</span>
+                          <span className="field-label">Label (optional)</span>
                           <input
                             className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink"
                             list={`tpl-cats-${row.id}`}
                             value={row.category}
                             onChange={e => updateRow(row.id, { category: e.target.value })}
-                            placeholder="Boxing / Martial arts"
+                            placeholder="e.g. Straps & wraps"
                           />
                           <datalist id={`tpl-cats-${row.id}`}>
                             {categoryOptions.map(c => (
@@ -272,7 +276,7 @@ export default function OutreachTemplatesSection({
                           </datalist>
                         </label>
                         <label className="block">
-                          <span className="field-label">Tags (keywords, comma-separated)</span>
+                          <span className="field-label">Products / tags (keywords — used for matching)</span>
                           <input
                             className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink"
                             value={tagsValue(row)}
@@ -291,7 +295,7 @@ export default function OutreachTemplatesSection({
                                 return next;
                               });
                             }}
-                            placeholder="boxing, MMA, gloves, hand wraps"
+                            placeholder="weightlifting straps, wrist wraps, knee sleeves"
                           />
                         </label>
                         <label className="block">

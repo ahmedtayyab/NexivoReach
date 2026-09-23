@@ -460,6 +460,8 @@ def extract_offer_terms_from_prompt(prompt: str) -> List[str]:
         line = raw_line.strip()
         if not line or line.lower().startswith("priority hunt"):
             continue
+        if line.lower().startswith("target location:") or line.lower().startswith("context:"):
+            continue
         # Drop emoji / short section headers like "Fitness / Bodybuilding"
         cleaned = re.sub(r"^[^\w]+", "", line).strip()
         if "/" in cleaned and len(cleaned.split()) <= 4 and not re.search(
@@ -484,9 +486,18 @@ def extract_offer_terms_from_prompt(prompt: str) -> List[str]:
             ).strip()
             stem = re.sub(r"\b(in|near|around|within)\s+.+$", "", stem, flags=re.I).strip()
             if stem:
-                _add(stem)
+                for part in re.split(r"\s+and\s+", stem, flags=re.I):
+                    _add(part.strip())
+
+    # When multi-line hunt description already gave product stems, stop — avoid
+    # turning "Target location / Priority hunt lines" into fake categories.
+    if phrases:
+        return phrases[:10]
 
     low = text.lower()
+    low = re.sub(r"target location\s*:", " ", low)
+    low = re.sub(r"priority hunt lines?[^\n]*", " ", low)
+    low = re.sub(r"context\s*:", " ", low)
 
     # Drop known places (longest first)
     for state in sorted(US_STATE_ALIASES.keys(), key=len, reverse=True):
@@ -525,7 +536,12 @@ def extract_hunt_detail_lines(prompt: str) -> List[str]:
     seen = set()
     for raw in (prompt or "").splitlines():
         line = re.sub(r"^[^\w]+", "", raw.strip()).strip()
-        if not line or line.lower().startswith("priority hunt"):
+        if not line:
+            continue
+        low = line.lower()
+        if low.startswith("priority hunt"):
+            continue
+        if low.startswith("target location:") or low.startswith("context:"):
             continue
         # Skip short section titles
         if len(line.split()) <= 3 and "/" in line:
@@ -538,12 +554,15 @@ def extract_hunt_detail_lines(prompt: str) -> List[str]:
             # Still keep product-ish lines with 2+ words
             if len(line.split()) < 2:
                 continue
+            # Skip meta / instruction lines without a buyer role
+            if re.search(r"\b(location|priority|search each|exactly)\b", low):
+                continue
         key = line.lower()
         if key in seen:
             continue
         seen.add(key)
         out.append(line)
-        if len(out) >= 16:
+        if len(out) >= 24:
             break
     return out
 
@@ -622,3 +641,82 @@ def format_location_display(text: str, prefer_places: Optional[List[str]] = None
             return hub[:80]
 
     return ""
+
+
+def split_city_country(location: str) -> Tuple[str, str]:
+    """
+    Split a display location into (city, country) for Sheets columns.
+    Uses commas when present; maps US states to United States; never invents.
+    """
+    text = (location or "").strip()
+    if not text:
+        return "", ""
+
+    low = text.lower()
+    parts = [p.strip() for p in re.split(r"\s*,\s*", text) if p.strip()]
+
+    # Known US city + state → city, United States
+    for state, aliases in US_STATE_ALIASES.items():
+        state_label = " ".join(w.capitalize() for w in state.split())
+        abbrev = aliases[0] if aliases else ""
+        for city in aliases[1:]:
+            city_label = " ".join(w.capitalize() for w in city.split())
+            if _word_hit(low, city) and (
+                _word_hit(low, state) or (abbrev and _abbrev_hit(low, abbrev))
+            ):
+                return city_label[:80], "United States"
+        # "Boston, Massachusetts" / "Boston, MA" style without city in alias list
+        if len(parts) >= 2:
+            tail = parts[-1].lower()
+            if tail == state or (abbrev and tail == abbrev):
+                city = ", ".join(parts[:-1]).strip()
+                return city[:80], "United States"
+        if len(parts) == 1 and (_word_hit(low, state) or (abbrev and _abbrev_hit(low, abbrev))):
+            # State-only → no city
+            if low.strip() == state or (abbrev and low.strip() == abbrev):
+                return "", "United States"
+
+    # Country alias match — city may be a known hub alias
+    country_shorts = frozenset({
+        "uae", "uk", "usa", "u.s.", "u.s.a.", "ksa", "america", "britain",
+        "holland", "deutschland",
+    })
+    for country, aliases in COUNTRY_ALIASES.items():
+        country_label = " ".join(w.capitalize() for w in country.split())
+        hub_aliases = [
+            a for a in aliases
+            if a != country and a not in country_shorts and " " not in a and len(a) > 2
+        ]
+        for hub in hub_aliases:
+            if not _word_hit(low, hub):
+                continue
+            # Lone hub ("Dubai", "Toronto") → city + country
+            if len(parts) == 1:
+                return hub.title()[:80], country_label
+            if (
+                _word_hit(low, country)
+                or any(_word_hit(low, a) for a in aliases if a in country_shorts or a == country)
+                or len(parts) >= 2
+            ):
+                return hub.title()[:80], country_label
+        if any(_word_hit(low, a) for a in (country, *aliases)):
+            if len(parts) >= 2:
+                tail = parts[-1].lower()
+                if (
+                    tail == country
+                    or tail in aliases
+                    or country in tail
+                    or any(tail == a for a in aliases)
+                ):
+                    city = ", ".join(parts[:-1]).strip()
+                    return city[:80], country_label
+            # Country-only (no hub city in the string)
+            if not any(_word_hit(low, h) for h in hub_aliases):
+                return "", country_label
+
+    # Generic "City, Region/Country"
+    if len(parts) >= 2:
+        return ", ".join(parts[:-1])[:80], parts[-1][:80]
+
+    # Single token — unknown; leave as city, blank country
+    return text[:80], ""

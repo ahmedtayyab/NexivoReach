@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { OutreachMode, Prospect } from '../types';
+import type { OutreachMode, OutreachTemplate, Prospect } from '../types';
 import { ChevronDown, ChevronUp, Loader2, X } from 'lucide-react';
 import { recipientEmail } from '../lib/leadTone';
 import { isDueFollowUp } from '../lib/outcomes';
@@ -33,9 +33,10 @@ interface Props {
   onGoTemplates?: () => void;
   outreachMode?: OutreachMode;
   onOutreachModeChange?: (mode: OutreachMode) => void | Promise<void>;
+  templates?: OutreachTemplate[];
 }
 
-type Filter = 'best_fit' | 'needs_review' | 'follow_up' | 'sent' | 'all';
+type Filter = 'best_fit' | 'needs_review' | 'no_email' | 'follow_up' | 'sent' | 'all';
 
 function isBestFit(p: Prospect): boolean {
   const summary = (p.fitBreakdown?.fitSummary || '').toLowerCase();
@@ -74,6 +75,7 @@ export default function OutreachInboxView({
   onGoTemplates,
   outreachMode = 'ai',
   onOutreachModeChange,
+  templates = [],
 }: Props) {
   const confirm = useConfirm();
   const withDrafts = useMemo(
@@ -89,6 +91,9 @@ export default function OutreachInboxView({
         return (st === 'Draft' || st === 'Approved') && isBestFit(p);
       }
       if (filter === 'needs_review') return st === 'Draft' || st === 'Approved';
+      if (filter === 'no_email') {
+        return (st === 'Draft' || st === 'Approved') && !recipientEmail(p);
+      }
       if (filter === 'follow_up') return isDueFollowUp(p);
       if (filter === 'sent') return st === 'Sent' || st === 'Replied';
       return true;
@@ -138,6 +143,33 @@ export default function OutreachInboxView({
   const toggleSelected = (id: string) => {
     setSelectedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
   };
+
+  const visibleIds = useMemo(() => filtered.map(p => p.id), [filtered]);
+  const withEmailIds = useMemo(
+    () => filtered.filter(p => Boolean(recipientEmail(p))).map(p => p.id),
+    [filtered],
+  );
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
+  const allWithEmailSelected =
+    withEmailIds.length > 0 && withEmailIds.every(id => selectedIds.includes(id));
+
+  const selectAllVisible = () => {
+    setSelectedIds(visibleIds);
+  };
+  const selectAllWithEmail = () => {
+    setSelectedIds(withEmailIds);
+  };
+  const clearSelection = () => setSelectedIds([]);
+
+  const noEmailCount = useMemo(
+    () =>
+      withDrafts.filter(p => {
+        const st = p.outreachDraft?.status;
+        return (st === 'Draft' || st === 'Approved') && !recipientEmail(p);
+      }).length,
+    [withDrafts],
+  );
 
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
@@ -225,6 +257,7 @@ export default function OutreachInboxView({
             templateCount={templateCount}
             onModeChange={onOutreachModeChange}
             onGoTemplates={onGoTemplates}
+            templates={templates}
           />
         )}
         <div className="empty-state nr-enter nr-enter-delay-2">
@@ -272,6 +305,12 @@ export default function OutreachInboxView({
           templateCount={templateCount}
           onModeChange={onOutreachModeChange}
           onGoTemplates={onGoTemplates}
+          templates={templates}
+          activeDraftTemplateName={
+            draft?.templateName
+            || draft?.outreachRationale?.template_name
+            || ''
+          }
         />
       )}
 
@@ -301,6 +340,26 @@ export default function OutreachInboxView({
             Prepare & send
           </button>
         )}
+        {onSendSelected && filtered.length > 0 && (
+          <>
+            <button
+              type="button"
+              onClick={selectAllVisible}
+              className={`btn btn-ghost${allVisibleSelected ? ' is-active' : ''}`}
+            >
+              Select all ({visibleIds.length})
+            </button>
+            <button
+              type="button"
+              onClick={selectAllWithEmail}
+              disabled={withEmailIds.length === 0}
+              className={`btn btn-ghost${allWithEmailSelected && !allVisibleSelected ? ' is-active' : ''}`}
+              title="Select only leads that have a recipient email"
+            >
+              Select with email ({withEmailIds.length})
+            </button>
+          </>
+        )}
         {gmailConnected && onSendSelected && selectedIds.length > 0 && (
           <button
             type="button"
@@ -328,7 +387,7 @@ export default function OutreachInboxView({
           </button>
         )}
         {selectedIds.length > 0 && (
-          <button type="button" onClick={() => setSelectedIds([])} className="btn btn-ghost">
+          <button type="button" onClick={clearSelection} className="btn btn-ghost">
             Clear selection
           </button>
         )}
@@ -354,6 +413,7 @@ export default function OutreachInboxView({
             [
               ['best_fit', 'Best fit'],
               ['needs_review', 'All drafts'],
+              ['no_email', noEmailCount > 0 ? `No email (${noEmailCount})` : 'No email'],
               ['follow_up', followUpCount > 0 ? `Follow-up (${followUpCount})` : 'Follow-up'],
               ['sent', 'Sent'],
               ['all', 'All'],
@@ -509,39 +569,51 @@ export default function OutreachInboxView({
                 className="min-h-[16rem]"
               />
             </div>
-            {draft.outreachRationale && (
+            {(draft.draftSource || draft.templateName || draft.outreachRationale || draft.personalizedReason) && (
               <div className="border border-border-subtle bg-muted px-3 py-2.5 space-y-1.5">
-                <p className="field-label mb-0">Outreach rationale</p>
-                {draft.outreachRationale.primary_signal && (
-                  <p className="text-[12px] text-ink-secondary">
+                {(draft.draftSource === 'template' || draft.templateName) && (
+                  <p className="text-[12px] font-medium text-ink m-0">
+                    Template:{' '}
+                    {draft.templateName
+                      || draft.outreachRationale?.template_name
+                      || 'Custom email template'}
+                    {(draft.templateCategory || draft.outreachRationale?.template_category)
+                      ? ` · ${draft.templateCategory || draft.outreachRationale?.template_category}`
+                      : ''}
+                  </p>
+                )}
+                {draft.draftSource === 'ai' && (
+                  <p className="text-[12px] font-medium text-ink-secondary m-0">Draft mode: AI-generated</p>
+                )}
+                {draft.draftSource === 'ai_fallback' && (
+                  <p className="text-[12px] font-medium text-ink-secondary m-0">
+                    AI fallback — no matching template for this lead’s products/tags
+                  </p>
+                )}
+                {draft.outreachRationale?.match_reason && (
+                  <p className="text-[12px] text-ink-secondary m-0">
+                    <span className="text-ink-muted">Match:</span> {draft.outreachRationale.match_reason}
+                  </p>
+                )}
+                {draft.outreachRationale?.primary_signal && (
+                  <p className="text-[12px] text-ink-secondary m-0">
                     <span className="text-ink-muted">Signal:</span> {draft.outreachRationale.primary_signal}
                   </p>
                 )}
-                {draft.outreachRationale.pain_hypothesis && (
-                  <p className="text-[12px] text-ink-secondary">
-                    <span className="text-ink-muted">Pain hypothesis:</span> {draft.outreachRationale.pain_hypothesis}
-                  </p>
-                )}
-                {draft.outreachRationale.matched_product && (
-                  <p className="text-[12px] text-ink-secondary">
+                {draft.outreachRationale?.matched_product && (
+                  <p className="text-[12px] text-ink-secondary m-0">
                     <span className="text-ink-muted">Matched product:</span> {draft.outreachRationale.matched_product}
                   </p>
                 )}
-                <p className="text-[12px] text-ink-secondary">
-                  {draft.outreachRationale.angle ? (
-                    <><span className="text-ink-muted">Approach:</span> {draft.outreachRationale.angle}</>
-                  ) : null}
-                  {draft.outreachRationale.signal_confidence ? (
-                    <>
-                      {draft.outreachRationale.angle ? ' · ' : null}
-                      <span className="text-ink-muted">Confidence:</span> {draft.outreachRationale.signal_confidence}
-                    </>
-                  ) : null}
-                </p>
+                {draft.outreachRationale?.angle && draft.outreachRationale.angle !== 'user_template' && (
+                  <p className="text-[12px] text-ink-secondary m-0">
+                    <span className="text-ink-muted">Approach:</span> {draft.outreachRationale.angle}
+                  </p>
+                )}
+                {!draft.outreachRationale && draft.personalizedReason && (
+                  <p className="text-[12px] text-ink-muted m-0">{draft.personalizedReason}</p>
+                )}
               </div>
-            )}
-            {!draft.outreachRationale && draft.personalizedReason && (
-              <p className="text-[12px] text-ink-muted">{draft.personalizedReason}</p>
             )}
 
             <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle pt-3 mt-auto">

@@ -282,64 +282,8 @@ function CompanySection({
   const [name, setName] = useState(businessInfo.name ?? '');
   const [website, setWebsite] = useState(businessInfo.website ?? '');
   const [description, setDescription] = useState(businessInfo.description ?? '');
-  const [categories, setCategories] = useState(() =>
-    trimCsvItems((businessInfo.primaryCategories ?? []).filter(isUsefulChipLabel).join(', '), 12),
-  );
   const [extracting, setExtracting] = useState(false);
   const [error, setError] = useState('');
-  const [liveCategorySuggestions, setLiveCategorySuggestions] = useState<string[]>([]);
-  const [categorySuggesting, setCategorySuggesting] = useState(false);
-
-  const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
-  const suggestionContext = `${name} ${description} ${catalogCats.join(' ')}`;
-  const categorySuggestions = useMemo(() => {
-    const local = suggestionsForField('categories', suggestionContext, catalogCats);
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const item of [...liveCategorySuggestions, ...catalogCats, ...local]) {
-      const trimmed = item.trim();
-      const key = trimmed.toLowerCase();
-      if (!key || seen.has(key) || !isUsefulChipLabel(trimmed)) continue;
-      seen.add(key);
-      out.push(trimmed);
-    }
-    return out;
-  }, [liveCategorySuggestions, catalogCats, suggestionContext]);
-
-  useEffect(() => {
-    const brief = `${name} ${description}`.trim();
-    if (brief.length < 16) {
-      setLiveCategorySuggestions([]);
-      return;
-    }
-    let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      setCategorySuggesting(true);
-      try {
-        const resp = await apiFetch('/api/suggestions/expand', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            field: 'categories',
-            description: brief,
-            catalogCategories: catalogCats,
-          }),
-        });
-        if (!resp.ok || cancelled) return;
-        const data = await resp.json();
-        const items: string[] = Array.isArray(data.suggestions) ? data.suggestions : [];
-        if (!cancelled) setLiveCategorySuggestions(items.filter(Boolean).slice(0, 12));
-      } catch {
-        if (!cancelled) setLiveCategorySuggestions([]);
-      } finally {
-        if (!cancelled) setCategorySuggesting(false);
-      }
-    }, 700);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [name, description, catalogCats]);
 
   const handleExtract = async (fromWebsite = false) => {
     const site = website.trim();
@@ -359,16 +303,6 @@ function CompanySection({
       if (data.name) setName(data.name);
       if (data.website) setWebsite(data.website);
       if (data.description && (!brief || fromWebsite)) setDescription(data.description);
-      if (Array.isArray(data.primaryCategories) && data.primaryCategories.length) {
-        setCategories(
-          trimCsvItems(
-            data.primaryCategories.filter((c: string) => isUsefulChipLabel(String(c))).join(', '),
-            12,
-          ),
-        );
-      } else if (liveCategorySuggestions.length) {
-        setCategories(trimCsvItems(liveCategorySuggestions.slice(0, 6).join(', '), 12));
-      }
     } catch (e) {
       console.warn(e);
       setError('Could not auto-fill. Edit the fields manually.');
@@ -384,7 +318,7 @@ function CompanySection({
       website,
       description,
       targetMarkets: businessInfo.targetMarkets ?? [],
-      primaryCategories: csvItems(categories).filter(isUsefulChipLabel).slice(0, 12),
+      primaryCategories: businessInfo.primaryCategories ?? [],
     });
   };
 
@@ -412,7 +346,7 @@ function CompanySection({
             onClick={() => void handleExtract(true)}
             disabled={extracting || !website.trim()}
             className="btn-autofill"
-            title="Read the website and fill name, description, and categories"
+            title="Read the website and fill name and description"
           >
             {extracting ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.75} />
@@ -437,25 +371,6 @@ function CompanySection({
         />
         {error && <p className="text-[12.5px] mt-1" style={{ color: 'var(--warning)' }}>{error}</p>}
       </div>
-
-      <PredictiveField
-        label="Product categories"
-        hint={categorySuggesting ? 'Suggesting…' : undefined}
-        value={categories}
-        onChange={v => setCategories(trimCsvItems(v, 12))}
-        suggestions={categorySuggestions}
-        placeholder="Type a category"
-        chipDisplay="rotate"
-        selectedAsTags
-        searchOnly
-        rotateCount={12}
-        maxItems={12}
-        aiContext={{
-          field: 'categories',
-          description,
-          catalogCategories: catalogCats,
-        }}
-      />
 
       <div className="pt-1">
         <button type="button" onClick={handleSave} className="btn btn-primary">
@@ -824,7 +739,7 @@ function CatalogSection({
           {continueLabel}
         </button>
         {products.length === 0 && (
-          <span className="text-[12px] text-ink-muted">You can continue without products if categories are set.</span>
+          <span className="text-[12px] text-ink-muted">You can continue without products — hunt description drives searches.</span>
         )}
       </div>
     </div>

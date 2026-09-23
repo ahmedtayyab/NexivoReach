@@ -4,7 +4,6 @@ import { Check, FileSpreadsheet, Loader2, RotateCcw, Search, X } from 'lucide-re
 import { apiFetch } from '../lib/api';
 import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
 import {
-  HUNT_BUSINESS_CATEGORIES,
   HUNT_LOCATION_OPTIONS,
 } from '../data/huntTaxonomy';
 import { isPlaceholderCompanyName } from '../lib/workspace';
@@ -55,6 +54,20 @@ export function composeHuntPrompt(category: string, location: string, details = 
   const cat = (category || '').trim();
   const loc = (location || '').trim();
   const detail = (details || '').trim();
+  // Hunt description lines are the primary search input.
+  if (detail) {
+    const headerParts: string[] = [];
+    if (loc) headerParts.push(`Target location: ${loc}`);
+    if (cat) headerParts.push(`Context: ${cat}`);
+    const header = headerParts.join('\n').trim();
+    if (!header) return detail;
+    return [
+      header,
+      '',
+      'Priority hunt lines (search each line exactly — product + buyer role):',
+      detail,
+    ].join('\n');
+  }
   const headerParts: string[] = [];
   if (cat && loc) {
     if (/\b(?:in|near|around|within)\s+/i.test(cat)) headerParts.push(cat);
@@ -64,16 +77,7 @@ export function composeHuntPrompt(category: string, location: string, details = 
   } else if (loc) {
     headerParts.push(`buyers in ${loc}`);
   }
-  const header = headerParts.join(' ').trim();
-  if (!detail) return header;
-  if (!header) return detail;
-  // Details are first-class hunt input — product×buyer lines the agent must cover.
-  return [
-    header,
-    '',
-    'Priority hunt lines (find authentic leads in this region for each):',
-    detail,
-  ].join('\n');
+  return headerParts.join(' ').trim();
 }
 
 function buildPhases(query: string, placeHint: string): string[] {
@@ -98,7 +102,7 @@ function loadSkipSheetsPrompt(): boolean {
 }
 
 /**
- * Primary product action: category + location bar → hunt.
+ * Primary hunt: location + multi-line description (product × buyer).
  */
 export default function FindBuyersPanel({
   businessInfo,
@@ -112,11 +116,10 @@ export default function FindBuyersPanel({
   sheetsConnected = false,
   onGoConnect,
 }: Props) {
-  const [category, setCategory] = useState('');
   const [location, setLocation] = useState('');
   const [details, setDetails] = useState('');
   const [buyerTypes, setBuyerTypes] = useState((icp.targetBuyerTypes ?? []).join(', '));
-  const [openField, setOpenField] = useState<'location' | 'category' | null>(null);
+  const [openField, setOpenField] = useState<'location' | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [lastFound, setLastFound] = useState<number | null>(null);
@@ -129,8 +132,8 @@ export default function FindBuyersPanel({
   const [recentHunts, setRecentHunts] = useState<RecentHunt[]>([]);
 
   const query = useMemo(
-    () => composeHuntPrompt(category, location, details),
-    [category, location, details],
+    () => composeHuntPrompt('', location, details),
+    [location, details],
   );
 
   const loadRecentHunts = async () => {
@@ -161,23 +164,16 @@ export default function FindBuyersPanel({
 
   const placeHint = location.trim() || (icp.targetCountries || [])[0] || '';
 
-  const categoryOptions = useMemo(() => {
-    const fromCatalog = categoriesFromProducts(products);
-    return Array.from(new Set([...HUNT_BUSINESS_CATEGORIES, ...fromCatalog]));
-  }, [products]);
-
   const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
   const buyerContext = useMemo(
     () =>
       [
         businessInfo.description,
-        ...(businessInfo.primaryCategories ?? []),
-        category,
         details,
         buyerTypes,
         ...catalogCats,
       ].join(' '),
-    [businessInfo, category, details, buyerTypes, catalogCats],
+    [businessInfo, details, buyerTypes, catalogCats],
   );
   const buyerSuggestions = useMemo(
     () => suggestionsForField('buyers', buyerContext, catalogCats),
@@ -204,15 +200,11 @@ export default function FindBuyersPanel({
     Boolean(businessInfo.description?.trim()) ||
     (Boolean(businessInfo.name?.trim()) && !isPlaceholderCompanyName(businessInfo.name)) ||
     products.length > 0 ||
-    (businessInfo.primaryCategories || []).length > 0 ||
     (icp.targetBuyerTypes || []).length > 0;
 
-  const ready =
-    Boolean(category.trim()) ||
-    Boolean(location.trim()) ||
-    Boolean(details.trim()) ||
-    hasBrief;
-  const canHunt = ready;
+  // Hunt description is required for accurate product×buyer searches.
+  const ready = Boolean(details.trim()) || (Boolean(location.trim()) && hasBrief);
+  const canHunt = Boolean(details.trim()) || (Boolean(location.trim()) && hasBrief);
   const phases = useMemo(() => buildPhases(query, placeHint), [query, placeHint]);
 
   useEffect(() => {
@@ -260,21 +252,22 @@ export default function FindBuyersPanel({
       const header = raw.slice(0, markerIdx).trim();
       const rest = raw.slice(markerIdx);
       const afterColon = rest.includes('\n') ? rest.slice(rest.indexOf('\n') + 1).trim() : '';
-      const parts = splitHuntPrompt(header);
-      setCategory(parts.category);
-      if (parts.location) setLocation(parts.location);
+      const locMatch = header.match(/Target location:\s*(.+)/i);
+      if (locMatch?.[1]) setLocation(locMatch[1].trim());
+      else {
+        const parts = splitHuntPrompt(header);
+        if (parts.location) setLocation(parts.location);
+      }
       setDetails(afterColon);
       return;
     }
     const parts = splitHuntPrompt(raw);
-    setCategory(parts.category);
     if (parts.location) setLocation(parts.location);
-    // Multi-line pastes without our marker → treat as details
+    // Multi-line pastes → hunt description (primary)
     if (raw.includes('\n')) {
       setDetails(raw);
-      if (!parts.location && !parts.category) {
-        setCategory('');
-      }
+    } else if (!parts.location) {
+      setDetails(raw);
     }
   };
 
@@ -362,7 +355,7 @@ export default function FindBuyersPanel({
             } — filter Strong vs Average on Leads.${sheetsNote}`
           : skipped
             ? `All matches were already in your list (${skipped}). Try a different hunt.`
-            : 'No accounts this round — try a clearer category or location.',
+            : 'No accounts this round — try more specific hunt lines or another location.',
       );
       onComplete?.(foundCount);
       void loadRecentHunts();
@@ -532,18 +525,6 @@ export default function FindBuyersPanel({
             open={openField === 'location'}
             onOpenChange={open => setOpenField(open ? 'location' : null)}
           />
-          <HuntCombobox
-            className="hunt-search-bar__combo hunt-search-bar__combo--category"
-            label="Business category"
-            value={category}
-            onChange={setCategory}
-            options={categoryOptions}
-            placeholder="Business category…"
-            disabled={isRunning}
-            allowCustom
-            open={openField === 'category'}
-            onOpenChange={open => setOpenField(open ? 'category' : null)}
-          />
           <button
             type="button"
             className="btn btn-primary hunt-search-bar__cta"
@@ -562,19 +543,25 @@ export default function FindBuyersPanel({
 
       <label className="hunt-details">
         <span className="hunt-details__label">Hunt description</span>
+        <p className="hunt-details__hint text-[12px] text-ink-muted m-0 mb-1.5">
+          One product × buyer line per row — each line is searched. Example: weightlifting straps distributors
+        </p>
         <textarea
           className="hunt-details__input"
           value={details}
           onChange={e => setDetails(e.target.value)}
           onFocus={() => setOpenField(null)}
           disabled={isRunning}
-          rows={8}
+          rows={10}
           placeholder={
-            'Fitness / Bodybuilding\n' +
             'weightlifting straps distributors\n' +
             'weightlifting straps wholesalers\n' +
-            'weightlifting belts importers\n' +
-            'wrist wraps distributors'
+            'weightlifting straps importers\n' +
+            'weightlifting belts distributors\n' +
+            'wrist wraps wholesalers\n' +
+            'knee sleeves distributors\n' +
+            'lifting hooks wholesalers\n' +
+            'martial arts belts distributors'
           }
         />
       </label>
@@ -589,14 +576,14 @@ export default function FindBuyersPanel({
           aiContext={{
             field: 'buyers',
             description: businessInfo.description,
-            catalogCategories: catalogCats.length ? catalogCats : businessInfo.primaryCategories,
+            catalogCategories: catalogCats,
           }}
         />
       </div>
 
       {!ready && (
         <p className="ui-banner ui-banner--warn hunt-ready-hint" role="status">
-          Add a location, category, or hunt description — or set up a company brief first.
+          Paste hunt lines in the description (one product × buyer role per line), and set a location.
         </p>
       )}
 
