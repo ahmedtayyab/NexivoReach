@@ -966,7 +966,7 @@ export default function App() {
               await handleSaveOutreachTemplates(outreachTemplates, mode);
               pushToast(
                 'info',
-                mode === 'templates' ? 'Using your templates' : 'AI drafts active',
+                mode === 'templates' ? 'Custom email templates active' : 'AI drafts active',
                 mode === 'templates'
                   ? 'Prepare will match leads to your category templates.'
                   : 'Prepare will write a fresh AI email per lead.',

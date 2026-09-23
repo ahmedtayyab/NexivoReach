@@ -50,6 +50,17 @@ export default function OutreachTemplatesSection({
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(templates[0]?.id || null);
+  /** Raw tag field text while typing — avoids eating commas via split/filter. */
+  const [tagDrafts, setTagDrafts] = useState<Record<string, string>>({});
+
+  const tagsValue = (row: OutreachTemplate) =>
+    tagDrafts[row.id] !== undefined ? tagDrafts[row.id] : (row.tags || []).join(', ');
+
+  const parseTags = (raw: string): string[] =>
+    raw
+      .split(',')
+      .map(t => t.trim())
+      .filter(Boolean);
 
   // On the dedicated page with no saved templates, open a blank one ready to type.
   useEffect(() => {
@@ -88,6 +99,11 @@ export default function OutreachTemplatesSection({
   const removeRow = (id: string) => {
     setRows(prev => prev.filter(r => r.id !== id));
     if (expandedId === id) setExpandedId(null);
+    setTagDrafts(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   };
 
   const cleanedRows = () =>
@@ -96,7 +112,7 @@ export default function OutreachTemplatesSection({
         ...r,
         name: (r.name || '').trim() || `Template ${i + 1}`,
         category: (r.category || '').trim(),
-        tags: (r.tags || []).map(t => t.trim()).filter(Boolean),
+        tags: parseTags(tagDrafts[r.id] !== undefined ? tagDrafts[r.id] : (r.tags || []).join(', ')),
         subject: (r.subject || '').trim(),
         body: (r.body || '').trim(),
         specializeLines: (r.specializeLines || []).map(s => s.trim()).filter(Boolean),
@@ -116,9 +132,10 @@ export default function OutreachTemplatesSection({
       }
       await onSave(cleaned, mode);
       setRows(cleaned.length ? cleaned : rows);
+      setTagDrafts({});
       setMsg(
         mode === 'templates'
-          ? 'Saved. Prepare will use your templates (matched by category).'
+          ? 'Saved. Prepare will use your custom email templates (matched by category).'
           : 'Saved. Prepare will write a fresh AI draft for each lead.',
       );
     } catch (err) {
@@ -157,7 +174,7 @@ export default function OutreachTemplatesSection({
           className={mode === 'templates' ? 'is-active' : ''}
           onClick={() => setMode('templates')}
         >
-          Use my templates
+          Custom email template
         </button>
       </div>
 
@@ -171,7 +188,7 @@ export default function OutreachTemplatesSection({
           {rows.some(r => (r.body || '').trim() || (r.subject || '').trim()) && (
             <p className="text-[12.5px] text-ink-muted mt-3 m-0">
               You still have {rows.filter(r => (r.body || '').trim() || (r.subject || '').trim()).length}{' '}
-              saved template{rows.length === 1 ? '' : 's'} — switch to “Use my templates” anytime to
+              saved template{rows.length === 1 ? '' : 's'} — switch to “Custom email template” anytime to
               use them instead.
             </p>
           )}
@@ -185,15 +202,14 @@ export default function OutreachTemplatesSection({
               {saving ? 'Saving…' : 'Save preference'}
             </button>
             <button type="button" className="btn btn-secondary" onClick={() => setMode('templates')}>
-              Switch to my templates
+              Switch to custom email template
             </button>
           </div>
         </div>
       ) : (
         <>
           <p className="text-[13px] text-ink-muted mt-4 mb-0 max-w-xl">
-            Write one template per product family. Prepare picks the matching category — not a random
-            template.
+            Write one custom email template per product family. Prepare picks the matching category.
           </p>
 
           {rows.length === 0 ? (
@@ -259,15 +275,22 @@ export default function OutreachTemplatesSection({
                           <span className="field-label">Tags (keywords, comma-separated)</span>
                           <input
                             className="w-full border border-border rounded-md px-3 py-2 text-[13px] bg-panel text-ink"
-                            value={(row.tags || []).join(', ')}
-                            onChange={e =>
-                              updateRow(row.id, {
-                                tags: e.target.value
-                                  .split(',')
-                                  .map(t => t.trim())
-                                  .filter(Boolean),
-                              })
-                            }
+                            value={tagsValue(row)}
+                            onChange={e => {
+                              const raw = e.target.value;
+                              setTagDrafts(prev => ({ ...prev, [row.id]: raw }));
+                              updateRow(row.id, { tags: parseTags(raw) });
+                            }}
+                            onBlur={() => {
+                              const raw = tagsValue(row);
+                              const parsed = parseTags(raw);
+                              updateRow(row.id, { tags: parsed });
+                              setTagDrafts(prev => {
+                                const next = { ...prev };
+                                delete next[row.id];
+                                return next;
+                              });
+                            }}
                             placeholder="boxing, MMA, gloves, hand wraps"
                           />
                         </label>

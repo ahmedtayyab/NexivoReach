@@ -30,12 +30,12 @@ export default function OutreachTemplatesView({
           ← Back
         </button>
         <h1 className="page-header__title">
-          {empty ? 'Add outreach templates' : 'Outreach templates'}
+          {empty ? 'Custom email template' : 'Custom email templates'}
         </h1>
         <p className="page-header__desc">
           {empty
-            ? 'Write your emails, or keep AI drafting — pick a mode below.'
-            : 'Edit templates or switch back to AI-generated drafts.'}
+            ? 'Write your email copy, or keep AI drafting — pick a mode below.'
+            : 'Edit your templates or switch back to AI-generated drafts.'}
         </p>
       </header>
 

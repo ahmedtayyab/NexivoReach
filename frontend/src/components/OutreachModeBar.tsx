@@ -10,7 +10,7 @@ type Props = {
 };
 
 /**
- * Draft-mode control for Outreach — makes “Use my templates” visible and active state obvious.
+ * Draft-mode control for Outreach — Custom email template mode is clearly visible when active.
  */
 export default function OutreachModeBar({
   mode,
@@ -48,7 +48,7 @@ export default function OutreachModeBar({
             disabled={busy}
             onClick={selectTemplates}
           >
-            Use my templates
+            Custom email template
           </button>
         </div>
         {onGoTemplates && (
@@ -61,8 +61,8 @@ export default function OutreachModeBar({
 
       {usingTemplates ? (
         <p className="ui-banner ui-banner--ok outreach-mode-bar__status" role="status">
-          <strong>Your templates are active.</strong> Prepare matches each lead by category and uses
-          your copy — not AI-written drafts.
+          <strong>Custom email templates are active.</strong> Prepare matches each lead by category
+          and uses your copy — not AI-written drafts.
           {templateCount <= 0 && onGoTemplates && (
             <>
               {' '}
@@ -78,7 +78,7 @@ export default function OutreachModeBar({
           {templateCount > 0 && (
             <>
               {' '}
-              Switch to <strong>Use my templates</strong> to send your saved copy instead.
+              Switch to <strong>Custom email template</strong> to send your saved copy instead.
             </>
           )}
         </p>
