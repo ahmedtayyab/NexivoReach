@@ -9,7 +9,6 @@ import { FitScoreBadge } from './FitScoreBadge';
 import { useConfirm } from './ConfirmDialog';
 import OutcomesStrip from './OutcomesStrip';
 import PageAmbient from './brand/PageAmbient';
-import LeadRationaleChips from './prospects/LeadRationaleChips';
 
 const EMPTY_QUEUE_IMG = brandAssets.emptyQueue;
 
@@ -528,7 +527,6 @@ export default function QueueView({
                         <p className="text-[13px] text-ink-muted truncate mt-0.5">
                           {prospect.location || prospect.website || '—'}
                         </p>
-                        <LeadRationaleChips prospect={prospect} compact className="mt-1.5" />
                       </div>
                       <FitScoreBadge score={prospect.fitScore} />
                     </div>
@@ -620,7 +618,6 @@ export default function QueueView({
                       <p className="text-[13px] text-ink-muted truncate mt-px">
                         {prospect.location || prospect.website || '—'}
                       </p>
-                      <LeadRationaleChips prospect={prospect} compact className="mt-1" />
                     </button>
                     <span className="min-w-0">{emailCell(prospect)}</span>
                     <span className="text-[13px] text-ink-muted capitalize">{prospect.intent || prospect.fitBreakdown?.intent || '—'}</span>
