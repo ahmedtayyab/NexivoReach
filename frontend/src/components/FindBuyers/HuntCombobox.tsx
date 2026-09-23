@@ -71,7 +71,7 @@ export default function HuntCombobox({
 
   return (
     <div
-      className={`hunt-combobox ${className}`.trim()}
+      className={`hunt-combobox${open ? ' is-open' : ''} ${className}`.trim()}
       ref={rootRef}
     >
       <label className="hunt-search-bar__field">

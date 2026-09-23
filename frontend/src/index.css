@@ -1172,6 +1172,7 @@ input:focus, textarea:focus, select:focus {
 
 .find-buyers {
   position: relative;
+  overflow: visible;
   border: 1px solid var(--border);
   background: var(--bg-panel);
   padding: 1.15rem 1.15rem 1.25rem;
@@ -1476,6 +1477,8 @@ input:focus, textarea:focus, select:focus {
   border-radius: 8px;
   padding: 1.15rem 1.2rem 1.25rem;
   box-shadow: none;
+  position: relative;
+  z-index: 1;
 }
 .ws-panel--wide { max-width: 48rem; }
 .ws-find {
@@ -1483,6 +1486,9 @@ input:focus, textarea:focus, select:focus {
   margin-bottom: 1.25rem;
   padding-top: 0;
   border-top: 0;
+  overflow: visible;
+  position: relative;
+  z-index: 3;
 }
 .ws-find--primary {
   max-width: 48rem;
@@ -4553,4 +4559,60 @@ input:focus, textarea:focus, select:focus {
 }
 @media (max-width: 640px) {
   .hunt-search-bar__combo { flex: 1 1 100%; }
+}
+
+.hunt-details {
+  display: block;
+  margin: 0.85rem 0 0.75rem;
+}
+.hunt-details__label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-label);
+  margin-bottom: 0.4rem;
+}
+.hunt-details__input {
+  display: block;
+  width: 100%;
+  min-height: 9.5rem;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.45;
+  padding: 0.75rem 0.85rem;
+  font-family: inherit;
+}
+.hunt-details__input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--cta, #1A7A5C) 45%, var(--border));
+}
+.hunt-details__input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+.hunt-details__hint {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.hunt-ready-hint {
+  margin-top: 0.65rem;
+}
+.hunt-search-bar {
+  overflow: visible;
+  z-index: 5;
+  margin-top: 0.15rem;
+}
+.hunt-combobox.is-open {
+  z-index: 60;
+}
+.hunt-combobox__list {
+  z-index: 70;
 }

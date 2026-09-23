@@ -331,6 +331,17 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
 
     if prompt:
         queries.append(PlannedQuery(prompt, "user", "direct_icp", False, 1))
+        from app.agents.geo import extract_hunt_detail_lines
+
+        # Client multi-line description: each product×buyer line becomes a geo-scoped query
+        for line in extract_hunt_detail_lines(prompt):
+            qn = line
+            if place and place.lower() not in line.lower():
+                qn = f"{line} {place}"
+            qn = re.sub(r"\s+", " ", qn).strip()
+            if qn and not any(x.query.lower() == qn.lower() for x in queries):
+                queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
+
         # Extra paraphrases anchored on the hunt focus (product + role + place)
         role = (buyer or "buyer").rstrip("s")
         if place:
@@ -361,6 +372,11 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
                     qn2 = f"{c} importer {extra_place}"
                     if not any(x.query.lower() == qn2.lower() for x in queries):
                         queries.append(PlannedQuery(qn2, "user", "direct_icp", False, 1))
+            for line in extract_hunt_detail_lines(prompt)[:6]:
+                qn = f"{line} {extra_place}"
+                if place and extra_place.lower() != place.lower():
+                    if not any(x.query.lower() == qn.lower() for x in queries):
+                        queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
 
     def add(q: str, family: str, pool: str, maps: bool = False) -> None:
         q = re.sub(r"\s+", " ", q).strip()

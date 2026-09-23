@@ -49,14 +49,29 @@ export function splitHuntPrompt(prompt: string): { category: string; location: s
   return { category: raw, location: '' };
 }
 
-export function composeHuntPrompt(category: string, location: string): string {
+export function composeHuntPrompt(category: string, location: string, details = ''): string {
   const cat = (category || '').trim();
   const loc = (location || '').trim();
+  const detail = (details || '').trim();
+  const headerParts: string[] = [];
   if (cat && loc) {
-    if (/\b(?:in|near|around|within)\s+/i.test(cat)) return cat;
-    return `${cat} in ${loc}`;
+    if (/\b(?:in|near|around|within)\s+/i.test(cat)) headerParts.push(cat);
+    else headerParts.push(`${cat} in ${loc}`);
+  } else if (cat) {
+    headerParts.push(cat);
+  } else if (loc) {
+    headerParts.push(`buyers in ${loc}`);
   }
-  return cat || loc;
+  const header = headerParts.join(' ').trim();
+  if (!detail) return header;
+  if (!header) return detail;
+  // Details are first-class hunt input — product×buyer lines the agent must cover.
+  return [
+    header,
+    '',
+    'Priority hunt lines (find authentic leads in this region for each):',
+    detail,
+  ].join('\n');
 }
 
 function buildPhases(query: string, placeHint: string): string[] {
@@ -96,6 +111,7 @@ export default function FindBuyersPanel({
 }: Props) {
   const [category, setCategory] = useState('');
   const [location, setLocation] = useState('');
+  const [details, setDetails] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [lastFound, setLastFound] = useState<number | null>(null);
@@ -107,7 +123,10 @@ export default function FindBuyersPanel({
   const [serverProgress, setServerProgress] = useState(0);
   const [recentHunts, setRecentHunts] = useState<RecentHunt[]>([]);
 
-  const query = useMemo(() => composeHuntPrompt(category, location), [category, location]);
+  const query = useMemo(
+    () => composeHuntPrompt(category, location, details),
+    [category, location, details],
+  );
 
   const loadRecentHunts = async () => {
     try {
@@ -149,7 +168,11 @@ export default function FindBuyersPanel({
     (businessInfo.primaryCategories || []).length > 0 ||
     (icp.targetBuyerTypes || []).length > 0;
 
-  const ready = Boolean(category.trim()) || Boolean(location.trim()) || hasBrief;
+  const ready =
+    Boolean(category.trim()) ||
+    Boolean(location.trim()) ||
+    Boolean(details.trim()) ||
+    hasBrief;
   const canHunt = ready;
   const phases = useMemo(() => buildPhases(query, placeHint), [query, placeHint]);
 
@@ -191,9 +214,29 @@ export default function FindBuyersPanel({
   }, [isRunning, elapsedSec, serverProgress]);
 
   const applyPrompt = (prompt: string) => {
-    const parts = splitHuntPrompt(prompt);
+    const raw = (prompt || '').trim();
+    const marker = 'Priority hunt lines';
+    const markerIdx = raw.indexOf(marker);
+    if (markerIdx >= 0) {
+      const header = raw.slice(0, markerIdx).trim();
+      const rest = raw.slice(markerIdx);
+      const afterColon = rest.includes('\n') ? rest.slice(rest.indexOf('\n') + 1).trim() : '';
+      const parts = splitHuntPrompt(header);
+      setCategory(parts.category);
+      if (parts.location) setLocation(parts.location);
+      setDetails(afterColon);
+      return;
+    }
+    const parts = splitHuntPrompt(raw);
     setCategory(parts.category);
     if (parts.location) setLocation(parts.location);
+    // Multi-line pastes without our marker → treat as details
+    if (raw.includes('\n')) {
+      setDetails(raw);
+      if (!parts.location && !parts.category) {
+        setCategory('');
+      }
+    }
   };
 
   const runHunt = async (promptOverride?: string) => {
@@ -408,8 +451,8 @@ export default function FindBuyersPanel({
         <div className="find-buyers__head">
           <h3 className="find-buyers__title">Find buyers in your market</h3>
           <p className="find-buyers__desc">
-            Enter a buyer category and location. We match country strictly — using the website,
-            social links, and phone country codes when the address is unclear.
+            Pick category and location, then add product×buyer lines so the hunt covers the right
+            accounts in that region. Country must match (site, socials, phone codes).
           </p>
         </div>
       )}
@@ -431,11 +474,27 @@ export default function FindBuyersPanel({
         </div>
       )}
 
-      {!ready && (
-        <p className="ui-banner ui-banner--warn" role="status">
-          Enter a category and location, or add a company brief first.
-        </p>
-      )}
+      <label className="hunt-details">
+        <span className="hunt-details__label">Hunt description</span>
+        <textarea
+          className="hunt-details__input"
+          value={details}
+          onChange={e => setDetails(e.target.value)}
+          disabled={isRunning}
+          rows={8}
+          placeholder={
+            'Paste product × buyer lines for this market, e.g.\n' +
+            'Fitness / Bodybuilding\n' +
+            'weightlifting straps distributors\n' +
+            'weightlifting straps wholesalers\n' +
+            'weightlifting belts importers\n' +
+            'wrist wraps distributors'
+          }
+        />
+        <span className="hunt-details__hint">
+          Each line is a search angle. Combined with category + location so leads stay in-region.
+        </span>
+      </label>
 
       <div className="hunt-search-bar" role="search">
         <HuntCombobox
@@ -473,6 +532,12 @@ export default function FindBuyersPanel({
           {isRunning ? 'Searching…' : 'Find buyers'}
         </button>
       </div>
+
+      {!ready && (
+        <p className="ui-banner ui-banner--warn hunt-ready-hint" role="status">
+          Add a category, location, or hunt description — or set up a company brief first.
+        </p>
+      )}
 
       {recentHunts.length > 0 && !isRunning && (
         <div className="saved-hunts">

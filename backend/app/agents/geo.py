@@ -438,13 +438,54 @@ _PROMPT_FILLER = frozenset({
 def extract_offer_terms_from_prompt(prompt: str) -> List[str]:
     """
     Product / offer nouns left after stripping buyer roles and places.
-    'fleece hood importers in New jersey' → ['fleece hood']
-    'elastic wrist straps and ankle strap importers in Massachusetts'
-      → ['elastic wrist straps', 'ankle strap']
+    Also pulls product stems from multi-line hunt descriptions
+    ('weightlifting straps distributors' → 'weightlifting straps').
     """
     text = (prompt or "").strip()
     if not text:
         return []
+
+    phrases: List[str] = []
+    seen = set()
+
+    def _add(phrase: str) -> None:
+        p = re.sub(r"\s+", " ", (phrase or "").strip().lower())
+        if not p or p in seen or len(p) < 3:
+            return
+        seen.add(p)
+        phrases.append(p)
+
+    # Multi-line product×buyer angles (client hunt description)
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.lower().startswith("priority hunt"):
+            continue
+        # Drop emoji / short section headers like "Fitness / Bodybuilding"
+        cleaned = re.sub(r"^[^\w]+", "", line).strip()
+        if "/" in cleaned and len(cleaned.split()) <= 4 and not re.search(
+            r"\b(distributor|wholesaler|importer|retailer|buyer)s?\b", cleaned, re.I
+        ):
+            continue
+        m = re.match(
+            r"^(.+?)\s+(distributors?|wholesalers?|importers?|retailers?|buyers?|dealers?)\s*$",
+            cleaned,
+            re.I,
+        )
+        if m:
+            _add(m.group(1))
+            continue
+        if re.search(r"\b(distributor|wholesaler|importer|retailer)s?\b", cleaned, re.I):
+            # "X distributors in Texas" style
+            stem = re.sub(
+                r"\b(distributors?|wholesalers?|importers?|retailers?|buyers?|dealers?)\b.*$",
+                "",
+                cleaned,
+                flags=re.I,
+            ).strip()
+            stem = re.sub(r"\b(in|near|around|within)\s+.+$", "", stem, flags=re.I).strip()
+            if stem:
+                _add(stem)
+
     low = text.lower()
 
     # Drop known places (longest first)
@@ -466,8 +507,6 @@ def extract_offer_terms_from_prompt(prompt: str) -> List[str]:
 
     # Keep multi-product prompts as separate categories ("X and Y")
     chunks = re.split(r"\s+and\s+|," , low)
-    phrases: List[str] = []
-    seen = set()
     for chunk in chunks:
         tokens = [
             t for t in re.findall(r"[a-z0-9]+(?:'[a-z]+)?", chunk)
@@ -476,10 +515,37 @@ def extract_offer_terms_from_prompt(prompt: str) -> List[str]:
         if not tokens:
             continue
         phrase = " ".join(tokens[:4]).strip()
-        if phrase and phrase not in seen:
-            seen.add(phrase)
-            phrases.append(phrase)
-    return phrases[:3]
+        _add(phrase)
+    return phrases[:8]
+
+
+def extract_hunt_detail_lines(prompt: str) -> List[str]:
+    """Concrete one-line hunt angles from a multi-line description."""
+    out: List[str] = []
+    seen = set()
+    for raw in (prompt or "").splitlines():
+        line = re.sub(r"^[^\w]+", "", raw.strip()).strip()
+        if not line or line.lower().startswith("priority hunt"):
+            continue
+        # Skip short section titles
+        if len(line.split()) <= 3 and "/" in line:
+            continue
+        if not re.search(
+            r"\b(distributor|wholesaler|importer|retailer|buyer|dealer|gym|clinic|brand)s?\b",
+            line,
+            re.I,
+        ):
+            # Still keep product-ish lines with 2+ words
+            if len(line.split()) < 2:
+                continue
+        key = line.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(line)
+        if len(out) >= 16:
+            break
+    return out
 
 
 def extract_buyers_from_prompt(prompt: str) -> List[str]:
