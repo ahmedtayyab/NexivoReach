@@ -91,7 +91,11 @@ class ProspectingAgent:
         from app.agents.geo import interpret_prompt_intent
 
         intent = interpret_prompt_intent(user_prompt or "", place) if (user_prompt or "").strip() else None
-        if intent and intent.get("primary_queries"):
+        # Product hunts behave like a plain Google search. Maps fuzzy-matches
+        # "wrist wraps wholesalers in Houston" to record shops and clinics, so it is off here.
+        product_hunt = bool(intent and intent.get("primary_queries"))
+        maps_for_hunt = profile.use_maps and not product_hunt
+        if product_hunt:
             observation = (
                 f"Interpreted exact products={intent['products']}, "
                 f"buyer types={intent['buyers']}, location={intent['location'] or '(none)'}."
@@ -127,7 +131,7 @@ class ProspectingAgent:
             target_location=place,
             exclude_domains=exclude_domains,
             limit=WAVE1_RESULT_CAP,
-            use_maps=profile.use_maps,
+            use_maps=maps_for_hunt,
             max_queries=WAVE1_QUERY_CAP,
         )
         classified = [
@@ -200,7 +204,7 @@ class ProspectingAgent:
                 target_location=place,
                 exclude_domains=exclude_domains | {_domain(r.get("website")) for r in classified if r.get("website")},
                 limit=WAVE2_RESULT_CAP,
-                use_maps=profile.use_maps and profile.strict_geo,
+                use_maps=maps_for_hunt and profile.strict_geo,
                 max_queries=WAVE2_QUERY_CAP,
             )
             extra = [

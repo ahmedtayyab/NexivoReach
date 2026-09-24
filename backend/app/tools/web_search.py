@@ -144,6 +144,35 @@ def site_display_name_from_url(url: str) -> str:
     return display_name_from_url(url)
 
 
+_GENERIC_TITLE_PARTS = frozenset({
+    "home", "homepage", "home page", "welcome", "index", "shop", "store", "products",
+    "catalog", "catalogue", "about", "about us", "contact", "contact us", "wholesale",
+    "online store", "official site", "official website", "main page", "untitled",
+})
+
+
+def _company_name_from_title(title: str, url: str) -> str:
+    """
+    'Home | Martial Arts Supermarket' → 'Martial Arts Supermarket'.
+    Generic page words never become a company name; fall back to the domain.
+    """
+    parts = [
+        re.sub(r"[®™]", "", p).strip()
+        for p in re.split(r"\s[|\-–:—]\s", title or "")
+    ]
+    parts = [p for p in parts if p]
+    for part in parts:
+        low = part.lower().strip(" .!")
+        if low in _GENERIC_TITLE_PARTS:
+            continue
+        if re.fullmatch(r"(home|welcome|shop|store)\s*(page)?", low):
+            continue
+        if _looks_like_article(part, url) or len(part) > 60:
+            continue
+        return part
+    return _brand_from_url(url) or (parts[0] if parts else title)
+
+
 def results_to_companies(results: List[Dict[str, str]], target_location: str = "") -> List[Dict[str, Any]]:
     prefer = [target_location] if target_location else None
     companies: List[Dict[str, Any]] = []
@@ -158,10 +187,7 @@ def results_to_companies(results: List[Dict[str, str]], target_location: str = "
         if domain in seen:
             continue
         seen.add(domain)
-        name = re.split(r"\s[|\-–:]\s", title, maxsplit=1)[0].strip()
-        name = re.sub(r"[®™]", "", name).strip() or title
-        if _looks_like_article(name, url) or len(name) > 60:
-            name = _brand_from_url(url) or name
+        name = _company_name_from_title(title, url)
         path = urlparse(url).path.rstrip("/")
         homepage_bonus = 1 if path in ("", "/en", "/de", "/fr", "/about", "/about-us") else 0
         article_penalty = 1 if _looks_like_article(title, url) else 0

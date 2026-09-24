@@ -821,8 +821,8 @@ PRODUCT_HEAD_NEGATIVES: dict[str, tuple[str, ...]] = {
     "strap": ("-truck", "-cargo", "-ratchet"),
     "belts": ("-seatbelt", "-conveyor"),
     "belt": ("-seatbelt", "-conveyor"),
-    "hooks": ("-crane", "-towing"),
-    "hook": ("-crane", "-towing"),
+    "hooks": ("-crane", "-rigging"),
+    "hook": ("-crane", "-rigging"),
     "sleeves": ("-pipe", "-cable"),
     "sleeve": ("-pipe", "-cable"),
 }
@@ -1221,13 +1221,20 @@ def serp_blob_matches_products(blob: str, categories: List[str]) -> bool:
     phrases = product_phrases_from_profile_categories(categories)
     if not phrases:
         return True
-    if any(p in text for p in phrases):
-        return True
 
     wrong = (
         "truck", "cargo", "ratchet", "tow", "tie-down", "tiedown", "lashing",
-        "pallet", "seat belt", "seatbelt", "conveyor", "crane",
+        "pallet", "seat belt", "seatbelt", "conveyor", "crane", "rigging",
+        "shackle", "hoist", "chain sling", "winch",
     )
+    if any(p in text for p in phrases):
+        # "lifting hooks" on a crane / rigging supplier is the industrial product.
+        # Context must come from words outside the product phrase itself.
+        own = {w for p in phrases for w in p.split()}
+        ctx_words = [c for c in PRODUCT_CONTEXT_WORDS if c not in own]
+        if any(w in text for w in wrong) and not any(re.search(rf"\b{re.escape(c)}\b", text) for c in ctx_words):
+            return False
+        return True
 
     def _mod_hit(mods: List[str]) -> bool:
         for m in mods:
@@ -1281,7 +1288,19 @@ def page_matches_specific_products(blob: str, categories: List[str]) -> str:
         return "unknown"
     if not text.strip():
         return "unknown"
+    industrial = (
+        "rigging", "crane", "shackle", "hoist", "chain sling", "winch", "cargo",
+        "ratchet", "tie-down", "tiedown", "conveyor", "seatbelt", "seat belt",
+    )
+    ctx = any(c in text for c in PRODUCT_CONTEXT_WORDS)
     if any(p in text for p in phrases):
+        own = {w for p in phrases for w in p.split()}
+        outside_ctx = any(
+            re.search(rf"\b{re.escape(c)}\b", text)
+            for c in PRODUCT_CONTEXT_WORDS if c not in own
+        )
+        if any(w in text for w in industrial) and not outside_ctx:
+            return "low"  # crane "lifting hooks", truck "straps"
         return "high"
     for phrase in phrases:
         words = [w for w in phrase.split() if len(w) > 2]
@@ -1290,7 +1309,6 @@ def page_matches_specific_products(blob: str, categories: List[str]) -> str:
         head, mods = words[-1], words[:-1]
         mod_hit = any(re.search(rf"\b{re.escape(m)}\b", text) for m in mods)
         head_hit = bool(re.search(rf"\b{re.escape(head)}\b", text))
-        ctx = any(c in text for c in PRODUCT_CONTEXT_WORDS)
         if head in AMBIGUOUS_PRODUCT_HEADS:
             if head_hit and mod_hit:
                 return "high"

@@ -292,6 +292,63 @@ def test_rejects_obviously_unrelated_business_serp():
     assert sports["reject"] is False
 
 
+def test_rejects_rigging_supplier_for_gym_lifting_hooks():
+    from app.agents.serp_classifier import classify_serp_row
+    from app.agents.geo import page_matches_specific_products
+
+    row = classify_serp_row(
+        {
+            "company_name": "Kulkoni Inc - Lifting & Rigging Supply",
+            "website": "https://kulkoni.example/",
+            "title": "Kulkoni Inc - Lifting & Rigging Supply Houston",
+            "snippet": "Distributor of lifting hooks, shackles, chain slings and crane rigging hardware.",
+            "source": "web",
+            "discovery_query": "lifting hooks distributors in Houston",
+        },
+        hunting_buyers=True,
+        target_places=["Houston"],
+        offer_categories=["lifting hooks"],
+    )
+    assert row["reject"] is True
+    assert page_matches_specific_products(
+        "We stock lifting hooks, shackles and crane rigging hardware.", ["lifting hooks"]
+    ) == "low"
+    assert page_matches_specific_products(
+        "Gym accessories wholesale: lifting hooks, straps and wrist wraps.", ["lifting hooks"]
+    ) == "high"
+
+
+def test_company_name_skips_generic_title_parts():
+    from app.tools.web_search import _company_name_from_title
+
+    assert _company_name_from_title("Home | Martial Arts Supermarket", "https://martialartssupermarket.com/") == "Martial Arts Supermarket"
+    assert _company_name_from_title("Home", "https://martialartssupermarket.com/") == "Martialartssupermarket"
+    assert _company_name_from_title("Rhingo USA Wholesale - Gym Gear", "https://rhingousa.com/") == "Rhingo USA Wholesale"
+
+
+def test_product_hunt_runs_web_search_without_maps(monkeypatch):
+    import asyncio
+    from app.agents.prospecting_agent import ProspectingAgent
+    from app.tools.web_search import WebSearchTool
+
+    calls = {"maps": 0}
+
+    async def fake_hunt(self, queries, target_location="", exclude_domains=None, limit=40, use_maps=False, max_queries=10):
+        if use_maps or any(bool(getattr(q, "use_maps", False)) for q in queries):
+            calls["maps"] += 1
+        return []
+
+    monkeypatch.setattr(WebSearchTool, "hunt_leads", fake_hunt)
+    agent = ProspectingAgent()
+    asyncio.run(agent.execute_discovery_goal(
+        user_prompt="Target location: Houston\n\nPriority hunt lines:\nlifting hooks distributors\nwrist wraps wholesalers",
+        products=[],
+        icp={"targetCountries": ["Houston"], "targetBuyerTypes": []},
+        business={"name": "Demo", "description": "Gym accessories exporter"},
+    ))
+    assert calls["maps"] == 0
+
+
 def test_qualify_keeps_fitness_distributor_without_exact_product_on_homepage():
     """A legitimate sports distributor may list lifting hooks deeper in the catalog."""
     from app.agents.qualify import qualify_account
