@@ -137,8 +137,8 @@ def serp_triage(
     buyers: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
-    Fast SERP-only decision: keep | reject | ambiguous.
-    Uses title + snippet + company name — no website fetch.
+    Trust Google organic results. Only drop clearly wrong industries.
+    Everything else that survived the junk-host filter is kept as a lead.
     """
     cats = list(categories or [])
     name = (row.get("company_name") or "").strip()
@@ -148,51 +148,35 @@ def serp_triage(
     product, role, _place = parse_discovery_query(dq)
     if product and product not in cats:
         cats = [product, *cats]
-    if not role and buyers:
-        role = (buyers[0] or "").strip()
 
     blob = f"{name}\n{title}\n{snippet}"
+    # Hard rejects only — keyword "smarts" were not beating Google and still let junk through
     if looks_unrelated_business(blob, cats):
         return {
             "verdict": "reject",
             "confidence": 0.9,
-            "reason": "Obviously unrelated industry (jewelry, medical, industrial, etc.).",
+            "reason": "Obviously unrelated industry (jewelry, medical, real estate…).",
         }
     offer = page_matches_specific_products(blob, cats) if cats else "unknown"
     if offer == "low":
         return {
             "verdict": "reject",
             "confidence": 0.85,
-            "reason": "Looks like a different industry product (cargo straps, crane hooks…).",
+            "reason": "Wrong industry product collision (cargo straps, crane/rigging hooks…).",
         }
+    # Default: keep — this company appeared in Google for the exact hunt query
+    conf = 0.55
+    reason = "Google organic result for this exact product×buyer search."
     if offer in ("high", "medium"):
-        return {
-            "verdict": "keep",
-            "confidence": 0.8 if offer == "high" else 0.65,
-            "reason": f"SERP matches hunt product “{product or (cats[0] if cats else 'product')}”.",
-        }
-    if has_related_trade_context(blob, cats):
-        return {
-            "verdict": "keep",
-            "confidence": 0.7,
-            "reason": "Fitness/sports/gym trade language in search result.",
-        }
-    role_token = (role or "").rstrip("s")
-    role_hit = bool(role_token and len(role_token) >= 4 and re.search(
-        rf"\b{re.escape(role_token)}s?\b", blob, re.I
-    ))
-    # Exact-query Google hit naming a buyer role is usually good enough to keep
-    if role_hit and (snippet or title):
-        return {
-            "verdict": "keep",
-            "confidence": 0.55,
-            "reason": f"Google result for this hunt names {role or 'buyer'} role.",
-        }
-    # Generic name / thin snippet — inspect only if we still need volume
+        conf = 0.8 if offer == "high" else 0.65
+        reason = f"SERP matches hunt product “{product or (cats[0] if cats else 'product')}”."
+    elif has_related_trade_context(blob, cats):
+        conf = 0.7
+        reason = "Fitness/sports trade language in Google result."
     return {
-        "verdict": "ambiguous",
-        "confidence": 0.4,
-        "reason": "SERP is thin; homepage check if more leads are needed.",
+        "verdict": "keep",
+        "confidence": conf,
+        "reason": reason,
     }
 
 

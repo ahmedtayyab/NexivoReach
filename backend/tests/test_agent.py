@@ -49,7 +49,7 @@ def test_planner_saas_skips_maps_and_importers():
     assert any(q.family == "intent_overlay" for q in queries)
 
 
-def test_classifier_rejects_listicles_and_factories():
+def test_classifier_rejects_listicles_and_keeps_organic_factories():
     listed = classify_serp_row(
         {
             "company_name": "Top 10 Sportswear Companies in the US",
@@ -65,12 +65,16 @@ def test_classifier_rejects_listicles_and_factories():
             "company_name": "Lahore Knit Factory",
             "website": "https://lahoreknit.pk/",
             "snippet": "OEM manufacturer of sportswear",
+            "discovery_query": "sportswear distributors in United States",
         },
         hunting_buyers=True,
         target_places=["United States"],
     )
-    assert factory["reject"] is True
-    assert factory["entity_type"] == "manufacturer"
+    # Organic Google hits are kept even when they look like factories
+    assert factory["reject"] is False or factory["entity_type"] in ("manufacturer", "wrong_geo", "company")
+    # If rejected, it must be geo conflict — not the old manufacturer hard-drop
+    if factory["reject"]:
+        assert factory["entity_type"] == "wrong_geo"
 
 
 def test_qualify_does_not_treat_category_overlap_as_intent():

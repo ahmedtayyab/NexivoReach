@@ -25,24 +25,23 @@ from app.tools.web_search import WebSearchTool, HEADERS
 from app.tools.contact_finder import discover_contacts
 
 
-# Fast discovery targets — return leads quickly; enrich contacts in the background.
-TARGET_LEADS = 30
-MIN_LEADS = 20
-SAVE_CAP = 40
-STRONG_SAVE = 24
-AVERAGE_SAVE = 16
-WAVE1_RESULT_CAP = 280
-WAVE2_RESULT_CAP = 80
-# Homepage fetch only for ambiguous SERP rows, and only when below target
-AMBIGUOUS_FETCH_CAP = 16
+# Organic-first discovery: trust Google results, keep volume high.
+TARGET_LEADS = 100
+MIN_LEADS = 40
+SAVE_CAP = 120
+STRONG_SAVE = 60
+AVERAGE_SAVE = 60
+WAVE1_RESULT_CAP = 480
+WAVE2_RESULT_CAP = 120
+# Homepage fetch only if somehow still thin after organic keeps
+AMBIGUOUS_FETCH_CAP = 8
 SCRAPE_CONCURRENCY = 12
 MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = MIN_LEADS
-DEFAULT_HUNT_LIMIT = 30
+DEFAULT_HUNT_LIMIT = 100
 WAVE1_QUERY_CAP = 48
 WAVE2_QUERY_CAP = 12
-# Parallel contact crawl on the shortlist — hard time budget so the hunt stays fast
-CONTACT_CONCURRENCY = 12
-CONTACT_BUDGET_SEC = 22.0
+CONTACT_CONCURRENCY = 16
+CONTACT_BUDGET_SEC = 40.0
 
 
 def _domain(url: str) -> str:
@@ -102,8 +101,8 @@ class ProspectingAgent:
             )
             decision = (
                 f"Wave 1: {len(intent['primary_queries'])} exact Google searches in parallel. "
-                "SERP title/snippet triage first; homepage only for ambiguous rows; "
-                f"stop around {TARGET_LEADS} leads. Contacts enrich in the background."
+                f"keep most organic company hits (light junk filter only); "
+                f"target up to {TARGET_LEADS} leads."
             )
             snippet = "; ".join(intent["primary_queries"][:6])
         else:

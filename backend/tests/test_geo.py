@@ -262,6 +262,23 @@ def test_fitness_store_serp_is_inspected_not_rejected():
     assert row["reject"] is False
 
 
+def test_serp_triage_keeps_organic_company_without_product_words():
+    """Trust Google: a normal company hit is kept even if the snippet is thin."""
+    from app.agents.relevance import serp_triage
+
+    row = serp_triage(
+        {
+            "company_name": "Midwest Athletic Supply",
+            "title": "Midwest Athletic Supply Inc",
+            "snippet": "Wholesale athletic goods serving retailers nationwide.",
+            "discovery_query": "lifting hooks distributors in Chicago",
+        },
+        categories=["lifting hooks"],
+        buyers=["distributors"],
+    )
+    assert row["verdict"] == "keep"
+
+
 def test_serp_triage_keeps_fitness_rejects_jewelry():
     from app.agents.relevance import serp_triage
 

@@ -109,18 +109,18 @@ def classify_serp_row(
         reject, entity, reason = True, "news", "News article — not the company"
 
     elif hunting_buyers and MFR_RE.search(blob) and not BUYER_RE.search(blob):
-        reject, entity, reason = True, "manufacturer", "Looks like a manufacturer while hunting buyers"
+        # Tag only — do not drop organic Google companies that look like factories
+        entity, reason = "manufacturer", "Manufacturer language — kept as organic Google hit"
 
     elif hunting_buyers and MFR_RE.search(blob):
-        entity, reason = "manufacturer", "Manufacturer language present — keep only as competitor seed"
+        entity, reason = "manufacturer", "Manufacturer language present"
 
     path = (urlparse(url).path or "").lower()
     if any(h in path for h in ("/blog", "/wiki", "/guide")) and not reject:
         reject, entity, reason = True, "article", "Article URL"
 
-    # Keep multi-word hunt products faithful for logging — do NOT hard-reject on
-    # product/industry regex here. AI relevance decides after the homepage fetch.
     # Cheap rejects only: directories, jobs, news, social, marketplaces, retail PDPs.
+    # Product/industry relevance is light triage later — trust Google organic ranking.
 
     # When hunting distributors/wholesalers/importers, skip DTC product pages & shopfront noise
     if not reject and hunting_buyers:
@@ -143,16 +143,14 @@ def classify_serp_row(
     if target_places and not reject:
         from app.agents.geo import location_conflicts_with_targets
 
-        # Prefer the address field: Maps often returns nearby states (NY/NJ for MA).
-        # Only reject on CONTRADICTORY geography — never because the place is absent.
-        # Google already applied location to the query; missing "Chicago" on a page
-        # is not proof the result is wrong.
         if location.strip() and location_conflicts_with_targets(location, target_places):
             reject, entity, reason = True, "wrong_geo", "Address is outside the requested location"
         elif geo_ok is False and _foreign_geo_conflict(geo_source, target_places):
             reject, entity, reason = True, "wrong_geo", "Geography conflicts with target markets"
 
-    competitor_seed = entity == "manufacturer" and hunting_buyers and not BUYER_RE.search(blob)
+    # Do not treat manufacturers as auto-rejects — organic Google hits stay
+    competitor_seed = False
+
 
     return {
         **row,
