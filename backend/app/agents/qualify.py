@@ -118,8 +118,8 @@ def qualify_account(
         fit_summary = "low"
     elif icp == "unknown" and motion == "unknown" and offer == "low" and not site_text:
         fit_summary = "low"
-    elif specific_offer_hunt and site_text and offer == "low":
-        # Confirmed wrong/ambiguous product (e.g. cargo straps) — drop
+    elif specific_offer_hunt and site_text and offer in ("low", "unknown"):
+        # Wrong product, or no evidence they sell the hunted product (jewelry, hobby, unrelated wholesale).
         fit_summary = "low"
     elif specific_offer_hunt and site_text and offer == "unknown" and icp == "unknown" and not channel_buyers:
         fit_summary = "low"

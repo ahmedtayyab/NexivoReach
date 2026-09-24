@@ -254,7 +254,8 @@ async def test_agent_execution(monkeypatch):
             "ok": True,
             "url": url,
             "title": "Helios Kliniken",
-            "text": "Helios Kliniken is a hospital group in Germany. We operate clinics and hospitals. Wholesale medical equipment procurement.",
+            "text": "Helios Kliniken is a hospital group in Germany. We operate clinics and hospitals. We procure surgical lighting and medical equipment. Contact procurement@helios-gesundheit.de.",
+            "emails": ["procurement@helios-gesundheit.de"],
         }
 
     async def fake_qualify(self, url, limit=14000):

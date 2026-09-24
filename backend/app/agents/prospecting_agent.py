@@ -40,7 +40,7 @@ SCRAPE_BATCH = 18
 MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 50
 DEFAULT_HUNT_LIMIT = 60
 # Stop fetching more sites once we can fill this many persistable leads
-EARLY_EXIT_PERSISTABLE = 52
+EARLY_EXIT_PERSISTABLE = 80
 WAVE1_QUERY_CAP = 80
 WAVE2_QUERY_CAP = 8
 
@@ -399,6 +399,7 @@ class ProspectingAgent:
             return (pri, role_bonus, scraped, loc_bonus, intent_rank, int(q.get("fitScore") or 0))
 
         qualified.sort(key=_q_rank, reverse=True)
+        ranked_all = list(qualified)
 
         def _is_strong(item: Dict[str, Any]) -> bool:
             q = item["q"]
@@ -561,12 +562,39 @@ class ProspectingAgent:
             item["contacts"] = contacts
             item["_contact_hit"] = bool(email or contacts)
 
-        # Phase 1 — cheap homepage emails for everyone; deep crawl for strong fits
+        # Phase 1 — homepage emails, then a contact-page crawl for the best leads
+        # that still have no address. Only companies we can email are saved.
         if qualified:
             await asyncio.gather(*[
                 _fill_contacts(item) if item.get("want_contacts") else _seed_contacts_only(item)
                 for item in qualified
             ])
+
+        email_target = min(limit, SAVE_CAP)
+        seen_ids = {id(item) for item in qualified}
+        backlog = [item for item in ranked_all if id(item) not in seen_ids]
+        if backlog:
+            await asyncio.gather(*[_seed_contacts_only(item) for item in backlog])
+
+        def _has_email(item: Dict[str, Any]) -> bool:
+            return bool((item.get("email") or "").strip())
+
+        deep_queue = [
+            item for item in [*qualified, *backlog]
+            if not _has_email(item) and (item["co"].get("website") or "").strip()
+        ][:48]
+        already = sum(1 for item in [*qualified, *backlog] if _has_email(item))
+        if deep_queue and already < email_target:
+            await asyncio.gather(*[_fill_contacts(item) for item in deep_queue])
+
+        emailed: List[Dict[str, Any]] = []
+        seen_keep = set()
+        for item in [*qualified, *backlog]:
+            if not _has_email(item) or id(item) in seen_keep:
+                continue
+            seen_keep.add(id(item))
+            emailed.append(item)
+        qualified = _diversify(emailed, email_target) if emailed else []
 
         async def _enrich(item: Dict[str, Any]) -> Dict[str, Any]:
             co = item["co"]

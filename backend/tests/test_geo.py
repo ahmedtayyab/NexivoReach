@@ -319,6 +319,41 @@ def test_qualify_rejects_bare_straps_page():
     assert q["shouldPersist"] is False
 
 
+def test_qualify_rejects_unrelated_wholesaler_without_product():
+    """A distributor in the right city is not a lead if the site never mentions the product."""
+    from app.agents.qualify import qualify_account
+    from app.agents.search_planner import SellerProfile
+
+    profile = SellerProfile(
+        offer_class="goods",
+        sales_motion="wholesale",
+        hunting_buyers=True,
+        geo_mode="local",
+        categories=["weightlifting straps", "martial arts belts"],
+        buyers=["distributors", "wholesalers"],
+        places=["Los Angeles"],
+        use_maps=False,
+        pools={"direct_icp": "primary"},
+        strict_geo=True,
+    )
+    q = qualify_account(
+        row={
+            "company_name": "A&A Jewelry Supply",
+            "website": "https://aajewelry.example/",
+            "snippet": "Wholesale jewelry supplier in Los Angeles",
+            "source": "web",
+            "location": "319 W 6th St, Los Angeles, CA 90014",
+            "discovery_query": "weightlifting straps distributors in Los Angeles",
+        },
+        site_text="A&A Jewelry Supply is a wholesale distributor of findings, chains, and gemstones in downtown Los Angeles.",
+        profile=profile,
+        products=[],
+        page_url="https://aajewelry.example/",
+    )
+    assert q["offerFit"] == "unknown"
+    assert q["shouldPersist"] is False
+
+
 def test_prompt_roles_prioritize_importers():
     profile = infer_seller_profile(
         products=[{"name": "Belts", "category": "Martial arts"}],
