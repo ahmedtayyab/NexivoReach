@@ -110,24 +110,32 @@ def qualify_account(
 
     # Fit is not intent. Unknown motion is not a rejection — most buyer sites never say "wholesale".
     specific_offer_hunt = any(len(str(c).split()) >= 2 for c in (profile.categories or []))
+    channel_buyers = any(
+        re.search(r"distribut|wholesale|import|dealer", (b or ""), re.I)
+        for b in (profile.buyers or [])
+    )
     if icp == "low" or motion == "low":
         fit_summary = "low"
     elif icp == "unknown" and motion == "unknown" and offer == "low" and not site_text:
         fit_summary = "low"
-    elif specific_offer_hunt and site_text and offer in ("unknown", "low"):
-        # Concrete hunt products (e.g. weightlifting straps) — bare "straps" or no product
-        # mention (truck cargo, generic fitness) are not leads.
+    elif specific_offer_hunt and site_text and offer == "low":
+        # Confirmed wrong/ambiguous product (e.g. cargo straps) — drop
+        fit_summary = "low"
+    elif specific_offer_hunt and site_text and offer == "unknown" and icp == "unknown" and not channel_buyers:
         fit_summary = "low"
     else:
         # unknown dims stay neutral (medium); never invent high from unknowns alone.
         icp_for_summary = "medium" if icp == "unknown" else icp
         motion_for_summary = "medium" if motion == "unknown" else motion
-        offer_for_summary = "medium" if offer in ("unknown", "low") else offer
+        # Unknown offer on a channel buyer is OK — many distributors don't list every SKU on homepage
+        if offer == "unknown" and (icp in ("high", "medium") or channel_buyers):
+            offer_for_summary = "medium"
+        else:
+            offer_for_summary = "medium" if offer in ("unknown", "low") else offer
         fit_summary = _level_min(icp_for_summary, motion_for_summary)
         # Weak catalog overlap should not kill an otherwise medium ICP fit.
         if offer == "low" and site_text and fit_summary == "high":
             fit_summary = "medium"
-        # Specific product hunt + only weak/partial token overlap → keep reviewable, not strong.
         if specific_offer_hunt and offer == "low" and site_text and fit_summary == "high":
             fit_summary = "medium"
     confidence = 0.28 if not site_text else 0.58
@@ -191,7 +199,7 @@ def qualify_account(
         and (row.get("website") or "").strip()
         and icp != "low"
         and motion != "low"
-        and not (specific_offer_hunt and site_text and offer in ("unknown", "low"))
+        and not (specific_offer_hunt and site_text and offer == "low")
     ):
         persist = True
         if priority == "reject":
@@ -204,7 +212,7 @@ def qualify_account(
         and fit_summary != "low"
         and icp != "low"
         and motion != "low"
-        and not (specific_offer_hunt and site_text and offer in ("unknown", "low"))
+        and not (specific_offer_hunt and site_text and offer == "low")
     ):
         persist = True
         if priority == "reject":
@@ -356,7 +364,7 @@ def _icp_fit(
     )
     retail_page = bool(re.search(r"/(products?|collections?|cart)(/|$|\?)", (url or ""), re.I))
     retailish = retail_page or bool(
-        re.search(r"\b(add to cart|shop now|buy now|free shipping|in stock)\b", text, re.I)
+        re.search(r"\b(add to cart|shop now|buy now)\b", text, re.I)
     )
     wholesale_lang = bool(
         re.search(

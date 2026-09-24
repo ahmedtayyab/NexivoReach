@@ -680,16 +680,29 @@ PRODUCT_CONTEXT_WORDS = frozenset({
 
 # SERP negatives when hunting products whose headword collides with other industries
 PRODUCT_HEAD_NEGATIVES: dict[str, tuple[str, ...]] = {
-    "straps": ("-truck", "-cargo", "-ratchet", "-tow", "-tie-down", "-tiedown", "-lashing", "-pallet"),
-    "strap": ("-truck", "-cargo", "-ratchet", "-tow", "-tie-down", "-tiedown", "-lashing", "-pallet"),
-    "belts": ("-seatbelt", "-seat-belt", "-conveyor", "-timing"),
-    "belt": ("-seatbelt", "-seat-belt", "-conveyor", "-timing"),
-    "hooks": ("-crane", "-towing", "-trailer"),
-    "hook": ("-crane", "-towing", "-trailer"),
-    "bands": ("-rubber-band-office", "-network"),
-    "sleeves": ("-pipe", "-cable", "-insulation"),
-    "sleeve": ("-pipe", "-cable", "-insulation"),
+    "straps": ("-truck", "-cargo", "-ratchet"),
+    "strap": ("-truck", "-cargo", "-ratchet"),
+    "belts": ("-seatbelt", "-conveyor"),
+    "belt": ("-seatbelt", "-conveyor"),
+    "hooks": ("-crane", "-towing"),
+    "hook": ("-crane", "-towing"),
+    "sleeves": ("-pipe", "-cable"),
+    "sleeve": ("-pipe", "-cable"),
 }
+
+# Soft synonyms so "lifting straps" still matches hunt "weightlifting straps"
+PRODUCT_MOD_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "weightlifting": ("weightlifting", "weight lifting", "lifting", "powerlifting"),
+    "wrist": ("wrist", "forearm"),
+    "knee": ("knee",),
+    "martial": ("martial", "karate", "bjj", "jiu-jitsu", "jiujitsu", "taekwondo"),
+    "lifting": ("lifting", "weightlifting", "deadlift"),
+}
+
+_CHANNEL_SERP_RE = re.compile(
+    r"\b(distributor|distributors|wholesale|wholesaler|importer|importers|dealer|b2b)\b",
+    re.I,
+)
 
 
 def split_product_and_role(line: str) -> tuple[str, str]:
@@ -778,56 +791,67 @@ def product_phrases_from_profile_categories(categories: List[str]) -> List[str]:
 
 def serp_blob_matches_products(blob: str, categories: List[str]) -> bool:
     """
-    True when SERP title/snippet clearly relates to hunt products.
-    Generic fitness/gym stores without the named products are rejected.
+    True when SERP title/snippet is plausible for hunt products.
+    Rejects clear cargo/truck collisions and generic gym stores with zero product nouns.
+    Thin distributor snippets are allowed through for homepage qualify.
     """
     text = (blob or "").lower()
     if not text.strip():
-        return True  # unknown — don't reject on empty
+        return True
     phrases = product_phrases_from_profile_categories(categories)
     if not phrases:
         return True
-    # Full phrase hit is ideal
     if any(p in text for p in phrases):
         return True
+
+    wrong = (
+        "truck", "cargo", "ratchet", "tow", "tie-down", "tiedown", "lashing",
+        "pallet", "seat belt", "seatbelt", "conveyor", "crane",
+    )
+
+    def _mod_hit(mods: List[str]) -> bool:
+        for m in mods:
+            if re.search(rf"\b{re.escape(m)}\b", text):
+                return True
+            for syn in PRODUCT_MOD_SYNONYMS.get(m, ()):
+                if syn in text:
+                    return True
+        return False
+
     for phrase in phrases:
         words = [w for w in phrase.split() if len(w) > 2]
         if len(words) < 2:
             continue
-        head = words[-1]
-        mods = words[:-1]
-        mod_hit = any(re.search(rf"\b{re.escape(m)}\b", text) for m in mods)
+        head, mods = words[-1], words[:-1]
         head_hit = bool(re.search(rf"\b{re.escape(head)}\b", text))
-        # Require product specificity — never accept bare "gym/fitness store"
         if head in AMBIGUOUS_PRODUCT_HEADS:
-            if head_hit and mod_hit:
+            if head_hit and _mod_hit(mods):
                 return True
-            # head + another hunt product token (e.g. wrist + wraps)
-            if head_hit and any(re.search(rf"\b{re.escape(w)}\b", text) for w in words[:-1]):
+            # Channel SERP: "straps distributor" / "knee sleeve wholesaler" — keep for qualify
+            if head_hit and _CHANNEL_SERP_RE.search(text) and not any(w in text for w in wrong):
                 return True
         else:
             hits = sum(1 for w in words if re.search(rf"\b{re.escape(w)}\b", text))
             if hits >= min(2, len(words)):
                 return True
-    # Cargo / truck collision
+
     heads = {p.split()[-1] for p in phrases}
     amb_heads = heads & AMBIGUOUS_PRODUCT_HEADS
     if amb_heads and any(re.search(rf"\b{re.escape(h)}\b", text) for h in amb_heads):
-        wrong = (
-            "truck", "cargo", "ratchet", "tow", "tie-down", "tiedown", "lashing",
-            "pallet", "seat belt", "seatbelt", "conveyor", "crane",
-        )
         if any(w in text for w in wrong):
             return False
-        return False
-    # Generic fitness / gym retail with no hunt product nouns → not a match
-    if any(c in text for c in ("gym", "fitness", "workout", "training equipment", "sports store")):
+        # Ambiguous head alone, no wholesale cue — weak; allow only if not clearly retail gym
+        if any(c in text for c in ("gym", "fitness store", "sports store")) and not _CHANNEL_SERP_RE.search(text):
+            return False
+        return True  # e.g. thin "Straps wholesaler California" snippet
+
+    # Generic fitness retail with no hunt product nouns
+    if any(c in text for c in ("gym", "fitness", "sports store")) and not _CHANNEL_SERP_RE.search(text):
         product_tokens = set()
         for p in phrases:
             product_tokens.update(w for w in p.split() if len(w) > 3)
         if not any(re.search(rf"\b{re.escape(t)}\b", text) for t in product_tokens):
             return False
-    # Thin snippet with no product signal — allow homepage qualify later
     return True
 
 

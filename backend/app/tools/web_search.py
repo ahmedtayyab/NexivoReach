@@ -365,7 +365,7 @@ class WebSearchTool:
         if not batches:
             return merged
 
-        per_query_cap = max(6, (limit // max(len(batches), 1)) + 2)
+        per_query_cap = max(8, (limit // max(len(batches), 1)) + 4)
         cursors = [0] * len(batches)
         progressed = True
         while progressed and len(merged) < limit:
@@ -374,8 +374,7 @@ class WebSearchTool:
                 if len(merged) >= limit:
                     break
                 taken = 0
-                while cursors[i] < len(batch) and taken < 2 and len(merged) < limit:
-                    # Soft per-query ceiling so one query can't dump 20 near-duplicates
+                while cursors[i] < len(batch) and taken < 3 and len(merged) < limit:
                     if cursors[i] >= per_query_cap:
                         break
                     row = batch[cursors[i]]
@@ -388,6 +387,18 @@ class WebSearchTool:
                     merged.append(row)
                     taken += 1
                     progressed = True
+        # Second pass: fill remaining slots from any leftover hits
+        if len(merged) < limit:
+            for batch in batches:
+                for row in batch:
+                    if len(merged) >= limit:
+                        break
+                    website = (row.get("website") or "").strip()
+                    domain = _registrable_domain(website) if website else (row.get("company_name") or "").lower()
+                    if not domain or domain in seen:
+                        continue
+                    seen.add(domain)
+                    merged.append(row)
         return merged
 
     def _search_sync(self, query: str) -> List[Dict[str, str]]:

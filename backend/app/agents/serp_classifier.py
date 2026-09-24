@@ -49,7 +49,7 @@ BUYER_RE = re.compile(
 )
 RETAIL_URL_RE = re.compile(r"/(products?|collections?|cart|checkout)(/|$|\?)", re.I)
 RETAIL_SNIPPET_RE = re.compile(
-    r"\b(add to cart|buy now|shop now|free shipping|in stock|sale price|\$\d+)\b",
+    r"\b(add to cart|buy now|shop now)\b",
     re.I,
 )
 WHOLESALE_SIGNAL_RE = re.compile(
@@ -153,8 +153,18 @@ def classify_serp_row(
             reject, entity, reason = True, "wrong_geo", "Geography conflicts with target markets"
         elif strict_geo and geo_ok is not True:
             # Maps rows with a phone still reach qualify (address checked there).
+            # If the discovery query already pinned the place, thin SERP snippets
+            # often omit it — still let homepage qualify decide.
             source = (row.get("source") or "").strip().lower()
-            if not (source == "maps" and (row.get("phone") or "").strip()):
+            dq = (row.get("discovery_query") or "").lower()
+            query_has_place = bool(target_places) and any(
+                (p or "").lower() in dq for p in target_places if p
+            )
+            if source == "maps" and (row.get("phone") or "").strip():
+                pass
+            elif query_has_place and source != "maps":
+                pass
+            else:
                 reject, entity, reason = True, "wrong_geo", "No evidence this company is in the requested location"
 
     competitor_seed = entity == "manufacturer" and hunting_buyers and not BUYER_RE.search(blob)
