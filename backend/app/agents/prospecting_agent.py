@@ -22,7 +22,7 @@ from app.agents.search_planner import (
 from app.agents.serp_classifier import classify_serp_row, summarize_classifications
 from app.agents.relevance import qualify_from_fast_decision, serp_triage
 from app.tools.web_search import WebSearchTool, HEADERS
-from app.tools.contact_finder import discover_contacts
+from app.services.enrichment import enrich_website
 
 
 # Organic-first discovery: trust Google results, keep volume high.
@@ -40,8 +40,11 @@ MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = MIN_LEADS
 DEFAULT_HUNT_LIMIT = 100
 WAVE1_QUERY_CAP = 48
 WAVE2_QUERY_CAP = 12
-CONTACT_CONCURRENCY = 16
-CONTACT_BUDGET_SEC = 40.0
+# Same depth as the UI "Find email" button (site + contact pages + Hunter)
+CONTACT_CONCURRENCY = 10
+CONTACT_BUDGET_SEC = 55.0
+# Enrich more candidates than we save so email-only shortlist still has volume
+CONTACT_ENRICH_CAP = 80
 
 
 def _domain(url: str) -> str:
@@ -475,11 +478,10 @@ class ProspectingAgent:
                     break
             return picked
 
-        target = min(limit, SAVE_CAP, max(TARGET_LEADS, MIN_LEADS))
-        qualified = _diversify(kept_items, target)
+        # Deep enrich like UI "Find email", then keep only contactable leads.
+        enrich_pool = _diversify(kept_items, min(len(kept_items), CONTACT_ENRICH_CAP))
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        # Parallel contact crawl for the shortlist (homepage + /contact). Hard time budget.
         contact_sem = asyncio.Semaphore(CONTACT_CONCURRENCY)
         contact_hits = 0
 
@@ -494,26 +496,20 @@ class ProspectingAgent:
                 phone = (page.get("phones") or [""])[0] or phone
             email = (seed_emails[0] if seed_emails else "") or ""
             contacts: List[Dict[str, Any]] = []
-            if seed_emails:
-                contacts = [{
-                    "type": "email", "value": seed_emails[0], "label": "Email",
-                    "source": "site", "role": "general",
-                }]
             if website:
                 async with contact_sem:
                     try:
-                        found = await discover_contacts(
-                            website=website,
-                            homepage_html="",
-                            homepage_text=item.get("site_text") or "",
-                            homepage_url=page.get("url") or website,
+                        found = await enrich_website(
+                            website,
+                            seed_email=email,
                             seed_phone=phone,
-                            seed_emails=seed_emails,
+                            seed_contacts=[],
+                            use_hunter=True,
                         )
                         if found.get("email"):
                             email = found["email"]
                         phone = found.get("phone") or phone
-                        contacts = found.get("contacts") or contacts
+                        contacts = list(found.get("contacts") or [])
                     except Exception:
                         pass
             item["email"] = email
@@ -522,23 +518,28 @@ class ProspectingAgent:
             if email:
                 contact_hits += 1
 
-        if qualified:
-            tasks = [asyncio.create_task(_fill_contacts(item)) for item in qualified]
+        if enrich_pool:
+            tasks = [asyncio.create_task(_fill_contacts(item)) for item in enrich_pool]
             done, pending = await asyncio.wait(tasks, timeout=CONTACT_BUDGET_SEC)
             for t in pending:
                 t.cancel()
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
 
+        emailed = [item for item in enrich_pool if (item.get("email") or "").strip()]
+        target = min(limit, SAVE_CAP, max(TARGET_LEADS, MIN_LEADS))
+        qualified = _diversify(emailed, target) if emailed else []
+
         decisions_log.append({
             "step": 4.5,
             "observation": (
-                f"Contact crawl: {contact_hits}/{len(qualified)} emails in "
-                f"≤{int(CONTACT_BUDGET_SEC)}s ({CONTACT_CONCURRENCY} concurrent)."
+                f"Deep contact check (site + Hunter like Find email): "
+                f"{contact_hits}/{len(enrich_pool)} emails in ≤{int(CONTACT_BUDGET_SEC)}s; "
+                f"keeping {len(qualified)} with email."
             ),
-            "decision": "Leads without email are still saved; background enrich continues.",
+            "decision": "Skip leads with no email after deep enrich — only contactable companies are saved.",
             "toolCalled": "ContactFinder",
-            "toolResultSnippet": f"emails={contact_hits}",
+            "toolResultSnippet": f"emails={contact_hits} kept={len(qualified)}",
         })
 
         async def _enrich(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -550,12 +551,9 @@ class ProspectingAgent:
             contacts = list(item.get("contacts") or [])
             timeline = [
                 {"time": time.strftime("%H:%M"), "action": f"Discovered via {source} ({co.get('discovery_pool') or 'search'})"},
-                {"time": time.strftime("%H:%M"), "action": f"Fit {q['fitSummary']} · {q['priority']} (fast SERP triage)"},
+                {"time": time.strftime("%H:%M"), "action": f"Fit {q['fitSummary']} · {q['priority']} (organic Google)"},
+                {"time": time.strftime("%H:%M"), "action": f"Found contact email {email}"},
             ]
-            if email:
-                timeline.append({"time": time.strftime("%H:%M"), "action": f"Found contact email {email}"})
-            else:
-                timeline.append({"time": time.strftime("%H:%M"), "action": "No public email yet — background enrich continues"})
             return {
                 "id": f"prospect-{uuid4().hex[:10]}",
                 "companyName": co.get("company_name") or "Unknown",
@@ -595,10 +593,8 @@ class ProspectingAgent:
         prospects = [await _enrich(item) for item in qualified]
 
         def _rank(p: Dict[str, Any]) -> tuple:
-            # Prefer leads with email so "With email" is useful out of the box
-            has_email = 1 if (p.get("email") or "").strip() else 0
             pri = {"priority": 3, "nurture": 2, "review": 1, "low": 0}.get(p.get("priority") or "", 0)
-            return (has_email, pri, int(p.get("fitScore") or 0))
+            return (pri, int(p.get("fitScore") or 0))
 
         prospects.sort(key=_rank, reverse=True)
 
@@ -611,22 +607,22 @@ class ProspectingAgent:
             "durationMs": duration_ms,
             "toolsUsed": ["SearchPlanner", "WebSearchTool", "SerpClassifier", "SerpTriage"]
             + (["SiteFetch"] if fetched_count else [])
-            + (["ContactFinder"] if qualified else []),
+            + (["ContactFinder"] if enrich_pool else []),
             "sourcesCount": len(classified),
             "status": "Completed" if prospects else "CompletedWithNoCandidates",
             "sellerProfile": profile_to_dict(profile),
             "decisions": decisions_log + [{
                 "step": 5,
                 "observation": (
-                    f"Returned {len(prospects)} leads ({with_email} with email) in {duration_ms}ms "
-                    f"(target {TARGET_LEADS})."
+                    f"Returned {len(prospects)} contactable leads ({with_email} with email) "
+                    f"in {duration_ms}ms after deep enrich of {len(enrich_pool)} companies."
                 ),
                 "decision": (
-                    "Discovery stays SERP-first; contact pages are crawled in parallel "
-                    f"with a {int(CONTACT_BUDGET_SEC)}s budget before save."
+                    "Organic Google discovery, then the same Find-email depth check; "
+                    "no-email companies are dropped."
                 ),
                 "toolCalled": "LeadPipeline",
-                "toolResultSnippet": f"{len(prospects)} leads · {with_email} emails · {fetched_count} homepage checks",
+                "toolResultSnippet": f"{len(prospects)} leads · {with_email} emails · enriched={len(enrich_pool)}",
             }],
         }
         return {"prospects": prospects, "agent_log": agent_log, "prospect": prospects[0] if prospects else None}

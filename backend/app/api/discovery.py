@@ -216,7 +216,9 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
             for prospect in prospects:
                 website = prospect.get("website") or ""
                 name = (prospect.get("companyName") or "").strip().lower()
-                # Email is optional — relevant companies without a public address stay as leads.
+                # Email-only shortlist — skip companies we could not contact after deep enrich
+                if not (prospect.get("email") or "").strip():
+                    continue
                 dom = _domain(website)
                 if (dom and dom in known) or (name and name in known_names):
                     skipped_existing += 1
