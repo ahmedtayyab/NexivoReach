@@ -346,37 +346,25 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
     neg = _neg(profile)
     prompt = (user_prompt or "").strip()
 
-    from app.agents.geo import expand_product_buyer_lines, extract_hunt_detail_lines, format_precise_hunt_query
+    from app.agents.geo import extract_hunt_detail_lines, interpret_hunt_intent
 
     detail_lines = extract_hunt_detail_lines(prompt) if prompt else []
-    # Product lines × selected buyer types (ICP / Buyer types chips), then attach location.
-    # e.g. "martial arts belts" + [importers, distributors] + California
-    #   → '"martial arts belts" importers in California'
-    expanded_lines = (
-        expand_product_buyer_lines(detail_lines, profile.buyers)
+    # Intent interpreter: exact product × selected buyer type × location.
+    # Primary queries run first. Volume variants keep the same product phrase.
+    # Broader categories are NOT mixed into wave 1.
+    intent = (
+        interpret_hunt_intent(detail_lines, profile.buyers, place)
         if detail_lines
-        else []
+        else None
     )
 
-    if prompt and expanded_lines:
-        for line in expanded_lines:
-            qn = format_precise_hunt_query(line, place)
-            if qn and not any(x.query.lower() == qn.lower() for x in queries):
-                queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
-            # Volume twin without quotes (still keeps industry negatives)
-            qn2 = format_precise_hunt_query(line, place, force_unquoted=True)
-            if qn2 and qn2.lower() != (qn or "").lower():
-                if not any(x.query.lower() == qn2.lower() for x in queries):
-                    queries.append(PlannedQuery(qn2, "user_volume", "direct_icp", False, 1))
-        # Fan out extra places for the same product×buyer lines
-        for extra_place in (profile.places or [])[1:3]:
-            for line in expanded_lines[:24]:
-                if extra_place.lower() in line.lower():
-                    continue
-                qn = format_precise_hunt_query(line, extra_place)
-                if qn and not any(x.query.lower() == qn.lower() for x in queries):
-                    queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
-        # Skip broad catalog paraphrases — they pull gym-machinery noise for accessory hunts.
+    if prompt and intent and intent["primary_queries"]:
+        for qn in intent["primary_queries"]:
+            if not any(x.query.lower() == qn.lower() for x in queries):
+                queries.append(PlannedQuery(qn, "exact_product", "direct_icp", False, 1))
+        for qn in intent["volume_queries"]:
+            if not any(x.query.lower() == qn.lower() for x in queries):
+                queries.append(PlannedQuery(qn, "exact_volume", "direct_icp", False, 1))
     elif prompt:
         queries.append(PlannedQuery(prompt, "user", "direct_icp", False, 1))
         role = (buyer or "buyer").rstrip("s")
@@ -410,9 +398,9 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
             return
         queries.append(PlannedQuery(q, family, pool, maps and profile.use_maps, 1))
 
-    # When hunt lines drive the wave, skip pool fan-out that reintroduces broad categories.
-    if expanded_lines:
-        return queries[:60]
+    # Exact-product hunts must not fall through into catalog paraphrases.
+    if intent and intent["primary_queries"]:
+        return queries[:72]
 
     if profile.pools.get("direct_icp") in ("primary", "sample"):
         add(f"{buyer} {cat} {place} {neg}", "icp_retrieval", "direct_icp")
@@ -500,8 +488,23 @@ def plan_wave2(
     profile: SellerProfile,
     wave1_stats: Dict[str, Any],
     learned_terms: Optional[List[str]] = None,
+    user_prompt: str = "",
 ) -> List[PlannedQuery]:
-    """Follow-up searches from SERP inspection — not synonym clones."""
+    """Follow-up searches. Exact-product hunts only broaden after primaries are thin."""
+    from app.agents.geo import extract_hunt_detail_lines, interpret_hunt_intent
+
+    prompt = (user_prompt or "").strip()
+    detail_lines = extract_hunt_detail_lines(prompt) if prompt else []
+    if detail_lines:
+        # Do not truncate products ("martial arts belts" → "martial arts") or learn junk terms.
+        relevant = int(wave1_stats.get("relevant_count") or 0)
+        if relevant >= 40:
+            return []
+        intent = interpret_hunt_intent(detail_lines, profile.buyers, _place(profile))
+        out: List[PlannedQuery] = []
+        for qn in intent.get("secondary_queries") or []:
+            out.append(PlannedQuery(qn, "secondary_expand", "direct_icp", False, 2))
+        return out[:8]
     cat = profile.categories[0]
     place = _place(profile)
     neg = _neg(profile)

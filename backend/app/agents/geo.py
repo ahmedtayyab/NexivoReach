@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # 2-letter codes that are also English words / common tokens — never match as bare "in"/"or"/…
 # Use postal-style context only: ", IN" or "IN 46201".
@@ -719,6 +719,120 @@ def split_product_and_role(line: str) -> tuple[str, str]:
     if m:
         return m.group("product").strip(), m.group("role").strip().lower()
     return text, ""
+
+
+def _singular_token(word: str) -> str:
+    w = (word or "").strip().lower()
+    if w.endswith("ies") and len(w) > 4:
+        return w[:-3] + "y"
+    if w.endswith("s") and not w.endswith("ss") and len(w) > 3:
+        return w[:-1]
+    return w
+
+
+def secondary_product_phrases(product: str) -> List[str]:
+    """
+    Broader discovery phrases used ONLY after exact-product searches are exhausted.
+    Never reduce a specific product to its headword (straps, belts) or to 'fitness equipment'.
+    """
+    p = re.sub(r"\s+", " ", (product or "").strip().lower())
+    if p in ("martial arts belts", "martial arts belt"):
+        return ["martial arts equipment"]
+    return []
+
+
+def interpret_hunt_intent(
+    products: List[str],
+    buyers: List[str],
+    location: str,
+) -> Dict[str, Any]:
+    """
+    Query-intent interpreter: exact product × selected buyer type × location.
+    Primary queries are the searches that must run first.
+    Volume queries keep the same product meaning (quotes / singular).
+    Secondary queries are optional broader discovery and must not replace primaries.
+    """
+    place = re.sub(r"\s+", " ", (location or "").strip())
+    roles: List[str] = []
+    seen_roles = set()
+    for raw in buyers or []:
+        form = normalize_buyer_query_term(raw)
+        if not form:
+            continue
+        key = form.rstrip("s")
+        if key in seen_roles:
+            continue
+        seen_roles.add(key)
+        roles.append(form)
+    if not roles:
+        roles = ["distributors"]
+
+    exact_products: List[str] = []
+    seen_p = set()
+    for raw in products or []:
+        product, role_on_line = split_product_and_role(re.sub(r"\s+", " ", (raw or "").strip()))
+        product = re.sub(r"\s+", " ", product).strip().lower()
+        if not product or len(product.split()) < 1:
+            continue
+        key = product.lower()
+        if key in seen_p:
+            continue
+        seen_p.add(key)
+        exact_products.append(product)
+        if role_on_line:
+            form = normalize_buyer_query_term(role_on_line)
+            if form and form.rstrip("s") not in seen_roles:
+                seen_roles.add(form.rstrip("s"))
+                roles.append(form)
+
+    primary: List[str] = []
+    volume: List[str] = []
+    secondary: List[str] = []
+    seen_q = set()
+
+    def _add(bucket: List[str], q: str) -> None:
+        qn = re.sub(r"\s+", " ", (q or "").strip())
+        if not qn or qn.lower() in seen_q:
+            return
+        seen_q.add(qn.lower())
+        bucket.append(qn)
+
+    # Fair order: each product gets every selected buyer before the next role pass repeats.
+    for role in roles:
+        for product in exact_products:
+            if place:
+                _add(primary, f"{product} {role} in {place}")
+            else:
+                _add(primary, f"{product} {role}")
+
+    for role in roles:
+        singular_role = _singular_token(role) if role.endswith("s") else role
+        for product in exact_products:
+            words = product.split()
+            singular_product = " ".join(words[:-1] + [_singular_token(words[-1])]) if words else product
+            if place:
+                _add(volume, f'"{product}" {role} in {place}')
+                if singular_product.lower() != product.lower() or singular_role != role:
+                    _add(volume, f'"{singular_product}" {singular_role} {place}')
+            else:
+                _add(volume, f'"{product}" {role}')
+
+    for product in exact_products:
+        for broader in secondary_product_phrases(product):
+            for role in roles[:2]:
+                if place:
+                    _add(secondary, f"{broader} {role} in {place}")
+                else:
+                    _add(secondary, f"{broader} {role}")
+
+    return {
+        "products": exact_products,
+        "buyers": roles,
+        "location": place,
+        "primary_queries": primary,
+        "volume_queries": volume,
+        "secondary_queries": secondary,
+    }
 
 
 def format_precise_hunt_query(line: str, place: str = "", *, force_unquoted: bool = False) -> str:

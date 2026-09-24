@@ -117,24 +117,43 @@ def test_product_lines_cross_buyer_types_and_location():
     )
     queries = [q.query.lower() for q in plan_wave1(profile, prompt)]
     assert len(queries) >= 4
-    assert any(
-        "weightlifting straps" in q and "distributors" in q and "california" in q and "-truck" in q
-        for q in queries
-    )
-    assert any(
-        "weightlifting straps" in q and "importers" in q and "california" in q
-        for q in queries
-    )
-    assert any(
-        "martial arts belts" in q and "distributors" in q and "california" in q
-        for q in queries
-    )
-    assert any(
-        "martial arts belts" in q and "importers" in q and "california" in q
-        for q in queries
-    )
-    # Must not search product-only without a buyer role
+    assert queries[0] == "weightlifting straps distributors in california"
+    assert "martial arts belts distributors in california" in queries
+    assert "weightlifting straps importers in california" in queries
+    assert "martial arts belts importers in california" in queries
+    # Exact phrase stays intact — never reduced to belts/straps/fitness
+    assert not any(q.strip() in {"straps distributors in california", "belts distributors in california"} for q in queries)
+    assert not any(q.startswith("fitness ") for q in queries)
     assert not any(q == "weightlifting straps in california" for q in queries)
+
+
+def test_intent_keeps_exact_product_and_defers_broader_terms():
+    from app.agents.geo import interpret_hunt_intent
+
+    martial = interpret_hunt_intent(
+        ["Martial arts belts"],
+        ["Importers", "Distributors"],
+        "Los Angeles",
+    )
+    assert martial["primary_queries"] == [
+        "martial arts belts importers in Los Angeles",
+        "martial arts belts distributors in Los Angeles",
+    ]
+    assert all("martial arts belts" in q for q in martial["primary_queries"])
+    assert not any(q.strip() == "belts importers in Los Angeles" for q in martial["primary_queries"] + martial["volume_queries"])
+    assert any("martial arts equipment" in q for q in martial["secondary_queries"])
+    assert not any("martial arts equipment" in q for q in martial["primary_queries"])
+
+    straps = interpret_hunt_intent(
+        ["Weightlifting straps"],
+        ["Importers", "Distributors"],
+        "New York",
+    )
+    assert "weightlifting straps importers in New York" in straps["primary_queries"]
+    assert "weightlifting straps distributors in New York" in straps["primary_queries"]
+    joined = " ".join(straps["primary_queries"] + straps["volume_queries"] + straps["secondary_queries"])
+    assert "fitness equipment" not in joined
+    assert not any(q.startswith("straps ") for q in straps["primary_queries"])
 
 
 def test_product_query_order_interleaves_products():

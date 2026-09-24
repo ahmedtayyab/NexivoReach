@@ -88,28 +88,39 @@ class ProspectingAgent:
         place = profile.places[0] if profile.places else ""
         exclude_domains = {_domain(u) for u in (exclude_websites or []) if _domain(u)}
 
-        decisions_log.append({
-            "step": 1,
-            "observation": (
+        from app.agents.geo import extract_hunt_detail_lines, interpret_hunt_intent
+
+        detail_lines = extract_hunt_detail_lines(user_prompt or "")
+        intent = interpret_hunt_intent(detail_lines, profile.buyers, place) if detail_lines else None
+        if intent and intent.get("primary_queries"):
+            observation = (
+                f"Interpreted exact products={intent['products']}, "
+                f"buyer types={intent['buyers']}, location={intent['location'] or '(none)'}."
+            )
+            decision = (
+                f"Searching {len(intent['primary_queries'])} exact product×buyer×location queries "
+                f"plus {len(intent['volume_queries'])} same-intent variants. "
+                "Broader categories are held for a later pass only if exact results are thin."
+            )
+            snippet = "; ".join(intent["primary_queries"][:6])
+        else:
+            observation = (
                 f"Seller motion={profile.sales_motion}, offer={profile.offer_class}, "
                 f"buyers={profile.buyers}, geo={profile.geo_mode}, places={profile.places or ['(none)']}, "
                 f"strict_geo={profile.strict_geo}, maps={'on' if profile.use_maps else 'off'}."
-            ),
-            "decision": (
+            )
+            decision = (
                 f"Wave 1: {len(wave1)} query families "
                 f"({', '.join(sorted({q.family for q in wave1}))}). "
-                + (
-                    f"Prioritizing {profile.buyers[0]} in {', '.join(profile.places[:2])}."
-                    if profile.buyers and profile.places
-                    else (
-                        f"Strict location filter for {', '.join(profile.places[:2])}."
-                        if profile.strict_geo
-                        else "Not running synonym clones."
-                    )
-                )
-            ),
-            "toolCalled": "SearchPlanner",
-            "toolResultSnippet": "; ".join(q.query for q in wave1[:4]),
+            )
+            snippet = "; ".join(q.query for q in wave1[:4])
+
+        decisions_log.append({
+            "step": 1,
+            "observation": observation,
+            "decision": decision,
+            "toolCalled": "HuntIntent",
+            "toolResultSnippet": snippet,
         })
 
         leads = await self.web_search.hunt_leads(
@@ -181,7 +192,7 @@ class ProspectingAgent:
             "filteredOut": reject_samples,
         })
 
-        wave2 = plan_wave2(profile, stats, stats.get("learned_terms"))[:WAVE2_QUERY_CAP]
+        wave2 = plan_wave2(profile, stats, stats.get("learned_terms"), user_prompt=user_prompt)[:WAVE2_QUERY_CAP]
         # Deepen only when the first wave is thin — saves a full search round when we already have volume
         need_wave2 = bool(wave2) and stats["relevant_count"] < MIN_CANDIDATES_BEFORE_SKIP_WAVE2
         if need_wave2:
