@@ -262,10 +262,38 @@ def test_fitness_store_serp_is_inspected_not_rejected():
     assert row["reject"] is False
 
 
+def test_serp_triage_keeps_fitness_rejects_jewelry():
+    from app.agents.relevance import serp_triage
+
+    jewelry = serp_triage(
+        {
+            "company_name": "Chicago Jewelry Wholesale",
+            "title": "Chicago Jewelry Wholesale – Distributors of Fine Jewelry",
+            "snippet": "Wholesale distributor of gold chains and gemstones in Chicago.",
+            "discovery_query": "lifting hooks distributors in Chicago",
+        },
+        categories=["lifting hooks"],
+        buyers=["distributors"],
+    )
+    assert jewelry["verdict"] == "reject"
+
+    sports = serp_triage(
+        {
+            "company_name": "XYZ Sports & Fitness Distributors",
+            "title": "XYZ Sports & Fitness – Wholesale Distributor Chicago",
+            "snippet": "Distributor of gym accessories and strength equipment for retailers.",
+            "discovery_query": "lifting hooks distributors in Chicago",
+        },
+        categories=["lifting hooks"],
+        buyers=["distributors"],
+    )
+    assert sports["verdict"] == "keep"
+
+
 def test_rejects_obviously_unrelated_business_serp():
-    """SERP no longer hard-rejects jewelry — AI relevance decides after fetch."""
+    """SERP host filter no longer kills jewelry; triage rejects it cheaply."""
     from app.agents.serp_classifier import classify_serp_row
-    from app.agents.relevance import heuristic_relevance
+    from app.agents.relevance import serp_triage
 
     jewelry = classify_serp_row(
         {
@@ -281,6 +309,7 @@ def test_rejects_obviously_unrelated_business_serp():
         offer_categories=["lifting hooks", "weightlifting straps"],
     )
     assert jewelry["reject"] is False
+    assert serp_triage(jewelry, categories=["lifting hooks"], buyers=["distributors"])["verdict"] == "reject"
 
     sports = classify_serp_row(
         {
@@ -296,6 +325,9 @@ def test_rejects_obviously_unrelated_business_serp():
         offer_categories=["lifting hooks", "weightlifting straps"],
     )
     assert sports["reject"] is False
+    assert serp_triage(sports, categories=["lifting hooks"], buyers=["distributors"])["verdict"] == "keep"
+
+    from app.agents.relevance import heuristic_relevance
 
     jewelry_ai = heuristic_relevance(
         product="lifting hooks",

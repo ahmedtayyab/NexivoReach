@@ -176,7 +176,7 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
                     **business_payload,
                 }
 
-        _update_job(job_id, phase="Searching the web…", progress=22)
+        _update_job(job_id, phase="Searching Google…", progress=22)
         agent = ProspectingAgent()
         res = await agent.execute_discovery_goal(
             user_prompt=req.user_prompt,
@@ -184,9 +184,14 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
             icp=req.icp,
             business=business_payload,
             exclude_websites=exclude,
-            limit=80,
+            limit=30,
         )
-        _update_job(job_id, phase="Saving shortlist…", progress=78)
+        n_found = len(res.get("prospects") or [])
+        _update_job(
+            job_id,
+            phase=f"Saving {n_found} leads…",
+            progress=85,
+        )
 
         prospects = res.get("prospects") or []
         agent_log = res.get("agent_log") or {}
@@ -270,31 +275,7 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
             session.add(ar)
             session.commit()
 
-        missing_ids = [
-            p.get("id")
-            for p in saved_front
-            if p.get("id") and p.get("website") and not (p.get("email") or "").strip()
-        ]
-        if missing_ids:
-            _update_job(
-                job_id,
-                status="running",
-                phase="Finding contact emails…",
-                progress=92,
-                found_count=len(saved_front),
-                result_prospect_ids=saved_ids,
-            )
-            # Fill before marking complete so Leads show emails on first paint
-            await _auto_fill_contacts_job(missing_ids[:25])
-            with Session(engine) as session:
-                refreshed: List[Dict[str, Any]] = []
-                for pid in saved_ids:
-                    row = session.get(ProspectRecord, pid)
-                    if row:
-                        refreshed.append(prospect_to_frontend(row))
-                if refreshed:
-                    saved_front = refreshed
-
+        # Mark hunt complete immediately — contact enrichment must not block the UI.
         _update_job(
             job_id,
             status="completed",
@@ -309,6 +290,15 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
 
         if saved_front:
             _sync_leads_job(business_id, saved_front)
+
+        missing_ids = [
+            p.get("id")
+            for p in saved_front
+            if p.get("id") and p.get("website") and not (p.get("email") or "").strip()
+        ]
+        if missing_ids:
+            # Fire-and-forget: leads already visible; emails fill in as enrichment finishes
+            asyncio.create_task(_auto_fill_contacts_job(missing_ids[:40]))
     except Exception as exc:
         log.exception("Discovery job %s failed", job_id)
         _update_job(

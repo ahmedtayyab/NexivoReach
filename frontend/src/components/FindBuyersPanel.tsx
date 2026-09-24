@@ -31,7 +31,7 @@ type RecentHunt = {
   requestPayload?: { user_prompt?: string };
 };
 
-const HUNT_PHASE_SECONDS = [0, 12, 28, 45, 70];
+const HUNT_PHASE_SECONDS = [0, 8, 18, 35];
 const SKIP_SHEETS_PROMPT_KEY = 'nr-hunt-skip-sheets-prompt';
 
 /** Split a past freeform hunt into category + location when possible. */
@@ -83,9 +83,8 @@ function buildPhases(query: string, placeHint: string): string[] {
   const place = placeHint ? ` in ${placeHint}` : '';
   return [
     `Planning searches for “${short}”…`,
-    `Searching the web${place}…`,
-    'Opening company sites…',
-    'Scoring Fit on live pages…',
+    `Searching Google${place}…`,
+    'Filtering & combining results…',
     'Building your shortlist…',
   ];
 }

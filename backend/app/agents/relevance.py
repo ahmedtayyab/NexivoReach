@@ -130,6 +130,249 @@ def heuristic_relevance(
     }
 
 
+def serp_triage(
+    row: Dict[str, Any],
+    *,
+    categories: Optional[List[str]] = None,
+    buyers: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Fast SERP-only decision: keep | reject | ambiguous.
+    Uses title + snippet + company name — no website fetch.
+    """
+    cats = list(categories or [])
+    name = (row.get("company_name") or "").strip()
+    title = (row.get("title") or "").strip()
+    snippet = (row.get("snippet") or "").strip()
+    dq = (row.get("discovery_query") or "").strip()
+    product, role, _place = parse_discovery_query(dq)
+    if product and product not in cats:
+        cats = [product, *cats]
+    if not role and buyers:
+        role = (buyers[0] or "").strip()
+
+    blob = f"{name}\n{title}\n{snippet}"
+    if looks_unrelated_business(blob, cats):
+        return {
+            "verdict": "reject",
+            "confidence": 0.9,
+            "reason": "Obviously unrelated industry (jewelry, medical, industrial, etc.).",
+        }
+    offer = page_matches_specific_products(blob, cats) if cats else "unknown"
+    if offer == "low":
+        return {
+            "verdict": "reject",
+            "confidence": 0.85,
+            "reason": "Looks like a different industry product (cargo straps, crane hooks…).",
+        }
+    if offer in ("high", "medium"):
+        return {
+            "verdict": "keep",
+            "confidence": 0.8 if offer == "high" else 0.65,
+            "reason": f"SERP matches hunt product “{product or (cats[0] if cats else 'product')}”.",
+        }
+    if has_related_trade_context(blob, cats):
+        return {
+            "verdict": "keep",
+            "confidence": 0.7,
+            "reason": "Fitness/sports/gym trade language in search result.",
+        }
+    role_token = (role or "").rstrip("s")
+    role_hit = bool(role_token and len(role_token) >= 4 and re.search(
+        rf"\b{re.escape(role_token)}s?\b", blob, re.I
+    ))
+    # Exact-query Google hit naming a buyer role is usually good enough to keep
+    if role_hit and (snippet or title):
+        return {
+            "verdict": "keep",
+            "confidence": 0.55,
+            "reason": f"Google result for this hunt names {role or 'buyer'} role.",
+        }
+    # Generic name / thin snippet — inspect only if we still need volume
+    return {
+        "verdict": "ambiguous",
+        "confidence": 0.4,
+        "reason": "SERP is thin; homepage check if more leads are needed.",
+    }
+
+
+def qualify_from_fast_decision(
+    *,
+    row: Dict[str, Any],
+    profile: SellerProfile,
+    products: List[Dict[str, Any]],
+    triage: Dict[str, Any],
+    site_text: str = "",
+) -> Dict[str, Any]:
+    """Build a qualify-shaped result from SERP triage (or a quick homepage heuristic)."""
+    from app.agents.qualify import (
+        _approach,
+        _fit_score_only,
+        _hunt_buyer_label,
+        _hunt_matches,
+        _hunt_product_label,
+        _industry_label,
+        _resolve_location,
+        offer_ev_as_matches,
+    )
+
+    name = row.get("company_name") or "This company"
+    snippet = row.get("snippet") or ""
+    title = row.get("title") or ""
+    url = row.get("website") or ""
+    location = _resolve_location(row, site_text, profile)
+    dq = (row.get("discovery_query") or "")
+    product, role, _place = parse_discovery_query(dq)
+    if not product:
+        product = (profile.categories[0] if profile.categories else "") or ""
+    if not role:
+        role = (profile.buyers[0] if profile.buyers else "distributors") or "distributors"
+
+    if _geo_contradicts(location, list(profile.places or []), site_text or "", row):
+        return {
+            "icpFit": "low",
+            "offerFit": "low",
+            "motionFit": "unknown",
+            "fitSummary": "low",
+            "intent": "none",
+            "confidence": 0.8,
+            "priority": "reject",
+            "evidence": [],
+            "whyThisProspect": f"{name}: skipped — address conflicts with hunt location.",
+            "whyNow": "No timing evidence.",
+            "fitScore": 20,
+            "fitBreakdown": {
+                "aiRelevant": False,
+                "aiReason": "Contradictory location.",
+                "discoveryQuery": dq,
+                "huntProduct": product,
+                "huntBuyerType": role,
+                "huntMatches": _hunt_matches(row),
+                "triage": triage.get("verdict"),
+            },
+            "buyingSignals": [],
+            "productFit": [],
+            "shouldPersist": False,
+            "recommendedApproach": "Do not contact — wrong geography.",
+            "location": location,
+            "industry": _industry_label(f"{name}\n{snippet}", profile),
+        }
+
+    # If we fetched a page, re-run heuristic on full text
+    if site_text.strip():
+        ai = heuristic_relevance(
+            product=product,
+            buyer_type=role,
+            location=(profile.places[0] if profile.places else "") or "",
+            company_name=name,
+            title=title,
+            snippet=snippet,
+            site_text=site_text,
+            categories=list(profile.categories or []),
+        )
+        relevant = bool(ai.get("relevant"))
+        conf = float(ai.get("confidence") or 0.5)
+        reason = str(ai.get("reason") or "")
+    else:
+        relevant = triage.get("verdict") == "keep"
+        conf = float(triage.get("confidence") or 0.5)
+        reason = str(triage.get("reason") or "")
+
+    if not relevant:
+        return {
+            "icpFit": "low",
+            "offerFit": "low",
+            "motionFit": "unknown",
+            "fitSummary": "low",
+            "intent": "none",
+            "confidence": round(conf, 2),
+            "priority": "reject",
+            "evidence": [],
+            "whyThisProspect": f"{name}: {reason}",
+            "whyNow": "No timing evidence.",
+            "fitScore": 25,
+            "fitBreakdown": {
+                "aiRelevant": False,
+                "aiReason": reason,
+                "discoveryQuery": dq,
+                "huntProduct": product,
+                "huntBuyerType": role,
+                "huntMatches": _hunt_matches(row),
+                "triage": triage.get("verdict"),
+            },
+            "buyingSignals": [],
+            "productFit": [],
+            "shouldPersist": False,
+            "recommendedApproach": "Not a fit.",
+            "location": location,
+            "industry": _industry_label(f"{name}\n{snippet}\n{site_text}", profile),
+        }
+
+    offer = "high" if conf >= 0.7 else "medium"
+    icp = "high" if conf >= 0.65 else "medium"
+    fit_summary = "high" if conf >= 0.7 else "medium"
+    priority = "nurture" if conf >= 0.7 else "review"
+    text = f"{name}\n{snippet}\n{site_text or ''}"
+    evidence = [{
+        "claim": "offer",
+        "statement": reason,
+        "quote": reason[:160],
+        "url": url,
+        "sourceType": "homepage" if site_text else "serp",
+        "confidence": conf,
+    }]
+    score = _fit_score_only(
+        icp=icp,
+        offer=offer,
+        motion="unknown",
+        location=location,
+        profile=profile,
+        source_type="homepage" if site_text else "serp",
+        evidence_count=1,
+        site_text=site_text or "",
+        seed_key=f"{name}|{url}",
+    )
+    return {
+        "icpFit": icp,
+        "offerFit": offer,
+        "motionFit": "unknown",
+        "fitSummary": fit_summary,
+        "intent": "none",
+        "confidence": round(conf, 2),
+        "priority": priority,
+        "evidence": evidence,
+        "whyThisProspect": f"{name}: {reason}" if reason else f"{name}: Fast SERP match.",
+        "whyNow": "No timing evidence; treat as a fit-based account, not a hot inbound.",
+        "fitScore": score["total_score"],
+        "fitBreakdown": {
+            **score["breakdown"],
+            "icpFit": icp,
+            "offerFit": offer,
+            "motionFit": "unknown",
+            "fitSummary": fit_summary,
+            "intent": "none",
+            "confidence": round(conf, 2),
+            "priority": priority,
+            "entityType": row.get("entity_type") or "company",
+            "discoveryPool": row.get("discovery_pool") or "",
+            "discoveryQuery": dq,
+            "huntProduct": _hunt_product_label(text, profile, dq) or product,
+            "huntBuyerType": _hunt_buyer_label(text, profile, dq) or role,
+            "huntMatches": _hunt_matches(row),
+            "aiRelevant": True,
+            "aiReason": reason,
+            "triage": triage.get("verdict") or "keep",
+            "evidence": evidence,
+        },
+        "buyingSignals": [],
+        "productFit": offer_ev_as_matches(offer, products, text, name),
+        "shouldPersist": True,
+        "recommendedApproach": _approach(profile, name, fit_summary, "none"),
+        "location": location,
+        "industry": _industry_label(text, profile),
+    }
+
+
 async def ask_relevance(
     provider: AIProvider,
     *,
