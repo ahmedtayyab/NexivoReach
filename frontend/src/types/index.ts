@@ -99,6 +99,9 @@ export interface Prospect {
     priority?: string;
     entityType?: string;
     discoveryPool?: string;
+    discoveryQuery?: string;
+    huntProduct?: string;
+    huntBuyerType?: string;
     whyNow?: string;
     evidence?: ProspectEvidence[];
     contactEnrich?: {

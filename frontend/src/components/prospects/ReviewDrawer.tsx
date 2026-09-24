@@ -168,9 +168,6 @@ export default function ReviewDrawer({
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <h1 className="text-[15px] font-semibold text-ink">{prospect.companyName}</h1>
-              <p className="text-[13px] text-ink-muted mt-0.5">
-                {[prospect.location?.trim() || 'Location not confirmed', prospect.industry].filter(Boolean).join(' · ')}
-              </p>
               <LeadRationaleChips prospect={prospect} className="mt-2.5" />
             </div>
             <div className="text-right shrink-0">

@@ -293,6 +293,8 @@ def qualify_account(
             "entityType": row.get("entity_type") or "company",
             "discoveryPool": row.get("discovery_pool") or row.get("pool") or "",
             "discoveryQuery": row.get("discovery_query") or "",
+            "huntProduct": _hunt_product_label(text, profile, row.get("discovery_query") or ""),
+            "huntBuyerType": _hunt_buyer_label(text, profile, row.get("discovery_query") or ""),
             "whyNow": why_now,
             "evidence": evidence,
         },
@@ -634,6 +636,39 @@ def _industry_label(text: str, profile: SellerProfile) -> str:
         if b.lower() in text.lower():
             return b[:80]
     return (profile.categories[0] if profile.categories else "Company")[:80]
+
+
+def _hunt_product_label(text: str, profile: SellerProfile, discovery_query: str = "") -> str:
+    """Best product phrase from the hunt that matches this lead (or first hunt product)."""
+    from app.agents.geo import parse_discovery_query, product_phrases_from_profile_categories
+
+    cats = list(profile.categories or [])
+    phrases = product_phrases_from_profile_categories(cats) or [c for c in cats if c]
+    blob = f"{text or ''}\n{discovery_query or ''}".lower()
+    for p in phrases:
+        if p.lower() in blob:
+            return p[:80]
+    dq_product, _role, _place = parse_discovery_query(discovery_query)
+    if dq_product:
+        return dq_product[:80]
+    return (phrases[0] if phrases else "")[:80]
+
+
+def _hunt_buyer_label(text: str, profile: SellerProfile, discovery_query: str = "") -> str:
+    """Buyer role from the discovering query or matched ICP buyer type."""
+    from app.agents.geo import normalize_buyer_query_term, parse_discovery_query
+
+    _product, role, _place = parse_discovery_query(discovery_query)
+    if role:
+        return role[:80]
+    blob = (text or "").lower()
+    for b in profile.buyers or []:
+        stem = (b or "").lower().rstrip("s")
+        if stem and re.search(rf"\b{re.escape(stem)}s?\b", blob):
+            return (normalize_buyer_query_term(b) or b)[:80]
+    if profile.buyers:
+        return (normalize_buyer_query_term(profile.buyers[0]) or profile.buyers[0])[:80]
+    return ""
 
 
 def _fit_score_only(

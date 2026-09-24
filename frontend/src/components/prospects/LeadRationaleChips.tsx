@@ -2,23 +2,41 @@ import type { Prospect } from '../../types';
 
 type Chip = { label: string; value: string; tone?: 'good' | 'warn' | 'muted' | 'accent' };
 
-function toneForFit(level?: string): Chip['tone'] {
-  const v = (level || '').toLowerCase();
-  if (v === 'high' || v === 'strong') return 'good';
-  if (v === 'medium' || v === 'moderate') return 'accent';
-  if (v === 'low' || v === 'weak' || v === 'none') return 'muted';
-  return 'muted';
+/** Pull product / buyer / place from a discovery SERP query when stored. */
+function parseDiscoveryQuery(query: string): { product: string; buyer: string; place: string } {
+  let raw = (query || '').trim().replace(/\s+/g, ' ');
+  if (!raw) return { product: '', buyer: '', place: '' };
+  raw = raw.replace(/\s+-\S+/g, '').trim();
+  let place = '';
+  const placeMatch = raw.match(/\bin\s+(.+)$/i);
+  if (placeMatch) {
+    place = placeMatch[1].trim().replace(/[.,]+$/, '');
+    raw = raw.slice(0, placeMatch.index).trim();
+  }
+  const quoted = raw.match(/^"([^"]+)"\s*(.*)$/);
+  if (quoted) {
+    return { product: quoted[1].trim(), buyer: (quoted[2] || '').trim(), place };
+  }
+  const roleRe =
+    /\s+(distributors?|wholesalers?|importers?|retailers?|buyers?|dealers?|gyms?|clinics?|brands?)\s*$/i;
+  const roleMatch = raw.match(roleRe);
+  if (roleMatch) {
+    return {
+      product: raw.slice(0, roleMatch.index).trim(),
+      buyer: roleMatch[1].trim(),
+      place,
+    };
+  }
+  return { product: raw, buyer: '', place };
 }
 
-function toneForIntent(level?: string): Chip['tone'] {
-  const v = (level || '').toLowerCase();
-  if (v === 'high' || v === 'active' || v === 'strong') return 'good';
-  if (v === 'medium' || v === 'moderate') return 'accent';
-  if (v === 'low' || v === 'none' || !v) return 'muted';
-  return 'warn';
+function titleCaseRole(role: string): string {
+  const r = (role || '').trim();
+  if (!r) return '';
+  return r.replace(/\b\w/g, c => c.toUpperCase());
 }
 
-/** Compact “why this buyer” chips from Fit / Intent / priority / catalog match. */
+/** Compact hunt context chips: Product · Buyer type · Location. */
 export default function LeadRationaleChips({
   prospect,
   compact = false,
@@ -29,42 +47,35 @@ export default function LeadRationaleChips({
   className?: string;
 }) {
   const bd = prospect.fitBreakdown || ({} as Prospect['fitBreakdown']);
-  const icp = prospect.icpFit || bd.icpFit;
-  const offer = prospect.offerFit || bd.offerFit;
-  const motion = prospect.motionFit || bd.motionFit;
-  const intent = prospect.intent || bd.intent;
-  const priority = prospect.priority || bd.priority;
-  const topProduct = (prospect.productFit || []).find(p => p.fitLevel === 'High')
-    || (prospect.productFit || [])[0];
-  const enrich = prospect.fitBreakdown?.contactEnrich;
+  const parsed = parseDiscoveryQuery(bd.discoveryQuery || '');
+
+  const product = (
+    bd.huntProduct ||
+    parsed.product ||
+    (prospect.productFit || [])[0]?.productName ||
+    prospect.industry ||
+    ''
+  ).trim();
+
+  const buyer = titleCaseRole(
+    (bd.huntBuyerType || parsed.buyer || '').trim(),
+  );
+
+  const location = (
+    prospect.location ||
+    parsed.place ||
+    ''
+  ).trim() || 'Location not confirmed';
 
   const chips: Chip[] = [];
-  if (icp) chips.push({ label: 'ICP', value: icp, tone: toneForFit(icp) });
-  if (offer) chips.push({ label: 'Offer', value: offer, tone: toneForFit(offer) });
-  if (motion) chips.push({ label: 'Motion', value: motion, tone: toneForFit(motion) });
-  if (intent) chips.push({ label: 'Intent', value: intent, tone: toneForIntent(intent) });
-  if (priority) chips.push({ label: 'Priority', value: priority, tone: 'accent' });
-  if (topProduct) {
-    chips.push({
-      label: 'Catalog',
-      value: topProduct.productName,
-      tone: topProduct.fitLevel === 'High' ? 'good' : 'muted',
-    });
-  }
-  if (enrich?.status) {
-    chips.push({
-      label: 'Contacts',
-      value: enrich.status === 'found' ? (enrich.sources || []).join('+') || 'found' : enrich.status,
-      tone: enrich.status === 'found' ? 'good' : enrich.status === 'none' ? 'warn' : 'muted',
-    });
-  }
+  if (product) chips.push({ label: 'Product', value: product, tone: 'accent' });
+  if (buyer) chips.push({ label: 'Buyer type', value: buyer, tone: 'good' });
+  chips.push({ label: 'Location', value: location, tone: 'muted' });
 
-  if (!chips.length) return null;
-
-  const shown = compact ? chips.slice(0, 4) : chips;
+  const shown = compact ? chips.slice(0, 3) : chips;
 
   return (
-    <div className={`lead-rationale-chips ${className}`.trim()} aria-label="Lead rationale">
+    <div className={`lead-rationale-chips ${className}`.trim()} aria-label="Hunt match">
       {shown.map(c => (
         <span
           key={`${c.label}-${c.value}`}

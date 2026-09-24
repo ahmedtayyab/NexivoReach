@@ -709,6 +709,31 @@ def format_precise_hunt_query(line: str, place: str = "") -> str:
     return re.sub(r"\s+", " ", q).strip()
 
 
+def parse_discovery_query(query: str) -> tuple[str, str, str]:
+    """
+    Recover product, buyer role, and place from a precise hunt query.
+    '"weightlifting straps" distributors in California -truck' →
+      ('weightlifting straps', 'distributors', 'California')
+    """
+    raw = re.sub(r"\s+", " ", (query or "").strip())
+    if not raw:
+        return "", "", ""
+    # Drop SERP negatives
+    raw = re.sub(r"\s+-\S+", "", raw).strip()
+    place = ""
+    m_place = re.search(r"\bin\s+(.+)$", raw, re.I)
+    if m_place:
+        place = m_place.group(1).strip().rstrip(",.")
+        raw = raw[: m_place.start()].strip()
+    m_q = re.match(r'^"([^"]+)"\s*(.*)$', raw)
+    if m_q:
+        product = m_q.group(1).strip()
+        role = normalize_buyer_query_term(m_q.group(2) or "") or (m_q.group(2) or "").strip()
+        return product, role, place
+    product, role = split_product_and_role(raw)
+    return product, (normalize_buyer_query_term(role) or role), place
+
+
 def product_phrases_from_profile_categories(categories: List[str]) -> List[str]:
     """Multi-word hunt products that must stay faithful in matching."""
     out: List[str] = []
