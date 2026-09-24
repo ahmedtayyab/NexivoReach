@@ -94,6 +94,7 @@ class ProspectRecord(SQLModel, table=True):
     contact_again: bool = True
     last_reply_at: Optional[str] = None
     reply_summary: Optional[str] = None
+    discovery_job_id: Optional[str] = Field(default=None, index=True)
 
 
 class AgentRunRecord(SQLModel, table=True):

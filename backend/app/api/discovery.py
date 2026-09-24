@@ -243,6 +243,7 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
                     contact_again=bool(prospect.get("contactAgain", True)),
                     last_reply_at=prospect.get("lastReplyAt") or "",
                     reply_summary=prospect.get("replySummary") or "",
+                    discovery_job_id=job_id,
                 )
                 session.add(pr)
                 saved_front.append(prospect_to_frontend(pr))

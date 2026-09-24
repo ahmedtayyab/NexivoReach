@@ -104,6 +104,7 @@ export default function App() {
   const [outreachMode, setOutreachMode] = useState<OutreachMode>('ai');
   const [icp, setIcp] = useState<IdealCustomerProfile>(emptyICP);
   const [prospects, setProspects] = useState<Prospect[]>(emptyProspects);
+  const [preferLatestHunt, setPreferLatestHunt] = useState(false);
   const [agentLogs, setAgentLogs] = useState<AgentRunLog[]>(emptyAgentLogs);
   const [selectedProspectId, setSelectedProspectId] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -998,6 +999,8 @@ export default function App() {
               templatesReturnRef.current = 'queue';
               navigate('templates');
             }}
+            preferLatestHunt={preferLatestHunt}
+            onPreferLatestHuntHandled={() => setPreferLatestHunt(false)}
           />
         )}
         {activeRoute === 'outreach' && (
@@ -1065,7 +1068,10 @@ export default function App() {
             onAddProspects={handleAddProspects}
             onAddLog={handleAddLog}
             onFindBuyersComplete={(n) => {
-              if (n > 0) navigate('queue');
+              if (n > 0) {
+                setPreferLatestHunt(true);
+                navigate('queue');
+              }
             }}
             onRestoredFromSheets={handleRestoredFromSheets}
           />

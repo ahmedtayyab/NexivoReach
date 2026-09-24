@@ -175,6 +175,8 @@ def save_prospect(payload: Dict[str, Any], request: Request, user: AuthUser = De
                 existing.contact_again = bool(data.get("contact_again"))
             existing.last_reply_at = data.get("last_reply_at") or existing.last_reply_at
             existing.reply_summary = data.get("reply_summary") or existing.reply_summary
+            if data.get("discovery_job_id"):
+                existing.discovery_job_id = data.get("discovery_job_id")
             session.add(existing)
             session.commit()
             session.refresh(existing)
@@ -208,6 +210,7 @@ def save_prospect(payload: Dict[str, Any], request: Request, user: AuthUser = De
             contact_again=bool(data.get("contact_again", True)),
             last_reply_at=data.get("last_reply_at") or "",
             reply_summary=data.get("reply_summary") or "",
+            discovery_job_id=data.get("discovery_job_id") or None,
         )
         session.add(record)
         session.commit()

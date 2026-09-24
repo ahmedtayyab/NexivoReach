@@ -142,6 +142,7 @@ def _ensure_prospect_contact_columns():
         ("prospectrecord", "contact_again", "BOOLEAN"),
         ("prospectrecord", "last_reply_at", "VARCHAR"),
         ("prospectrecord", "reply_summary", "VARCHAR"),
+        ("prospectrecord", "discovery_job_id", "VARCHAR"),
     ]
     with engine.connect() as conn:
         for table, column, coltype in additions:

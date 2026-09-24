@@ -361,7 +361,7 @@ export default function FindBuyersPanel({
         foundCount
           ? `Added ${foundCount} lead${foundCount === 1 ? '' : 's'}${
               skipped ? ` (${skipped} already in your list)` : ''
-            } — filter Strong vs Average on Leads.${sheetsNote}`
+            } — open Latest hunt on Leads to review new accounts.${sheetsNote}`
           : skipped
             ? `All matches were already in your list (${skipped}). Try a different hunt.`
             : 'No accounts this round — try more specific hunt lines or another location.',

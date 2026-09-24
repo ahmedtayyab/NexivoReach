@@ -181,6 +181,7 @@ export interface Prospect {
     | 'Researched'
     | 'Qualified';
   discoveredAt: string;
+  discoveryJobId?: string;
   agentTimeline: {
     time: string;
     action: string;

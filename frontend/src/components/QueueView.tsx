@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
 import { ArrowDown, ArrowUp, Loader2, Mail, MailWarning } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { leadRowToneClass, recipientEmail } from '../lib/leadTone';
-import { computeOutcomes, hasEmail, isDueFollowUp } from '../lib/outcomes';
+import { computeOutcomes, hasEmail } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
 import { FitScoreBadge } from './FitScoreBadge';
 import { useConfirm } from './ConfirmDialog';
@@ -38,16 +38,17 @@ interface Props {
   onGoWorkspace?: () => void;
   templateCount?: number;
   onGoTemplates?: () => void;
+  /** After a hunt finishes, focus Latest hunt + With email. */
+  preferLatestHunt?: boolean;
+  onPreferLatestHuntHandled?: () => void;
 }
 
-type IntentFilter = 'all' | 'high' | 'low' | 'none';
-type FitFilter = 'all' | 'high' | 'medium' | 'low' | 'score75' | 'score90';
 type SortKey = 'fit' | 'intent';
 type SortDir = 'asc' | 'desc';
+type HuntScope = 'latest' | 'all';
+type EmailFilter = 'all' | 'has_email' | 'missing_email';
 
 const INTENT_RANK: Record<string, number> = { high: 3, low: 2, none: 1 };
-type PriorityFilter = 'all' | 'priority' | 'nurture' | 'review' | 'low';
-type CadenceFilter = 'all' | 'due' | 'missing_email' | 'has_email';
 
 export default function QueueView({
   prospects,
@@ -63,12 +64,12 @@ export default function QueueView({
   onGoWorkspace,
   templateCount = 0,
   onGoTemplates,
+  preferLatestHunt = false,
+  onPreferLatestHuntHandled,
 }: Props) {
-  const [filter, setFilter] = useState<string>('To contact');
-  const [intentFilter, setIntentFilter] = useState<IntentFilter>('all');
-  const [fitFilter, setFitFilter] = useState<FitFilter>('all');
-  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all');
-  const [cadenceFilter, setCadenceFilter] = useState<CadenceFilter>('all');
+  const [filter, setFilter] = useState<string>('All');
+  const [huntScope, setHuntScope] = useState<HuntScope>('all');
+  const [emailFilter, setEmailFilter] = useState<EmailFilter>('all');
   const [clearing, setClearing] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [sendingSelected, setSendingSelected] = useState(false);
@@ -81,7 +82,37 @@ export default function QueueView({
   const confirm = useConfirm();
   const lastRun = agentLogs[0];
   const lastRunLabel = lastRun ? formatRelative(lastRun.timestamp) : null;
-  const outcomes = useMemo(() => computeOutcomes(prospects), [prospects]);
+
+  const latestHuntId = useMemo(() => {
+    let bestId = '';
+    let bestAt = '';
+    for (const p of prospects) {
+      const jid = (p.discoveryJobId || '').trim();
+      if (!jid) continue;
+      const at = p.discoveredAt || '';
+      if (!bestId || at > bestAt) {
+        bestId = jid;
+        bestAt = at;
+      }
+    }
+    return bestId;
+  }, [prospects]);
+
+  const latestHuntProspects = useMemo(() => {
+    if (!latestHuntId) return [];
+    return prospects.filter(p => (p.discoveryJobId || '') === latestHuntId);
+  }, [prospects, latestHuntId]);
+
+  useEffect(() => {
+    if (!preferLatestHunt || !latestHuntId) return;
+    setHuntScope('latest');
+    setEmailFilter('has_email');
+    setFilter('All');
+    onPreferLatestHuntHandled?.();
+  }, [preferLatestHunt, latestHuntId, onPreferLatestHuntHandled]);
+
+  const scopedProspects = huntScope === 'latest' && latestHuntId ? latestHuntProspects : prospects;
+  const outcomes = useMemo(() => computeOutcomes(scopedProspects), [scopedProspects]);
 
   const handleClear = async () => {
     if (!onClearLeads || !prospects.length || clearing) return;
@@ -101,25 +132,20 @@ export default function QueueView({
     }
   };
 
-  const qualityFiltered = useMemo(() => {
-    return prospects.filter(p => matchesQualityFilters(p, intentFilter, fitFilter, priorityFilter));
-  }, [prospects, intentFilter, fitFilter, priorityFilter]);
-
   const stageCounts = useMemo(() => {
-    const map: Record<string, number> = { All: qualityFiltered.length };
+    const map: Record<string, number> = { All: scopedProspects.length };
     for (const s of LEAD_STAGES) map[s] = 0;
-    for (const p of qualityFiltered) {
+    for (const p of scopedProspects) {
       const key = normalizeStage(p.stage);
       map[key] = (map[key] || 0) + 1;
     }
     return map;
-  }, [qualityFiltered]);
+  }, [scopedProspects]);
 
   const visible = useMemo(() => {
-    const rows = qualityFiltered.filter(p => {
-      if (cadenceFilter === 'due' && !isDueFollowUp(p)) return false;
-      if (cadenceFilter === 'missing_email' && hasEmail(p)) return false;
-      if (cadenceFilter === 'has_email' && !hasEmail(p)) return false;
+    const rows = scopedProspects.filter(p => {
+      if (emailFilter === 'has_email' && !hasEmail(p)) return false;
+      if (emailFilter === 'missing_email' && hasEmail(p)) return false;
       if (filter === 'All') return true;
       return normalizeStage(p.stage) === filter;
     });
@@ -138,7 +164,7 @@ export default function QueueView({
       }
       return (a.companyName || '').localeCompare(b.companyName || '');
     });
-  }, [qualityFiltered, cadenceFilter, filter, sortKey, sortDir]);
+  }, [scopedProspects, emailFilter, filter, sortKey, sortDir]);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -149,11 +175,7 @@ export default function QueueView({
     setSortDir('desc');
   };
 
-  const filtersActive =
-    intentFilter !== 'all' ||
-    fitFilter !== 'all' ||
-    priorityFilter !== 'all' ||
-    cadenceFilter !== 'all';
+  const filtersActive = huntScope !== 'all' || emailFilter !== 'all' || filter !== 'All';
 
   const handleRefreshEmail = async (id: string) => {
     if (!onRefreshContacts || refreshingId) return;
@@ -376,96 +398,54 @@ export default function QueueView({
         <span className="toolbar-spacer" />
         <span className="text-[12px] text-ink-muted tabular-nums">
           {visible.length} shown
-          {filtersActive || filter !== 'All' ? ` of ${prospects.length}` : ''}
+          {filtersActive || huntScope !== 'all' ? ` of ${prospects.length}` : ''}
           {selectedIds.length > 0 ? ` · ${selectedIds.length} selected` : ''}
         </span>
       </div>
 
-      <div className="filter-bar nr-enter nr-enter-delay-2">
-        <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-secondary">
-          <span className="text-ink-muted shrink-0">Cadence</span>
-          <select
-            value={cadenceFilter}
-            onChange={e => setCadenceFilter(e.target.value as CadenceFilter)}
-          >
-            <option value="all">All</option>
-            <option value="due">Due follow-up ({outcomes.dueFollowUp})</option>
-            <option value="has_email">With email ({outcomes.withEmail})</option>
-            <option value="missing_email">Missing email ({outcomes.missingEmail})</option>
-          </select>
-        </label>
-        <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-secondary">
-          <span className="text-ink-muted shrink-0">Intent</span>
-          <select
-            value={intentFilter}
-            onChange={e => setIntentFilter(e.target.value as IntentFilter)}
-          >
-            <option value="all">All</option>
-            <option value="high">High</option>
-            <option value="low">Low</option>
-            <option value="none">None</option>
-          </select>
-        </label>
-        <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-secondary">
-          <span className="text-ink-muted shrink-0">Fit</span>
-          <select
-            value={fitFilter}
-            onChange={e => setFitFilter(e.target.value as FitFilter)}
-          >
-            <option value="all">All</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-            <option value="score90">Score 90+</option>
-            <option value="score75">Score 75+</option>
-          </select>
-        </label>
-        <label className="inline-flex items-center gap-1.5 text-[12px] text-ink-secondary">
-          <span className="text-ink-muted shrink-0">Priority</span>
-          <select
-            value={priorityFilter}
-            onChange={e => setPriorityFilter(e.target.value as PriorityFilter)}
-          >
-            <option value="all">All</option>
-            <option value="priority">Strong (Priority)</option>
-            <option value="nurture">Strong (Nurture)</option>
-            <option value="review">Average (Review)</option>
-            <option value="low">Average (Low)</option>
-          </select>
-        </label>
-        {filtersActive && (
-          <button
-            type="button"
-            onClick={() => {
-              setIntentFilter('all');
-              setFitFilter('all');
-              setPriorityFilter('all');
-              setCadenceFilter('all');
-            }}
-            className="btn btn-ghost"
-          >
-            Clear filters
-          </button>
-        )}
-      </div>
-
-      <div className="seg mb-4 overflow-x-auto max-w-full nr-enter nr-enter-delay-2" role="group" aria-label="Lead stage">
+      <div className="seg mb-3 overflow-x-auto max-w-full nr-enter nr-enter-delay-2" role="group" aria-label="Hunt scope">
         <button
           type="button"
-          className={filter === 'All' && cadenceFilter === 'all' ? 'is-active' : undefined}
+          className={huntScope === 'latest' ? 'is-active' : undefined}
+          disabled={!latestHuntId}
+          title={
+            latestHuntId
+              ? 'Only leads added by the most recent Find buyers run'
+              : 'Run Find buyers to tag a latest hunt'
+          }
           onClick={() => {
+            setHuntScope('latest');
             setFilter('All');
-            setCadenceFilter('all');
           }}
         >
-          All {stageCounts.All || 0}
+          Latest hunt {latestHuntId ? latestHuntProspects.length : 0}
         </button>
         <button
           type="button"
-          className={cadenceFilter === 'has_email' ? 'is-active' : undefined}
+          className={huntScope === 'all' ? 'is-active' : undefined}
+          onClick={() => setHuntScope('all')}
+        >
+          All leads {prospects.length}
+        </button>
+      </div>
+
+      <div className="seg mb-4 overflow-x-auto max-w-full nr-enter nr-enter-delay-2" role="group" aria-label="Email filter">
+        <button
+          type="button"
+          className={emailFilter === 'all' && filter === 'All' ? 'is-active' : undefined}
           onClick={() => {
+            setEmailFilter('all');
             setFilter('All');
-            setCadenceFilter('has_email');
+          }}
+        >
+          All {scopedProspects.length}
+        </button>
+        <button
+          type="button"
+          className={emailFilter === 'has_email' ? 'is-active' : undefined}
+          onClick={() => {
+            setEmailFilter('has_email');
+            setFilter('All');
           }}
           title="Hide leads without email — then use Select all"
         >
@@ -473,10 +453,10 @@ export default function QueueView({
         </button>
         <button
           type="button"
-          className={cadenceFilter === 'missing_email' ? 'is-active' : undefined}
+          className={emailFilter === 'missing_email' ? 'is-active' : undefined}
           onClick={() => {
+            setEmailFilter('missing_email');
             setFilter('All');
-            setCadenceFilter('missing_email');
           }}
         >
           No email {outcomes.missingEmail || 0}
@@ -485,19 +465,29 @@ export default function QueueView({
           <button
             key={s}
             type="button"
-            className={filter === s && cadenceFilter === 'all' ? 'is-active' : undefined}
+            className={filter === s && emailFilter === 'all' ? 'is-active' : undefined}
             onClick={() => {
               setFilter(s);
-              if (cadenceFilter === 'missing_email' || cadenceFilter === 'has_email') {
-                setCadenceFilter('all');
-              }
+              setEmailFilter('all');
             }}
           >
             {s} {stageCounts[s] || 0}
           </button>
         ))}
+        {filtersActive && (
+          <button
+            type="button"
+            className="btn btn-ghost ml-1"
+            onClick={() => {
+              setHuntScope('all');
+              setEmailFilter('all');
+              setFilter('All');
+            }}
+          >
+            Clear filters
+          </button>
+        )}
       </div>
-
       <div className="leads-sort-bar nr-enter nr-enter-delay-2" aria-label="Sort leads">
         <span className="leads-sort-bar__label">Sort</span>
         <button
@@ -538,11 +528,13 @@ export default function QueueView({
           <div className="empty-state__content">
             <p className="empty-state__title">No leads match these filters</p>
             <p className="empty-state__desc">
-              {filtersActive || filter !== 'All'
-                ? 'Try clearing Intent / Fit / Priority or switch status to All.'
+              {filtersActive
+                ? huntScope === 'latest'
+                  ? 'No leads in the latest hunt for this filter. Switch to All leads, or try With email / No email.'
+                  : 'Try Latest hunt, With email, or Clear filters.'
                 : 'Describe who to find in Hunt, then run Find buyers. Qualified accounts land here.'}
             </p>
-            {!(filtersActive || filter !== 'All') && onGoWorkspace && (
+            {!(filtersActive) && onGoWorkspace && (
               <button type="button" className="btn btn-primary" onClick={onGoWorkspace}>
                 Find buyers
               </button>
@@ -551,7 +543,7 @@ export default function QueueView({
         </div>
       ) : (
         <>
-          <div key={`m-${filter}-${intentFilter}-${fitFilter}-${priorityFilter}-${cadenceFilter}-${sortKey}-${sortDir}`} className="md:hidden space-y-2 nr-stagger">
+          <div key={`m-${huntScope}-${emailFilter}-${filter}-${sortKey}-${sortDir}`} className="md:hidden space-y-2 nr-stagger">
             {visible.map(prospect => (
               <div
                 key={prospect.id}
@@ -643,7 +635,7 @@ export default function QueueView({
                 </button>
                 <span className="text-right">Status</span>
               </div>
-              <div key={`d-${filter}-${intentFilter}-${fitFilter}-${priorityFilter}-${cadenceFilter}-${sortKey}-${sortDir}`} className="nr-stagger">
+              <div key={`d-${huntScope}-${emailFilter}-${filter}-${sortKey}-${sortDir}`} className="nr-stagger">
                 {visible.map(prospect => (
                   <div
                     key={prospect.id}
@@ -702,40 +694,6 @@ function normalizeStage(stage: string): string {
 
 function prospectIntent(p: Prospect): string {
   return (p.intent || p.fitBreakdown?.intent || 'none').toLowerCase();
-}
-
-function prospectFitSummary(p: Prospect): string {
-  return (p.fitBreakdown?.fitSummary || p.icpFit || '').toLowerCase();
-}
-
-function prospectPriority(p: Prospect): string {
-  return (p.priority || p.fitBreakdown?.priority || '').toLowerCase();
-}
-
-function matchesQualityFilters(
-  p: Prospect,
-  intentFilter: IntentFilter,
-  fitFilter: FitFilter,
-  priorityFilter: PriorityFilter,
-): boolean {
-  if (intentFilter !== 'all' && prospectIntent(p) !== intentFilter) return false;
-
-  if (fitFilter === 'score90' && (p.fitScore || 0) < 90) return false;
-  if (fitFilter === 'score75' && (p.fitScore || 0) < 75) return false;
-  if (fitFilter === 'high' || fitFilter === 'medium' || fitFilter === 'low') {
-    const summary = prospectFitSummary(p);
-    if (summary) {
-      if (summary !== fitFilter) return false;
-    } else {
-      const score = p.fitScore || 0;
-      if (fitFilter === 'high' && score < 75) return false;
-      if (fitFilter === 'medium' && (score < 55 || score >= 75)) return false;
-      if (fitFilter === 'low' && score >= 55) return false;
-    }
-  }
-
-  if (priorityFilter !== 'all' && prospectPriority(p) !== priorityFilter) return false;
-  return true;
 }
 
 function formatRelative(timestamp: string): string {

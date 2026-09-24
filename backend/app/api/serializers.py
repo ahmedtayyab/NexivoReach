@@ -49,6 +49,7 @@ def prospect_to_frontend(pr: ProspectRecord) -> Dict[str, Any]:
         "contactAgain": bool(getattr(pr, "contact_again", True)),
         "lastReplyAt": getattr(pr, "last_reply_at", None) or "",
         "replySummary": getattr(pr, "reply_summary", None) or "",
+        "discoveryJobId": getattr(pr, "discovery_job_id", None) or "",
     }
 
 
@@ -79,6 +80,7 @@ def prospect_from_frontend(payload: Dict[str, Any]) -> Dict[str, Any]:
         "contact_again": payload.get("contactAgain") if payload.get("contactAgain") is not None else payload.get("contact_again", True),
         "last_reply_at": payload.get("lastReplyAt") or payload.get("last_reply_at") or "",
         "reply_summary": payload.get("replySummary") or payload.get("reply_summary") or "",
+        "discovery_job_id": payload.get("discoveryJobId") or payload.get("discovery_job_id") or "",
     }
 
 
