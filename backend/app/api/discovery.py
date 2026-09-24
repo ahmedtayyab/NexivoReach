@@ -184,7 +184,7 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
             icp=req.icp,
             business=business_payload,
             exclude_websites=exclude,
-            limit=40,
+            limit=60,
         )
         _update_job(job_id, phase="Saving shortlist…", progress=78)
 

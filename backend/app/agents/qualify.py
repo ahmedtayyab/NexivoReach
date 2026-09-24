@@ -350,7 +350,33 @@ def _icp_fit(
         return "low", ev
 
     cat_hits = _token_hits(profile.categories, text)
+    channel_buyers = any(
+        re.search(r"distribut|wholesale|import|dealer", (b or ""), re.I)
+        for b in (profile.buyers or [])
+    )
+    retail_page = bool(re.search(r"/(products?|collections?|cart)(/|$|\?)", (url or ""), re.I))
+    retailish = retail_page or bool(
+        re.search(r"\b(add to cart|shop now|buy now|free shipping|in stock)\b", text, re.I)
+    )
+    wholesale_lang = bool(
+        re.search(
+            r"\b(distributor|distributors|wholesale|wholesaler|importer|importers|dealer|b2b|bulk orders?|trade only)\b",
+            text,
+            re.I,
+        )
+    )
     if cat_hits and source_type == "homepage":
+        # Gym/shop product pages matching SKUs are not distributors.
+        if channel_buyers and retailish and not wholesale_lang:
+            ev.append(_evidence(
+                "icp",
+                "Looks like a retail storefront with product overlap — not a distributor/wholesaler/importer.",
+                _excerpt(text, re.escape(cat_hits[0])),
+                url,
+                source_type,
+                0.35,
+            ))
+            return "low", ev
         ev.append(_evidence("icp", f"Category overlap ({cat_hits[0]}) without a clear buyer-type match.", _excerpt(text, re.escape(cat_hits[0])), url, source_type, 0.45))
         return "medium", ev
 

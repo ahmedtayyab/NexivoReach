@@ -138,23 +138,70 @@ def test_product_lines_cross_buyer_types_and_location():
     assert not any(q.startswith("weightlifting straps distributors") and '"' not in q for q in queries)
 
 
-def test_rejects_cargo_straps_serp_for_weightlifting_hunt():
+def test_product_query_order_interleaves_products():
+    """First queries should cover every product for the first buyer role — not all straps."""
+    from app.agents.geo import expand_product_buyer_lines
+
+    lines = expand_product_buyer_lines(
+        [
+            "weightlifting straps",
+            "weightlifting belts",
+            "wrist wraps",
+            "knee sleeves",
+            "lifting hooks",
+            "martial arts belts",
+        ],
+        ["distributors", "wholesalers"],
+    )
+    first6 = [l.lower() for l in lines[:6]]
+    assert any("wrist wraps" in l for l in first6)
+    assert any("knee sleeves" in l for l in first6)
+    assert any("martial arts belts" in l for l in first6)
+    # Must not be four straps queries first
+    assert sum(1 for l in first6 if "weightlifting straps" in l) <= 2
+
+
+def test_rejects_generic_fitness_store_serp():
     from app.agents.serp_classifier import classify_serp_row
 
     row = classify_serp_row(
         {
-            "company_name": "CargoStrap USA",
-            "website": "https://cargostraps.example/",
-            "title": "Heavy Duty Truck Cargo Straps",
-            "snippet": "Ratchet straps and tie-downs for trucking fleets",
+            "company_name": "Bay Area Fitness Superstore",
+            "website": "https://bayareafitness.example/",
+            "title": "Gym Equipment & Fitness Store California",
+            "snippet": "Shop treadmills, racks, and training gear. Free shipping.",
             "source": "web",
+            "discovery_query": '"weightlifting straps" distributors in California',
         },
         hunting_buyers=True,
         target_places=["California"],
-        offer_categories=["weightlifting straps", "knee sleeves"],
+        offer_categories=[
+            "weightlifting straps",
+            "knee sleeves",
+            "wrist wraps",
+        ],
     )
     assert row["reject"] is True
-    assert row["entity_type"] == "wrong_product"
+
+
+def test_rejects_shopify_product_page_for_distributor_hunt():
+    from app.agents.serp_classifier import classify_serp_row
+
+    row = classify_serp_row(
+        {
+            "company_name": "Weightlifting Straps",
+            "website": "https://californiastrength.store/products/weightlifting-straps",
+            "title": "Weightlifting Straps – California Strength",
+            "snippet": "Buy weightlifting straps. Add to cart. Free shipping.",
+            "source": "web",
+            "discovery_query": '"weightlifting straps" distributors in California',
+        },
+        hunting_buyers=True,
+        target_places=["California"],
+        offer_categories=["weightlifting straps"],
+    )
+    assert row["reject"] is True
+    assert row["entity_type"] == "retail_storefront"
 
 
 def test_accepts_lifting_straps_serp():

@@ -604,6 +604,7 @@ def normalize_buyer_query_term(buyer: str) -> str:
 def expand_product_buyer_lines(detail_lines: List[str], buyers: List[str]) -> List[str]:
     """
     Product-only lines × selected buyer types → concrete SERP angles.
+    Round-robins across products so straps don't dominate the first N queries.
     Lines that already include a buyer role are kept as-is.
     """
     roles = []
@@ -620,21 +621,47 @@ def expand_product_buyer_lines(detail_lines: List[str], buyers: List[str]) -> Li
     if not roles:
         roles = ["distributors"]
 
-    out: List[str] = []
-    seen = set()
+    product_only: List[str] = []
+    full_lines: List[str] = []
+    seen_products = set()
     for line in detail_lines or []:
         line = re.sub(r"\s+", " ", (line or "").strip())
         if not line:
             continue
-        stems = [line] if line_has_buyer_role(line) else [f"{line} {role}" for role in roles]
-        for stem in stems:
-            key = stem.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(stem)
+        if line_has_buyer_role(line):
+            key = line.lower()
+            if key not in seen_products:
+                seen_products.add(key)
+                full_lines.append(line)
+            continue
+        key = line.lower()
+        if key in seen_products:
+            continue
+        seen_products.add(key)
+        product_only.append(line)
+
+    # Per-product role lists, then zip so query order is:
+    # p1+role1, p2+role1, p3+role1, … then p1+role2, …
+    # Actually prefer product fairness first: p1r1, p2r1, p3r1… then p1r2…
+    out: List[str] = []
+    seen = set()
+
+    def _add(stem: str) -> None:
+        key = stem.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(stem)
+
+    for role in roles:
+        for product in product_only:
+            _add(f"{product} {role}")
             if len(out) >= 48:
                 return out
+    for line in full_lines:
+        _add(line)
+        if len(out) >= 48:
+            break
     return out
 
 
@@ -752,7 +779,7 @@ def product_phrases_from_profile_categories(categories: List[str]) -> List[str]:
 def serp_blob_matches_products(blob: str, categories: List[str]) -> bool:
     """
     True when SERP title/snippet clearly relates to hunt products.
-    Rejects cargo-strap style hits that only share an ambiguous headword.
+    Generic fitness/gym stores without the named products are rejected.
     """
     text = (blob or "").lower()
     if not text.strip():
@@ -763,25 +790,26 @@ def serp_blob_matches_products(blob: str, categories: List[str]) -> bool:
     # Full phrase hit is ideal
     if any(p in text for p in phrases):
         return True
-    # All distinctive modifiers from any phrase present
     for phrase in phrases:
         words = [w for w in phrase.split() if len(w) > 2]
         if len(words) < 2:
             continue
         head = words[-1]
         mods = words[:-1]
+        mod_hit = any(re.search(rf"\b{re.escape(m)}\b", text) for m in mods)
+        head_hit = bool(re.search(rf"\b{re.escape(head)}\b", text))
+        # Require product specificity — never accept bare "gym/fitness store"
         if head in AMBIGUOUS_PRODUCT_HEADS:
-            # Need a modifier or fitness context — bare 'straps' is not enough
-            if any(m in text for m in mods):
+            if head_hit and mod_hit:
                 return True
-            if any(c in text for c in PRODUCT_CONTEXT_WORDS):
+            # head + another hunt product token (e.g. wrist + wraps)
+            if head_hit and any(re.search(rf"\b{re.escape(w)}\b", text) for w in words[:-1]):
                 return True
         else:
-            # Non-ambiguous: require majority of tokens
             hits = sum(1 for w in words if re.search(rf"\b{re.escape(w)}\b", text))
             if hits >= min(2, len(words)):
                 return True
-    # If the blob only shows an ambiguous head from our hunt with wrong industry cues, fail
+    # Cargo / truck collision
     heads = {p.split()[-1] for p in phrases}
     amb_heads = heads & AMBIGUOUS_PRODUCT_HEADS
     if amb_heads and any(re.search(rf"\b{re.escape(h)}\b", text) for h in amb_heads):
@@ -791,10 +819,15 @@ def serp_blob_matches_products(blob: str, categories: List[str]) -> bool:
         )
         if any(w in text for w in wrong):
             return False
-        # Ambiguous head alone with no product modifier/context → not a match
         return False
-    # No product signal at all — allow through for later homepage qualify
-    # (snippet may be thin), unless wrong-industry cues dominate
+    # Generic fitness / gym retail with no hunt product nouns → not a match
+    if any(c in text for c in ("gym", "fitness", "workout", "training equipment", "sports store")):
+        product_tokens = set()
+        for p in phrases:
+            product_tokens.update(w for w in p.split() if len(w) > 3)
+        if not any(re.search(rf"\b{re.escape(t)}\b", text) for t in product_tokens):
+            return False
+    # Thin snippet with no product signal — allow homepage qualify later
     return True
 
 

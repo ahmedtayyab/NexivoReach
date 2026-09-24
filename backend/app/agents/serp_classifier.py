@@ -47,6 +47,15 @@ BUYER_RE = re.compile(
     r"\b(brand|retailer|distributor|importer|wholesaler|boutique|stockist|clinic|hospital|gym)\b",
     re.I,
 )
+RETAIL_URL_RE = re.compile(r"/(products?|collections?|cart|checkout)(/|$|\?)", re.I)
+RETAIL_SNIPPET_RE = re.compile(
+    r"\b(add to cart|buy now|shop now|free shipping|in stock|sale price|\$\d+)\b",
+    re.I,
+)
+WHOLESALE_SIGNAL_RE = re.compile(
+    r"\b(distributor|distributors|wholesale|wholesaler|importer|importers|dealer|b2b|bulk orders?|trade only)\b",
+    re.I,
+)
 
 
 def _host(url: str) -> str:
@@ -115,6 +124,22 @@ def classify_serp_row(
 
         if not serp_blob_matches_products(blob, offer_categories):
             reject, entity, reason = True, "wrong_product", "SERP text does not match hunt products"
+
+    # When hunting distributors/wholesalers/importers, skip DTC product pages & shopfront noise
+    if not reject and hunting_buyers:
+        dq = (row.get("discovery_query") or "").lower()
+        channel_hunt = bool(
+            re.search(r"\b(distributor|wholesaler|importer|dealer)s?\b", dq)
+        )
+        if channel_hunt and (
+            RETAIL_URL_RE.search(url)
+            or (RETAIL_SNIPPET_RE.search(blob) and not WHOLESALE_SIGNAL_RE.search(blob))
+        ):
+            reject, entity, reason = (
+                True,
+                "retail_storefront",
+                "Looks like a retail product page, not a channel buyer",
+            )
 
     geo_source = (location or "").strip() or blob
     geo_ok = places_mentioned(geo_source, target_places) if target_places else None

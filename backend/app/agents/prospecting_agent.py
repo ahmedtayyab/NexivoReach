@@ -26,23 +26,23 @@ from app.tools.contact_finder import discover_contacts, contacts_from_text
 from app.providers.factory import get_ai_provider
 
 
-FETCH_CAP = 36
-SAVE_CAP = 40
-STRONG_SAVE = 20  # amazing / ready to pursue
-AVERAGE_SAVE = 20  # workable / worth a look
-WAVE1_RESULT_CAP = 140
-WAVE2_RESULT_CAP = 80
+FETCH_CAP = 90
+SAVE_CAP = 60
+STRONG_SAVE = 30  # amazing / ready to pursue
+AVERAGE_SAVE = 30  # workable / worth a look
+WAVE1_RESULT_CAP = 280
+WAVE2_RESULT_CAP = 100
 ENRICH_CAP = 0  # drafts belong in Outreach — keep Discover fast
 CONTACT_DURING_HUNT = 0  # all contact crawl is background — keep hunt snappy
 SCRAPE_CONCURRENCY = 18
 SCRAPE_BATCH = 18
 # Skip wave 2 once we already have enough relevant SERP hits for a 20–30+ shortlist
-MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 30
-DEFAULT_HUNT_LIMIT = 40
+MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 50
+DEFAULT_HUNT_LIMIT = 60
 # Stop fetching more sites once we can fill this many persistable leads
-EARLY_EXIT_PERSISTABLE = 28
-WAVE1_QUERY_CAP = 36
-WAVE2_QUERY_CAP = 8
+EARLY_EXIT_PERSISTABLE = 52
+WAVE1_QUERY_CAP = 48
+WAVE2_QUERY_CAP = 10
 
 
 def _domain(url: str) -> str:
@@ -71,11 +71,12 @@ class ProspectingAgent:
         icp: Dict[str, Any],
         business: Optional[Dict[str, Any]] = None,
         exclude_websites: Optional[List[str]] = None,
-        limit: int = 40,
+        limit: int = 60,
     ) -> Dict[str, Any]:
         start_time = time.time()
         decisions_log: List[Dict[str, Any]] = []
         business = business or {}
+        limit = max(limit, DEFAULT_HUNT_LIMIT)
         profile = apply_prompt_focus(
             apply_prompt_roles(
                 apply_prompt_geo(infer_seller_profile(products, icp, business), user_prompt),
@@ -253,7 +254,34 @@ class ProspectingAgent:
                 },
             }
 
-        to_fetch = [c for c in candidates if (c.get("website") or "").strip()][:FETCH_CAP]
+    # Also diversify fetch order so homepage scrapes cover every hunt product
+        to_fetch_raw = [c for c in candidates if (c.get("website") or "").strip()]
+        by_product: Dict[str, List[Dict[str, Any]]] = {}
+        product_order: List[str] = []
+        for c in to_fetch_raw:
+            from app.agents.geo import parse_discovery_query
+
+            prod, _r, _p = parse_discovery_query(c.get("discovery_query") or "")
+            key = (prod or "general").lower()
+            if key not in by_product:
+                by_product[key] = []
+                product_order.append(key)
+            by_product[key].append(c)
+        to_fetch: List[Dict[str, Any]] = []
+        idxs = {k: 0 for k in product_order}
+        while len(to_fetch) < FETCH_CAP and product_order:
+            progressed = False
+            for key in product_order:
+                i = idxs[key]
+                bucket = by_product[key]
+                if i < len(bucket):
+                    to_fetch.append(bucket[i])
+                    idxs[key] = i + 1
+                    progressed = True
+                    if len(to_fetch) >= FETCH_CAP:
+                        break
+            if not progressed:
+                break
         # Homepage-only for speed; deep about/news pages skipped during hunt.
         # Scrape in batches and stop early once we have enough persistable leads.
         text_by_domain: Dict[str, Dict[str, Any]] = {}
@@ -368,9 +396,49 @@ class ProspectingAgent:
             pri = (q.get("priority") or "").lower()
             return fit == "high" or pri in ("priority", "nurture") or int(q.get("fitScore") or 0) >= 70
 
-        strong = [item for item in qualified if _is_strong(item)][:STRONG_SAVE]
+        def _product_key(item: Dict[str, Any]) -> str:
+            from app.agents.geo import parse_discovery_query
+
+            dq = (item.get("co") or {}).get("discovery_query") or ""
+            product, _role, _place = parse_discovery_query(dq)
+            if product:
+                return product.lower()
+            fb = (item.get("q") or {}).get("fitBreakdown") or {}
+            return (fb.get("huntProduct") or "general").lower()
+
+        def _diversify(pool: List[Dict[str, Any]], cap: int) -> List[Dict[str, Any]]:
+            """Round-robin across hunt products so straps don't fill the whole shortlist."""
+            if cap <= 0 or not pool:
+                return []
+            buckets: Dict[str, List[Dict[str, Any]]] = {}
+            order: List[str] = []
+            for item in pool:
+                key = _product_key(item)
+                if key not in buckets:
+                    buckets[key] = []
+                    order.append(key)
+                buckets[key].append(item)
+            picked: List[Dict[str, Any]] = []
+            idxs = {k: 0 for k in order}
+            while len(picked) < cap:
+                progressed = False
+                for key in order:
+                    i = idxs[key]
+                    if i < len(buckets[key]):
+                        picked.append(buckets[key][i])
+                        idxs[key] = i + 1
+                        progressed = True
+                        if len(picked) >= cap:
+                            break
+                if not progressed:
+                    break
+            return picked
+
+        strong_pool = [item for item in qualified if _is_strong(item)]
+        strong = _diversify(strong_pool, STRONG_SAVE)
         strong_ids = {id(item) for item in strong}
-        average = [item for item in qualified if id(item) not in strong_ids][:AVERAGE_SAVE]
+        average_pool = [item for item in qualified if id(item) not in strong_ids]
+        average = _diversify(average_pool, AVERAGE_SAVE)
         if len(strong) < STRONG_SAVE and average:
             need = STRONG_SAVE - len(strong)
             promoted = average[:need]
