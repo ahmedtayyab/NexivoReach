@@ -21,28 +21,30 @@ from app.agents.search_planner import (
 )
 from app.agents.serp_classifier import classify_serp_row, summarize_classifications
 from app.agents.qualify import qualify_account
+from app.agents.relevance import qualify_account_with_ai
 from app.tools.web_search import WebSearchTool, HEADERS
 from app.tools.contact_finder import discover_contacts, contacts_from_text
 from app.providers.factory import get_ai_provider
 
 
-FETCH_CAP = 120
-SAVE_CAP = 60
-STRONG_SAVE = 30  # amazing / ready to pursue
-AVERAGE_SAVE = 30  # workable / worth a look
-WAVE1_RESULT_CAP = 360
-WAVE2_RESULT_CAP = 100
+FETCH_CAP = 160
+SAVE_CAP = 80
+STRONG_SAVE = 40  # amazing / ready to pursue
+AVERAGE_SAVE = 40  # workable / worth a look
+WAVE1_RESULT_CAP = 400
+WAVE2_RESULT_CAP = 160
 ENRICH_CAP = 0  # drafts belong in Outreach — keep Discover fast
-CONTACT_DURING_HUNT = 0  # all contact crawl is background — keep hunt snappy
+CONTACT_DURING_HUNT = 0  # contact crawl after AI qualification
 SCRAPE_CONCURRENCY = 18
 SCRAPE_BATCH = 18
-# Skip wave 2 once we already have enough relevant SERP hits for a 20–30+ shortlist
-MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 50
-DEFAULT_HUNT_LIMIT = 60
+# Skip wave 2 once we already have enough relevant SERP hits
+MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 80
+DEFAULT_HUNT_LIMIT = 80
 # Stop fetching more sites once we can fill this many persistable leads
-EARLY_EXIT_PERSISTABLE = 80
-WAVE1_QUERY_CAP = 96
-WAVE2_QUERY_CAP = 8
+EARLY_EXIT_PERSISTABLE = 100
+WAVE1_QUERY_CAP = 48
+WAVE2_QUERY_CAP = 24
+AI_QUALIFY_CONCURRENCY = 8
 
 
 def _domain(url: str) -> str:
@@ -101,9 +103,10 @@ class ProspectingAgent:
                 f"buyer types={intent['buyers']}, location={intent['location'] or '(none)'}."
             )
             decision = (
-                f"Searching {len(intent['primary_queries'])} exact product×buyer×location queries "
-                f"plus {len(intent['volume_queries'])} same-intent variants. "
-                "Broader categories are held for a later pass only if exact results are thin."
+                f"Wave 1: {len(intent['primary_queries'])} exact product×buyer×location Google searches "
+                f"(no generic category expansion). "
+                f"{len(intent.get('volume_queries') or [])} close variants held for wave 2 if thin. "
+                "AI decides business relevance after website fetch."
             )
             snippet = "; ".join(intent["primary_queries"][:6])
         else:
@@ -311,8 +314,8 @@ class ProspectingAgent:
 
             async def _scrape_one(url: str) -> Any:
                 async with scrape_sem:
-                    return await self.web_search.scrape_homepage(
-                        url, limit=5000, client=scrape_client, keep_html=False,
+                    return await self.web_search.scrape_relevance_pages(
+                        url, limit=8000, client=scrape_client,
                     )
 
             for batch_start in range(0, len(to_fetch), SCRAPE_BATCH):
@@ -349,47 +352,90 @@ class ProspectingAgent:
             "step": 4,
             "observation": (
                 f"{len(candidates)} candidates after exclusions; "
-                f"fetched {fetched_count} homepages (cap {FETCH_CAP}, early-exit at {EARLY_EXIT_PERSISTABLE})."
+                f"fetched {fetched_count} sites (cap {FETCH_CAP}, early-exit at {EARLY_EXIT_PERSISTABLE})."
             ),
             "decision": (
-                "Qualify Fit vs Intent from homepage text. "
-                + (f"Strict geo: must evidence {', '.join(profile.places[:2])}." if profile.strict_geo else "Do not invent buying signals.")
+                "AI qualifies business relevance from homepage (+ catalog page when thin). "
+                "Missing location on the page is not a reject. Exact product SKU not required."
             ),
             "toolCalled": "SiteFetch",
             "toolResultSnippet": f"{sum(1 for v in text_by_domain.values() if v.get('ok'))} live sites",
         })
 
-        # Qualify the fetch pool, then keep ~20 strong + ~20 average (Google-search-beating shortlist).
+        # Qualify with AI (search literally → qualify intelligently).
+        seller_brief = " ".join(
+            str(x) for x in [
+                business.get("name"),
+                business.get("description"),
+                ", ".join(str(c) for c in (business.get("primaryCategories") or business.get("primary_categories") or [])[:6]),
+            ] if x
+        ).strip()
+        provider = get_ai_provider()
+        ai_sem = asyncio.Semaphore(AI_QUALIFY_CONCURRENCY)
         qualified: List[Dict[str, Any]] = []
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
-        for co in candidates:
+
+        async def _qualify_one(co: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             dom = _domain(co.get("website") or "")
             page = text_by_domain.get(dom) or {}
             site_text = page.get("text") or ""
-            # Prefer fetched rows; still qualify SERP-only for the average bucket.
-            if not site_text and dom and dom not in text_by_domain and len(qualified) >= SAVE_CAP * 2:
-                continue
-            q = qualify_account(
-                row=co,
-                site_text=site_text,
-                profile=profile,
-                products=products,
-                page_url=page.get("url") or co.get("website") or "",
-            )
+            async with ai_sem:
+                try:
+                    q = await qualify_account_with_ai(
+                        row=co,
+                        site_text=site_text,
+                        profile=profile,
+                        products=products,
+                        page_url=page.get("url") or co.get("website") or "",
+                        provider=provider,
+                        seller_brief=seller_brief,
+                    )
+                except Exception:
+                    q = qualify_account(
+                        row=co,
+                        site_text=site_text,
+                        profile=profile,
+                        products=products,
+                        page_url=page.get("url") or co.get("website") or "",
+                    )
             if not q.get("shouldPersist"):
-                continue
+                return None
             fit_summary = (q.get("fitSummary") or "").lower()
             priority = (q.get("priority") or "").lower()
             outreach_ready = fit_summary == "high" or priority in ("priority", "nurture")
-            source = co.get("source") or "web"
-            qualified.append({
+            return {
                 "co": co,
                 "q": q,
                 "page": page,
                 "site_text": site_text,
                 "outreach_ready": outreach_ready,
-                "source": source,
-            })
+                "source": co.get("source") or "web",
+            }
+
+        qualify_jobs = []
+        for co in candidates:
+            dom = _domain(co.get("website") or "")
+            page = text_by_domain.get(dom) or {}
+            site_text = page.get("text") or ""
+            # Prefer fetched rows; still allow thin SERP-only when we have capacity
+            if not site_text and dom and dom not in text_by_domain and len(qualify_jobs) >= SAVE_CAP * 2:
+                continue
+            qualify_jobs.append(co)
+
+        qualify_results = await asyncio.gather(*[_qualify_one(co) for co in qualify_jobs])
+        for item in qualify_results:
+            if item:
+                qualified.append(item)
+
+        decisions_log.append({
+            "step": 4.5,
+            "observation": (
+                f"AI relevance kept {len(qualified)} of {len(qualify_jobs)} inspected companies."
+            ),
+            "decision": "Contact discovery runs after relevance — email is optional.",
+            "toolCalled": "AIRelevance",
+            "toolResultSnippet": f"provider={provider.name()}",
+        })
 
         def _q_rank(item: Dict[str, Any]) -> tuple:
             q = item["q"]
@@ -403,7 +449,6 @@ class ProspectingAgent:
             return (pri, role_bonus, scraped, loc_bonus, intent_rank, int(q.get("fitScore") or 0))
 
         qualified.sort(key=_q_rank, reverse=True)
-        ranked_all = list(qualified)
 
         def _is_strong(item: Dict[str, Any]) -> bool:
             q = item["q"]
@@ -484,7 +529,6 @@ class ProspectingAgent:
         qualified = (strong + average)[: min(limit, SAVE_CAP)]
 
         seller_name = (business.get("name") or "Sales Team").strip() or "Sales Team"
-        provider = get_ai_provider()
         contact_sem = asyncio.Semaphore(10)
         draft_sem = asyncio.Semaphore(6)
 
@@ -566,39 +610,23 @@ class ProspectingAgent:
             item["contacts"] = contacts
             item["_contact_hit"] = bool(email or contacts)
 
-        # Phase 1 — homepage emails, then a contact-page crawl for the best leads
-        # that still have no address. Only companies we can email are saved.
+        # Contact discovery AFTER relevance — keep companies even without email.
         if qualified:
             await asyncio.gather(*[
                 _fill_contacts(item) if item.get("want_contacts") else _seed_contacts_only(item)
                 for item in qualified
             ])
 
-        email_target = min(limit, SAVE_CAP)
-        seen_ids = {id(item) for item in qualified}
-        backlog = [item for item in ranked_all if id(item) not in seen_ids]
-        if backlog:
-            await asyncio.gather(*[_seed_contacts_only(item) for item in backlog])
-
-        def _has_email(item: Dict[str, Any]) -> bool:
-            return bool((item.get("email") or "").strip())
-
+        # Deep crawl contact pages for shortlisted leads still missing email
         deep_queue = [
-            item for item in [*qualified, *backlog]
-            if not _has_email(item) and (item["co"].get("website") or "").strip()
+            item for item in qualified
+            if not (item.get("email") or "").strip() and (item["co"].get("website") or "").strip()
         ][:48]
-        already = sum(1 for item in [*qualified, *backlog] if _has_email(item))
-        if deep_queue and already < email_target:
+        if deep_queue:
             await asyncio.gather(*[_fill_contacts(item) for item in deep_queue])
 
-        emailed: List[Dict[str, Any]] = []
-        seen_keep = set()
-        for item in [*qualified, *backlog]:
-            if not _has_email(item) or id(item) in seen_keep:
-                continue
-            seen_keep.add(id(item))
-            emailed.append(item)
-        qualified = _diversify(emailed, email_target) if emailed else []
+        # Keep all AI-relevant leads (email optional). Diversify by product.
+        qualified = _diversify(qualified, min(limit, SAVE_CAP)) if qualified else []
 
         async def _enrich(item: Dict[str, Any]) -> Dict[str, Any]:
             co = item["co"]
@@ -715,7 +743,7 @@ class ProspectingAgent:
         prospects.sort(key=_rank, reverse=True)
 
         duration_ms = int((time.time() - start_time) * 1000)
-        tools = ["SearchPlanner", "WebSearchTool", "SerpClassifier", "SiteFetch", "QualifyAccount"]
+        tools = ["SearchPlanner", "WebSearchTool", "SerpClassifier", "SiteFetch", "AIRelevance"]
         if contact_runs:
             tools.append("ContactFinder")
         if draft_runs:
@@ -742,12 +770,16 @@ class ProspectingAgent:
                     )
                 ),
                 "decision": (
-                    f"Target mix is ~{STRONG_SAVE} strong + ~{AVERAGE_SAVE} average — "
-                    "ranked shortlist beats raw Google, not a tiny ultra-filtered set. "
+                    f"Target mix is ~{STRONG_SAVE} strong + ~{AVERAGE_SAVE} average. "
+                    "Email is optional — relevant companies without a public email are still leads. "
                     "Outreach drafts happen later in Prepare outreach."
                 ),
                 "toolCalled": "LeadPipeline",
-                "toolResultSnippet": f"{len(prospects)} To contact · {contact_runs} contact crawls",
+                "toolResultSnippet": (
+                    f"{len(prospects)} To contact · "
+                    f"{sum(1 for p in prospects if (p.get('email') or '').strip())} with email · "
+                    f"{contact_runs} contact crawls"
+                ),
             }],
         }
         return {"prospects": prospects, "agent_log": agent_log, "prospect": prospects[0] if prospects else None}

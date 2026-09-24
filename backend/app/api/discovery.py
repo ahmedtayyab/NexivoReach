@@ -184,7 +184,7 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
             icp=req.icp,
             business=business_payload,
             exclude_websites=exclude,
-            limit=60,
+            limit=80,
         )
         _update_job(job_id, phase="Saving shortlist…", progress=78)
 
@@ -208,11 +208,10 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
                     select(ProspectRecord).where(ProspectRecord.business_id == business_id)
                 ).all()
             }
-                for prospect in prospects:
+            for prospect in prospects:
                 website = prospect.get("website") or ""
                 name = (prospect.get("companyName") or "").strip().lower()
-                if not (prospect.get("email") or "").strip():
-                    continue
+                # Email is optional — relevant companies without a public address stay as leads.
                 dom = _domain(website)
                 if (dom and dom in known) or (name and name in known_names):
                     skipped_existing += 1

@@ -1096,8 +1096,9 @@ def interpret_prompt_intent(
             seen_q.add(qn.lower())
             bucket.append(qn)
 
-        # Search job per pair: the typed phrase + location first, then close
-        # variations of the SAME product (quoted, role synonyms, supplier).
+        # Primary = exact Google-style queries (one per typed product×buyer line).
+        # Volume = a few close variants of the SAME product+role — used only when
+        # primaries are thin. Never expand into generic category searches here.
         for product, role in pairs:
             if place:
                 _add(primary, f"{product} {role} in {place}")
@@ -1108,9 +1109,14 @@ def interpret_prompt_intent(
             tail = f" {place}" if place else ""
             _add(volume, f'"{product}" {role}{tail}')
             _add(volume, f'"{product}" {short_role}{tail}')
-        for product in products:
+        # Role synonyms / supplier stay as deferred volume (wave 2), not wave 1.
+        for product, role in pairs:
+            short_role = _VOLUME_ROLE_SHORT.get(role, _singular_token(role))
+            singular = _singular_token(role)
             tail = f" {place}" if place else ""
             for alt in ("wholesale", "distributor", "importer", "supplier"):
+                if alt in (short_role, singular, role):
+                    continue
                 _add(volume, f'"{product}" {alt}{tail}')
         for product, role in pairs:
             for broader in secondary_product_phrases(product):

@@ -50,6 +50,39 @@ class AIProvider(ABC):
         """
         pass
 
+    async def qualify_business_relevance(
+        self,
+        *,
+        product: str,
+        buyer_type: str,
+        location: str,
+        search_query: str,
+        company_name: str,
+        title: str = "",
+        snippet: str = "",
+        website: str = "",
+        site_text: str = "",
+        seller_brief: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Decide if a company is a plausible buyer/distributor for a hunt intent.
+        Returns {relevant: bool, confidence: float, reason: str}.
+        Default uses heuristic fallback.
+        """
+        from app.providers.fallback import FallbackProvider
+        return await FallbackProvider().qualify_business_relevance(
+            product=product,
+            buyer_type=buyer_type,
+            location=location,
+            search_query=search_query,
+            company_name=company_name,
+            title=title,
+            snippet=snippet,
+            website=website,
+            site_text=site_text,
+            seller_brief=seller_brief,
+        )
+
     async def generate_follow_up_outreach(
         self,
         company_name: str,

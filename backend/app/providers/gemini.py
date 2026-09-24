@@ -118,6 +118,64 @@ class GeminiProvider(AIProvider):
         from app.providers.fallback import FallbackProvider
         return await FallbackProvider().match_catalog_products(products, company_text, company_name)
 
+    async def qualify_business_relevance(
+        self,
+        *,
+        product: str,
+        buyer_type: str,
+        location: str,
+        search_query: str,
+        company_name: str,
+        title: str = "",
+        snippet: str = "",
+        website: str = "",
+        site_text: str = "",
+        seller_brief: str = "",
+    ) -> Dict[str, Any]:
+        from app.agents.relevance import RELEVANCE_PROMPT, _normalize_ai_result, heuristic_relevance
+        from app.providers.json_util import parse_json_payload
+
+        if not self.available:
+            return heuristic_relevance(
+                product=product,
+                buyer_type=buyer_type,
+                location=location,
+                company_name=company_name,
+                title=title,
+                snippet=snippet,
+                site_text=site_text,
+                categories=[product] if product else [],
+            )
+        try:
+            prompt = RELEVANCE_PROMPT.format(
+                seller_brief=(seller_brief or "(none)")[:1200],
+                product=product or "",
+                buyer_type=buyer_type or "",
+                location=location or "",
+                search_query=search_query or "",
+                company_name=company_name or "",
+                title=(title or "")[:300],
+                snippet=(snippet or "")[:500],
+                website=website or "",
+                site_text=(site_text or "")[:5500],
+            )
+            parsed = parse_json_payload(self._generate(prompt))
+            normalized = _normalize_ai_result(parsed)
+            if normalized:
+                return normalized
+        except Exception:
+            pass
+        return heuristic_relevance(
+            product=product,
+            buyer_type=buyer_type,
+            location=location,
+            company_name=company_name,
+            title=title,
+            snippet=snippet,
+            site_text=site_text,
+            categories=[product] if product else [],
+        )
+
     async def generate_personalized_outreach(
         self,
         company_name: str,

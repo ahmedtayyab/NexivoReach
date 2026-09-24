@@ -192,9 +192,11 @@ def test_runon_query_splits_pairs_and_keeps_exact_products():
     assert "weightlifting straps distributors in los angeles" in queries
     assert "weightlifting straps wholesalers in los angeles" in queries
     assert "weightlifting straps importers in los angeles" in queries
-    assert '"weightlifting straps" wholesale los angeles' in queries
-    assert '"weightlifting straps" supplier los angeles' in queries
-    assert '"knee sleeves" importer los angeles' in queries
+    # Wave 1 is exact primaries only — close variants live in volume_queries for wave 2
+    assert '"weightlifting straps" wholesale los angeles' not in queries
+    assert '"weightlifting straps" supplier los angeles' not in queries
+    assert any('"weightlifting straps" wholesale' in q for q in intent["volume_queries"])
+    assert any('"weightlifting straps" supplier' in q for q in intent["volume_queries"])
     assert "martial arts belts distributors in los angeles" in queries
     # Typed searches run before any variation
     assert queries[:3] == [
@@ -208,6 +210,9 @@ def test_runon_query_splits_pairs_and_keeps_exact_products():
     assert not any("retailers" in q or q.startswith("gym ") for q in intent["primary_queries"])
     joined = " ".join(queries)
     assert "weightlifting straps distributors weightlifting" not in joined
+    # One primary query per typed pair — no volume explosion in wave 1
+    assert len(queries) == len(intent["primary_queries"])
+    assert len(intent["primary_queries"]) == len(intent["pairs"])
 
 
 def test_product_query_order_interleaves_products():
@@ -258,7 +263,9 @@ def test_fitness_store_serp_is_inspected_not_rejected():
 
 
 def test_rejects_obviously_unrelated_business_serp():
+    """SERP no longer hard-rejects jewelry — AI relevance decides after fetch."""
     from app.agents.serp_classifier import classify_serp_row
+    from app.agents.relevance import heuristic_relevance
 
     jewelry = classify_serp_row(
         {
@@ -273,8 +280,7 @@ def test_rejects_obviously_unrelated_business_serp():
         target_places=["Chicago"],
         offer_categories=["lifting hooks", "weightlifting straps"],
     )
-    assert jewelry["reject"] is True
-    assert jewelry["entity_type"] == "unrelated_business"
+    assert jewelry["reject"] is False
 
     sports = classify_serp_row(
         {
@@ -291,10 +297,39 @@ def test_rejects_obviously_unrelated_business_serp():
     )
     assert sports["reject"] is False
 
+    jewelry_ai = heuristic_relevance(
+        product="lifting hooks",
+        buyer_type="distributors",
+        location="Chicago",
+        company_name="Chicago Jewelry Wholesale",
+        title="Chicago Jewelry Wholesale – Distributors of Fine Jewelry",
+        snippet="Wholesale distributor of gold chains and gemstones in Chicago.",
+        site_text="Wholesale distributor of gold chains and gemstones in Chicago.",
+        categories=["lifting hooks"],
+    )
+    assert jewelry_ai["relevant"] is False
+
+    sports_ai = heuristic_relevance(
+        product="lifting hooks",
+        buyer_type="distributors",
+        location="Chicago",
+        company_name="XYZ Sports & Fitness Distributors",
+        title="XYZ Sports & Fitness – Wholesale Distributor Chicago",
+        snippet="Distributor of gym accessories and strength equipment for retailers.",
+        site_text=(
+            "XYZ Sports & Fitness is a wholesale distributor serving gyms and sporting goods "
+            "retailers. Browse our catalog of strength training accessories."
+        ),
+        categories=["lifting hooks"],
+    )
+    assert sports_ai["relevant"] is True
+
 
 def test_rejects_rigging_supplier_for_gym_lifting_hooks():
+    """Industrial rigging is not rejected at SERP — AI/heuristic relevance rejects it."""
     from app.agents.serp_classifier import classify_serp_row
     from app.agents.geo import page_matches_specific_products
+    from app.agents.relevance import heuristic_relevance
 
     row = classify_serp_row(
         {
@@ -309,13 +344,24 @@ def test_rejects_rigging_supplier_for_gym_lifting_hooks():
         target_places=["Houston"],
         offer_categories=["lifting hooks"],
     )
-    assert row["reject"] is True
+    assert row["reject"] is False
     assert page_matches_specific_products(
         "We stock lifting hooks, shackles and crane rigging hardware.", ["lifting hooks"]
     ) == "low"
     assert page_matches_specific_products(
         "Gym accessories wholesale: lifting hooks, straps and wrist wraps.", ["lifting hooks"]
     ) == "high"
+    rigging = heuristic_relevance(
+        product="lifting hooks",
+        buyer_type="distributors",
+        location="Houston",
+        company_name="Kulkoni Inc - Lifting & Rigging Supply",
+        title="Kulkoni Inc - Lifting & Rigging Supply Houston",
+        snippet="Distributor of lifting hooks, shackles, chain slings and crane rigging hardware.",
+        site_text="We stock lifting hooks, shackles and crane rigging hardware.",
+        categories=["lifting hooks"],
+    )
+    assert rigging["relevant"] is False
 
 
 def test_company_name_skips_generic_title_parts():
@@ -351,8 +397,10 @@ def test_product_hunt_runs_web_search_without_maps(monkeypatch):
 
 def test_qualify_keeps_fitness_distributor_without_exact_product_on_homepage():
     """A legitimate sports distributor may list lifting hooks deeper in the catalog."""
-    from app.agents.qualify import qualify_account
+    import asyncio
+    from app.agents.relevance import qualify_account_with_ai
     from app.agents.search_planner import SellerProfile
+    from app.providers.fallback import FallbackProvider
 
     profile = SellerProfile(
         offer_class="goods",
@@ -366,13 +414,13 @@ def test_qualify_keeps_fitness_distributor_without_exact_product_on_homepage():
         pools={"direct_icp": "primary"},
         strict_geo=True,
     )
-    q = qualify_account(
+    q = asyncio.run(qualify_account_with_ai(
         row={
             "company_name": "XYZ Sports & Fitness Distributors",
             "website": "https://xyzsportsfitness.example/",
             "snippet": "Wholesale distributor Chicago",
             "source": "web",
-            "location": "Chicago, IL",
+            "location": "",
             "discovery_query": "lifting hooks distributors in Chicago",
             "discovery_queries": [
                 "lifting hooks distributors in Chicago",
@@ -381,16 +429,57 @@ def test_qualify_keeps_fitness_distributor_without_exact_product_on_homepage():
         },
         site_text=(
             "XYZ Sports & Fitness is a wholesale distributor serving gyms and sporting goods "
-            "retailers across Chicago. Browse our full catalog of strength training accessories."
+            "retailers. Browse our full catalog of strength training accessories."
         ),
         profile=profile,
         products=[],
         page_url="https://xyzsportsfitness.example/",
-    )
+        provider=FallbackProvider(),
+        seller_brief="Fitness/gym products exporter",
+    ))
     assert q["shouldPersist"] is True
     matches = q["fitBreakdown"]["huntMatches"]
     assert {"product": "lifting hooks", "buyer": "distributors"} in matches
     assert {"product": "weightlifting straps", "buyer": "wholesalers"} in matches
+
+
+def test_keeps_lead_when_homepage_omits_hunt_city():
+    """Google already geo-scoped the query — missing Chicago on the page is not a reject."""
+    import asyncio
+    from app.agents.relevance import qualify_account_with_ai
+    from app.agents.search_planner import SellerProfile
+    from app.providers.fallback import FallbackProvider
+
+    profile = SellerProfile(
+        offer_class="goods",
+        sales_motion="wholesale",
+        hunting_buyers=True,
+        geo_mode="local",
+        categories=["lifting hooks"],
+        buyers=["distributors"],
+        places=["Chicago"],
+        use_maps=False,
+        pools={"direct_icp": "primary"},
+        strict_geo=True,
+    )
+    q = asyncio.run(qualify_account_with_ai(
+        row={
+            "company_name": "Midwest Fitness Wholesale",
+            "website": "https://midwestfitness.example/",
+            "snippet": "Strength equipment distributor",
+            "title": "Midwest Fitness Wholesale",
+            "source": "web",
+            "location": "",
+            "discovery_query": "lifting hooks distributors in Chicago",
+        },
+        site_text="Wholesale distributor of gym and strength-training accessories for retailers nationwide.",
+        profile=profile,
+        products=[],
+        page_url="https://midwestfitness.example/",
+        provider=FallbackProvider(),
+        seller_brief="Gym accessories exporter",
+    ))
+    assert q["shouldPersist"] is True
 
 
 def test_rejects_shopify_product_page_for_distributor_hunt():
@@ -432,8 +521,10 @@ def test_accepts_lifting_straps_serp():
 
 
 def test_qualify_rejects_bare_straps_page():
-    from app.agents.qualify import qualify_account
+    import asyncio
+    from app.agents.relevance import qualify_account_with_ai
     from app.agents.search_planner import SellerProfile
+    from app.providers.fallback import FallbackProvider
 
     profile = SellerProfile(
         offer_class="goods",
@@ -447,27 +538,31 @@ def test_qualify_rejects_bare_straps_page():
         pools={"direct_icp": "primary"},
         strict_geo=True,
     )
-    q = qualify_account(
+    q = asyncio.run(qualify_account_with_ai(
         row={
             "company_name": "Pacific Cargo Gear",
             "website": "https://paccargo.example/",
             "snippet": "Straps distributor",
             "source": "web",
             "location": "Los Angeles, CA",
+            "discovery_query": "weightlifting straps distributors in California",
         },
         site_text="We sell heavy duty cargo straps and ratchet tie-downs for trucks.",
         profile=profile,
         products=[],
         page_url="https://paccargo.example/",
-    )
+        provider=FallbackProvider(),
+    ))
     assert q["offerFit"] == "low"
     assert q["shouldPersist"] is False
 
 
 def test_qualify_rejects_unrelated_wholesaler_without_product():
-    """A distributor in the right city is not a lead if the site never mentions the product."""
-    from app.agents.qualify import qualify_account
+    """Jewelry wholesaler is rejected by AI/heuristic relevance, not SERP regex alone."""
+    import asyncio
+    from app.agents.relevance import qualify_account_with_ai
     from app.agents.search_planner import SellerProfile
+    from app.providers.fallback import FallbackProvider
 
     profile = SellerProfile(
         offer_class="goods",
@@ -481,7 +576,7 @@ def test_qualify_rejects_unrelated_wholesaler_without_product():
         pools={"direct_icp": "primary"},
         strict_geo=True,
     )
-    q = qualify_account(
+    q = asyncio.run(qualify_account_with_ai(
         row={
             "company_name": "A&A Jewelry Supply",
             "website": "https://aajewelry.example/",
@@ -494,8 +589,8 @@ def test_qualify_rejects_unrelated_wholesaler_without_product():
         profile=profile,
         products=[],
         page_url="https://aajewelry.example/",
-    )
-    assert q["offerFit"] == "unknown"
+        provider=FallbackProvider(),
+    ))
     assert q["shouldPersist"] is False
 
 
@@ -514,20 +609,21 @@ def test_prompt_roles_prioritize_importers():
     assert profile.sales_motion == "wholesale"
 
 
-def test_strict_geo_rejects_serp_without_location():
+def test_strict_geo_allows_serp_without_location_mention():
+    """Missing place on a thin snippet is not a reject — Google already applied the location."""
     row = classify_serp_row(
         {
             "company_name": "Global Belt Co",
             "website": "https://globalbelts.example/",
             "snippet": "Importer of martial arts supplies worldwide",
             "source": "web",
+            "discovery_query": "martial arts belts importers in Nevada",
         },
         hunting_buyers=True,
         target_places=["Nevada"],
         strict_geo=True,
     )
-    assert row["reject"] is True
-    assert row["entity_type"] == "wrong_geo"
+    assert row["reject"] is False
 
 
 def test_strict_geo_keeps_nevada_snippet():

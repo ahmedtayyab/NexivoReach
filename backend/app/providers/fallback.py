@@ -176,6 +176,33 @@ class FallbackProvider(AIProvider):
         results.sort(key=lambda row: order.get(row["fitLevel"], 9))
         return results[:4]
 
+    async def qualify_business_relevance(
+        self,
+        *,
+        product: str,
+        buyer_type: str,
+        location: str,
+        search_query: str,
+        company_name: str,
+        title: str = "",
+        snippet: str = "",
+        website: str = "",
+        site_text: str = "",
+        seller_brief: str = "",
+    ) -> Dict[str, Any]:
+        from app.agents.relevance import heuristic_relevance
+
+        return heuristic_relevance(
+            product=product,
+            buyer_type=buyer_type,
+            location=location,
+            company_name=company_name,
+            title=title,
+            snippet=snippet,
+            site_text=site_text,
+            categories=[product] if product else [],
+        )
+
     async def generate_personalized_outreach(
         self,
         company_name: str,

@@ -612,6 +612,100 @@ class WebSearchTool:
         except Exception:
             return {"text": "", "title": "", "url": url, "ok": False, "location": ""}
 
+    async def scrape_relevance_pages(
+        self,
+        url: str,
+        *,
+        limit: int = 8000,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> Dict[str, Any]:
+        """
+        Homepage plus one catalog-ish page when the homepage is thin.
+        Used so AI can see /products or /catalog before rejecting a distributor.
+        """
+        from urllib.parse import urljoin, urlparse
+
+        home = await self.scrape_homepage(url, limit=min(limit, 5000), client=client, keep_html=True)
+        if not home.get("ok"):
+            home.pop("html", None)
+            return home
+
+        text = (home.get("text") or "").strip()
+        html = home.pop("html", "") or ""
+        base = home.get("url") or url
+        pages = [base]
+        contact_urls = list(home.get("contact_urls") or [])
+
+        # Prefer linked catalog/shop paths from the homepage, else common guesses.
+        candidates: List[str] = []
+        try:
+            soup = BeautifulSoup(html, "html.parser") if html else None
+            if soup:
+                for a in soup.find_all("a", href=True):
+                    href = (a.get("href") or "").strip()
+                    low = href.lower()
+                    if any(p in low for p in (
+                        "/products", "/product", "/catalog", "/shop", "/collections",
+                        "/equipment", "/wholesale", "/store",
+                    )):
+                        full = urljoin(base, href)
+                        if urlparse(full).netloc == urlparse(base).netloc:
+                            candidates.append(full.split("#")[0])
+                    if len(candidates) >= 6:
+                        break
+        except Exception:
+            pass
+        root = f"{urlparse(base).scheme}://{urlparse(base).netloc}"
+        for path in (
+            "/products", "/catalog", "/shop", "/collections", "/equipment", "/wholesale",
+        ):
+            candidates.append(f"{root}{path}")
+
+        seen = {base.rstrip("/").lower()}
+        extra_url = ""
+        for cand in candidates:
+            key = cand.rstrip("/").lower()
+            if key in seen or _should_skip(cand):
+                continue
+            seen.add(key)
+            extra_url = cand
+            break
+
+        # Only fetch catalog when homepage is short or generic
+        need_catalog = len(text) < 1200 or not any(
+            w in text.lower()
+            for w in (
+                "distributor", "wholesale", "importer", "fitness", "gym", "sport",
+                "strength", "martial", "lifting", "strap", "belt", "wrap", "sleeve", "hook",
+            )
+        )
+        if extra_url and need_catalog:
+            try:
+                async def _get_extra(c: httpx.AsyncClient) -> Optional[str]:
+                    res = await c.get(extra_url, headers=HEADERS, timeout=5.0)
+                    if res.status_code != 200 or not res.text:
+                        return None
+                    return _html_to_text(res.text, limit=3500)
+
+                if client is not None:
+                    extra_text = await _get_extra(client)
+                else:
+                    async with httpx.AsyncClient(
+                        timeout=5.0, follow_redirects=True, headers=HEADERS
+                    ) as own:
+                        extra_text = await _get_extra(own)
+                if extra_text:
+                    text = f"{text}\n\n{extra_text}"[:limit]
+                    pages.append(extra_url)
+            except Exception:
+                pass
+
+        home["text"] = text
+        home["pages"] = pages
+        home["contact_urls"] = contact_urls
+        home.pop("html", None)
+        return home
+
     async def scrape_for_qualify(self, url: str, limit: int = 14000) -> Dict[str, Any]:
         """Homepage plus up to 2 signal pages (about / news / careers) for Intent evidence."""
         home = await self.scrape_homepage(url, limit=min(limit, 9000))

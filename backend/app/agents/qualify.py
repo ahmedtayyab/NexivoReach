@@ -225,24 +225,12 @@ def qualify_account(
         if not why_this:
             why_this = f"{name} is a local Maps listing matching the ICP buyer type; website evidence is still thin."
 
-    # Strict geo from Discover prompt (e.g. "in Massachusetts" / "in UAE") — address wins.
-    # Also use phone dial codes + social/footer windows when homepage address is thin.
+    # Strict geo: only reject when address CONTRADICTS the hunt place.
+    # Missing Chicago on the homepage is not a reject — Google already geo-scoped the query.
     if getattr(profile, "strict_geo", False) and profile.places:
-        from app.agents.geo import location_conflicts_with_targets, places_mentioned, enrich_geo_blob
+        from app.agents.geo import location_conflicts_with_targets
 
         loc = (location or "").strip()
-        phones = []
-        if row.get("phone"):
-            phones.append(str(row.get("phone")))
-        if row.get("phones"):
-            phones.extend(str(p) for p in (row.get("phones") or []) if p)
-        evidence_blob = enrich_geo_blob(
-            site_text=site_text or "",
-            title=str(row.get("title") or ""),
-            snippet=snippet or "",
-            phones=phones,
-        )
-
         if loc and location_conflicts_with_targets(loc, profile.places):
             persist = False
             priority = "reject"
@@ -250,37 +238,6 @@ def qualify_account(
                 f"{name}: skipped — address is outside "
                 f"{', '.join(profile.places[:2])}."
             )
-        elif loc:
-            mentioned = places_mentioned(loc, profile.places)
-            if mentioned is True:
-                pass
-            elif places_mentioned(evidence_blob, profile.places) is True:
-                # Phone/social/footer confirms target country even if address line is vague
-                pass
-            elif mentioned is False or (
-                mentioned is not True
-                and source_type != "homepage"
-                and (row.get("source") or "") != "maps"
-            ):
-                persist = False
-                priority = "reject"
-                why_this = (
-                    f"{name}: skipped — no clear evidence they operate in "
-                    f"{', '.join(profile.places[:2])}."
-                )
-        else:
-            # No address: require target place in SERP, site, social window, or phone dial code
-            geo_hit = _geo_ok(f"{snippet}\n{row.get('title') or ''}", profile.places)
-            if geo_hit is not True:
-                geo_hit = _geo_ok(evidence_blob, profile.places)
-            if geo_hit is not True and (row.get("source") or "") != "maps":
-                persist = False
-                priority = "reject"
-                why_this = (
-                    f"{name}: skipped — no clear evidence they operate in "
-                    f"{', '.join(profile.places[:2])} "
-                    f"(checked site, social links, and phone country codes)."
-                )
 
     return {
         "icpFit": icp,

@@ -352,12 +352,11 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
     intent = interpret_prompt_intent(detail_prompt, place) if prompt else None
 
     if prompt and intent and intent["primary_queries"]:
+        # Wave 1 = exact typed product×buyer×location only (literal Google searches).
+        # Close variants run in wave 2 only when primaries are thin.
         for qn in intent["primary_queries"]:
             if not any(x.query.lower() == qn.lower() for x in queries):
                 queries.append(PlannedQuery(qn, "exact_product", "direct_icp", False, 1))
-        for qn in intent["volume_queries"]:
-            if not any(x.query.lower() == qn.lower() for x in queries):
-                queries.append(PlannedQuery(qn, "exact_volume", "direct_icp", False, 1))
     elif prompt:
         queries.append(PlannedQuery(prompt, "user", "direct_icp", False, 1))
         role = (buyer or "buyer").rstrip("s")
@@ -489,14 +488,17 @@ def plan_wave2(
     prompt = (user_prompt or "").strip()
     intent = interpret_prompt_intent(prompt, _place(profile)) if prompt else None
     if intent and intent.get("primary_queries"):
-        # Do not truncate products ("martial arts belts" → "martial arts") or learn junk terms.
+        # Exact product hunts: only close variants (and rare secondary expands) when thin.
         relevant = int(wave1_stats.get("relevant_count") or 0)
-        if relevant >= 40:
+        if relevant >= 60:
             return []
         out: List[PlannedQuery] = []
-        for qn in intent.get("secondary_queries") or []:
-            out.append(PlannedQuery(qn, "secondary_expand", "direct_icp", False, 2))
-        return out[:8]
+        for qn in intent.get("volume_queries") or []:
+            out.append(PlannedQuery(qn, "exact_volume", "direct_icp", False, 2))
+        if relevant < 30:
+            for qn in intent.get("secondary_queries") or []:
+                out.append(PlannedQuery(qn, "secondary_expand", "direct_icp", False, 2))
+        return out[:24]
     cat = profile.categories[0]
     place = _place(profile)
     neg = _neg(profile)

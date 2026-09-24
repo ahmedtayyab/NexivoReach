@@ -118,14 +118,9 @@ def classify_serp_row(
     if any(h in path for h in ("/blog", "/wiki", "/guide")) and not reject:
         reject, entity, reason = True, "article", "Article URL"
 
-    # Keep multi-word hunt products faithful (e.g. weightlifting straps ≠ cargo straps)
-    if not reject and offer_categories:
-        from app.agents.geo import looks_unrelated_business, serp_blob_matches_products
-
-        if looks_unrelated_business(blob, offer_categories):
-            reject, entity, reason = True, "unrelated_business", "Obviously a different industry (jewelry, medical, real estate…)"
-        elif not serp_blob_matches_products(blob, offer_categories):
-            reject, entity, reason = True, "wrong_product", "SERP text does not match hunt products"
+    # Keep multi-word hunt products faithful for logging — do NOT hard-reject on
+    # product/industry regex here. AI relevance decides after the homepage fetch.
+    # Cheap rejects only: directories, jobs, news, social, marketplaces, retail PDPs.
 
     # When hunting distributors/wholesalers/importers, skip DTC product pages & shopfront noise
     if not reject and hunting_buyers:
@@ -149,25 +144,13 @@ def classify_serp_row(
         from app.agents.geo import location_conflicts_with_targets
 
         # Prefer the address field: Maps often returns nearby states (NY/NJ for MA).
+        # Only reject on CONTRADICTORY geography — never because the place is absent.
+        # Google already applied location to the query; missing "Chicago" on a page
+        # is not proof the result is wrong.
         if location.strip() and location_conflicts_with_targets(location, target_places):
             reject, entity, reason = True, "wrong_geo", "Address is outside the requested location"
         elif geo_ok is False and _foreign_geo_conflict(geo_source, target_places):
             reject, entity, reason = True, "wrong_geo", "Geography conflicts with target markets"
-        elif strict_geo and geo_ok is not True:
-            # Maps rows with a phone still reach qualify (address checked there).
-            # If the discovery query already pinned the place, thin SERP snippets
-            # often omit it — still let homepage qualify decide.
-            source = (row.get("source") or "").strip().lower()
-            dq = (row.get("discovery_query") or "").lower()
-            query_has_place = bool(target_places) and any(
-                (p or "").lower() in dq for p in target_places if p
-            )
-            if source == "maps" and (row.get("phone") or "").strip():
-                pass
-            elif query_has_place and source != "maps":
-                pass
-            else:
-                reject, entity, reason = True, "wrong_geo", "No evidence this company is in the requested location"
 
     competitor_seed = entity == "manufacturer" and hunting_buyers and not BUYER_RE.search(blob)
 
