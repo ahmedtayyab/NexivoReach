@@ -22,6 +22,7 @@ from app.agents.search_planner import (
 from app.agents.serp_classifier import classify_serp_row, summarize_classifications
 from app.agents.relevance import qualify_from_fast_decision, serp_triage
 from app.tools.web_search import WebSearchTool, HEADERS
+from app.tools.contact_finder import discover_contacts
 
 
 # Fast discovery targets — return leads quickly; enrich contacts in the background.
@@ -39,6 +40,9 @@ MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = MIN_LEADS
 DEFAULT_HUNT_LIMIT = 30
 WAVE1_QUERY_CAP = 48
 WAVE2_QUERY_CAP = 12
+# Parallel contact crawl on the shortlist — hard time budget so the hunt stays fast
+CONTACT_CONCURRENCY = 12
+CONTACT_BUDGET_SEC = 22.0
 
 
 def _domain(url: str) -> str:
@@ -476,21 +480,67 @@ class ProspectingAgent:
         qualified = _diversify(kept_items, target)
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        # Seed any emails already present on SERP/homepage — no contact-page crawl here
-        for item in qualified:
+        # Parallel contact crawl for the shortlist (homepage + /contact). Hard time budget.
+        contact_sem = asyncio.Semaphore(CONTACT_CONCURRENCY)
+        contact_hits = 0
+
+        async def _fill_contacts(item: Dict[str, Any]) -> None:
+            nonlocal contact_hits
             co = item["co"]
             page = item.get("page") or {}
-            seed = list(page.get("emails") or co.get("_seed_emails") or [])
+            website = (co.get("website") or "").strip()
             phone = co.get("phone") or ""
+            seed_emails = list(page.get("emails") or co.get("_seed_emails") or [])
             if page.get("phones") and not phone:
                 phone = (page.get("phones") or [""])[0] or phone
-            item["email"] = (seed[0] if seed else "") or ""
+            email = (seed_emails[0] if seed_emails else "") or ""
+            contacts: List[Dict[str, Any]] = []
+            if seed_emails:
+                contacts = [{
+                    "type": "email", "value": seed_emails[0], "label": "Email",
+                    "source": "site", "role": "general",
+                }]
+            if website:
+                async with contact_sem:
+                    try:
+                        found = await discover_contacts(
+                            website=website,
+                            homepage_html="",
+                            homepage_text=item.get("site_text") or "",
+                            homepage_url=page.get("url") or website,
+                            seed_phone=phone,
+                            seed_emails=seed_emails,
+                        )
+                        if found.get("email"):
+                            email = found["email"]
+                        phone = found.get("phone") or phone
+                        contacts = found.get("contacts") or contacts
+                    except Exception:
+                        pass
+            item["email"] = email
             item["phone"] = phone
-            item["contacts"] = (
-                [{"type": "email", "value": seed[0], "label": "Email", "source": "serp", "role": "general"}]
-                if seed else []
-            )
-            item["_contact_hit"] = bool(seed)
+            item["contacts"] = contacts
+            if email:
+                contact_hits += 1
+
+        if qualified:
+            tasks = [asyncio.create_task(_fill_contacts(item)) for item in qualified]
+            done, pending = await asyncio.wait(tasks, timeout=CONTACT_BUDGET_SEC)
+            for t in pending:
+                t.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
+        decisions_log.append({
+            "step": 4.5,
+            "observation": (
+                f"Contact crawl: {contact_hits}/{len(qualified)} emails in "
+                f"≤{int(CONTACT_BUDGET_SEC)}s ({CONTACT_CONCURRENCY} concurrent)."
+            ),
+            "decision": "Leads without email are still saved; background enrich continues.",
+            "toolCalled": "ContactFinder",
+            "toolResultSnippet": f"emails={contact_hits}",
+        })
 
         async def _enrich(item: Dict[str, Any]) -> Dict[str, Any]:
             co = item["co"]
@@ -504,9 +554,9 @@ class ProspectingAgent:
                 {"time": time.strftime("%H:%M"), "action": f"Fit {q['fitSummary']} · {q['priority']} (fast SERP triage)"},
             ]
             if email:
-                timeline.append({"time": time.strftime("%H:%M"), "action": f"Seed email {email}"})
+                timeline.append({"time": time.strftime("%H:%M"), "action": f"Found contact email {email}"})
             else:
-                timeline.append({"time": time.strftime("%H:%M"), "action": "Contact enrichment queued in background"})
+                timeline.append({"time": time.strftime("%H:%M"), "action": "No public email yet — background enrich continues"})
             return {
                 "id": f"prospect-{uuid4().hex[:10]}",
                 "companyName": co.get("company_name") or "Unknown",
@@ -546,34 +596,38 @@ class ProspectingAgent:
         prospects = [await _enrich(item) for item in qualified]
 
         def _rank(p: Dict[str, Any]) -> tuple:
+            # Prefer leads with email so "With email" is useful out of the box
+            has_email = 1 if (p.get("email") or "").strip() else 0
             pri = {"priority": 3, "nurture": 2, "review": 1, "low": 0}.get(p.get("priority") or "", 0)
-            return (pri, int(p.get("fitScore") or 0))
+            return (has_email, pri, int(p.get("fitScore") or 0))
 
         prospects.sort(key=_rank, reverse=True)
 
         duration_ms = int((time.time() - start_time) * 1000)
+        with_email = sum(1 for p in prospects if (p.get("email") or "").strip())
         agent_log = {
             "id": f"run-{int(time.time())}",
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "task": user_prompt or f"Find buyers ({profile.sales_motion})",
             "durationMs": duration_ms,
             "toolsUsed": ["SearchPlanner", "WebSearchTool", "SerpClassifier", "SerpTriage"]
-            + (["SiteFetch"] if fetched_count else []),
+            + (["SiteFetch"] if fetched_count else [])
+            + (["ContactFinder"] if qualified else []),
             "sourcesCount": len(classified),
             "status": "Completed" if prospects else "CompletedWithNoCandidates",
             "sellerProfile": profile_to_dict(profile),
             "decisions": decisions_log + [{
                 "step": 5,
                 "observation": (
-                    f"Returned {len(prospects)} leads in {duration_ms}ms "
-                    f"(target {TARGET_LEADS}). Contact enrichment is background."
+                    f"Returned {len(prospects)} leads ({with_email} with email) in {duration_ms}ms "
+                    f"(target {TARGET_LEADS})."
                 ),
                 "decision": (
-                    "Discovery stops at a usable shortlist. "
-                    "Emails/phones fill in after the user sees leads."
+                    "Discovery stays SERP-first; contact pages are crawled in parallel "
+                    f"with a {int(CONTACT_BUDGET_SEC)}s budget before save."
                 ),
                 "toolCalled": "LeadPipeline",
-                "toolResultSnippet": f"{len(prospects)} leads · {fetched_count} homepage checks",
+                "toolResultSnippet": f"{len(prospects)} leads · {with_email} emails · {fetched_count} homepage checks",
             }],
         }
         return {"prospects": prospects, "agent_log": agent_log, "prospect": prospects[0] if prospects else None}

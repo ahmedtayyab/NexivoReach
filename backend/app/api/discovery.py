@@ -275,7 +275,38 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
             session.add(ar)
             session.commit()
 
-        # Mark hunt complete immediately — contact enrichment must not block the UI.
+        # Save first, then finish leftover emails while the job is still alive
+        # (asyncio.create_task dies when this BackgroundTask returns).
+        missing_ids = [
+            p.get("id")
+            for p in saved_front
+            if p.get("id") and p.get("website") and not (p.get("email") or "").strip()
+        ]
+        if missing_ids:
+            _update_job(
+                job_id,
+                status="running",
+                phase=f"Finding emails for {len(missing_ids)} leads…",
+                progress=92,
+                found_count=len(saved_front),
+                result_prospect_ids=saved_ids,
+            )
+            try:
+                await asyncio.wait_for(
+                    _auto_fill_contacts_job(missing_ids[:35]),
+                    timeout=35.0,
+                )
+            except asyncio.TimeoutError:
+                log.warning("Contact enrich timed out for job %s", job_id)
+            with Session(engine) as session:
+                refreshed: List[Dict[str, Any]] = []
+                for pid in saved_ids:
+                    row = session.get(ProspectRecord, pid)
+                    if row:
+                        refreshed.append(prospect_to_frontend(row))
+                if refreshed:
+                    saved_front = refreshed
+
         _update_job(
             job_id,
             status="completed",
@@ -290,15 +321,6 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
 
         if saved_front:
             _sync_leads_job(business_id, saved_front)
-
-        missing_ids = [
-            p.get("id")
-            for p in saved_front
-            if p.get("id") and p.get("website") and not (p.get("email") or "").strip()
-        ]
-        if missing_ids:
-            # Fire-and-forget: leads already visible; emails fill in as enrichment finishes
-            asyncio.create_task(_auto_fill_contacts_job(missing_ids[:40]))
     except Exception as exc:
         log.exception("Discovery job %s failed", job_id)
         _update_job(
