@@ -109,9 +109,14 @@ def qualify_account(
     evidence.extend(intent_ev)
 
     # Fit is not intent. Unknown motion is not a rejection — most buyer sites never say "wholesale".
+    specific_offer_hunt = any(len(str(c).split()) >= 2 for c in (profile.categories or []))
     if icp == "low" or motion == "low":
         fit_summary = "low"
     elif icp == "unknown" and motion == "unknown" and offer == "low" and not site_text:
+        fit_summary = "low"
+    elif specific_offer_hunt and site_text and offer == "unknown":
+        # Concrete hunt products (e.g. weightlifting straps) — generic fitness sites without
+        # those product mentions are not leads.
         fit_summary = "low"
     else:
         # unknown dims stay neutral (medium); never invent high from unknowns alone.
@@ -122,7 +127,9 @@ def qualify_account(
         # Weak catalog overlap should not kill an otherwise medium ICP fit.
         if offer == "low" and site_text and fit_summary == "high":
             fit_summary = "medium"
-
+        # Specific product hunt + only weak/partial token overlap → keep reviewable, not strong.
+        if specific_offer_hunt and offer == "low" and site_text and fit_summary == "high":
+            fit_summary = "medium"
     confidence = 0.28 if not site_text else 0.58
     if evidence:
         confidence = min(0.9, confidence + 0.08 * min(3, len(evidence)))
@@ -184,6 +191,7 @@ def qualify_account(
         and (row.get("website") or "").strip()
         and icp != "low"
         and motion != "low"
+        and not (specific_offer_hunt and site_text and offer == "unknown")
     ):
         persist = True
         if priority == "reject":
@@ -196,6 +204,7 @@ def qualify_account(
         and fit_summary != "low"
         and icp != "low"
         and motion != "low"
+        and not (specific_offer_hunt and site_text and offer == "unknown")
     ):
         persist = True
         if priority == "reject":

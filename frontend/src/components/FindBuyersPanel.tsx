@@ -50,21 +50,28 @@ export function splitHuntPrompt(prompt: string): { category: string; location: s
   return { category: raw, location: '' };
 }
 
-export function composeHuntPrompt(category: string, location: string, details = ''): string {
+export function composeHuntPrompt(
+  category: string,
+  location: string,
+  details = '',
+  buyerTypes = '',
+): string {
   const cat = (category || '').trim();
   const loc = (location || '').trim();
   const detail = (details || '').trim();
+  const buyers = (buyerTypes || '').trim();
   // Hunt description lines are the primary search input.
   if (detail) {
     const headerParts: string[] = [];
     if (loc) headerParts.push(`Target location: ${loc}`);
+    if (buyers) headerParts.push(`Buyer types: ${buyers}`);
     if (cat) headerParts.push(`Context: ${cat}`);
     const header = headerParts.join('\n').trim();
     if (!header) return detail;
     return [
       header,
       '',
-      'Priority hunt lines (search each line exactly — product + buyer role):',
+      'Priority hunt lines (each product line × buyer types below):',
       detail,
     ].join('\n');
   }
@@ -132,8 +139,8 @@ export default function FindBuyersPanel({
   const [recentHunts, setRecentHunts] = useState<RecentHunt[]>([]);
 
   const query = useMemo(
-    () => composeHuntPrompt('', location, details),
-    [location, details],
+    () => composeHuntPrompt('', location, details, buyerTypes),
+    [location, details, buyerTypes],
   );
 
   const loadRecentHunts = async () => {
@@ -258,6 +265,8 @@ export default function FindBuyersPanel({
         const parts = splitHuntPrompt(header);
         if (parts.location) setLocation(parts.location);
       }
+      const buyerMatch = header.match(/Buyer types:\s*(.+)/i);
+      if (buyerMatch?.[1]) setBuyerTypes(buyerMatch[1].trim());
       setDetails(afterColon);
       return;
     }
@@ -544,7 +553,9 @@ export default function FindBuyersPanel({
       <label className="hunt-details">
         <span className="hunt-details__label">Hunt description</span>
         <p className="hunt-details__hint text-[12px] text-ink-muted m-0 mb-1.5">
-          One product × buyer line per row — each line is searched. Example: weightlifting straps distributors
+          One product per row. Selected buyer types expand each into separate searches
+          (e.g. martial arts belts × distributors → “martial arts belts distributors in California”).
+          Or paste full lines like “weightlifting straps distributors”.
         </p>
         <textarea
           className="hunt-details__input"
@@ -554,14 +565,12 @@ export default function FindBuyersPanel({
           disabled={isRunning}
           rows={10}
           placeholder={
-            'weightlifting straps distributors\n' +
-            'weightlifting straps wholesalers\n' +
-            'weightlifting straps importers\n' +
-            'weightlifting belts distributors\n' +
-            'wrist wraps wholesalers\n' +
-            'knee sleeves distributors\n' +
-            'lifting hooks wholesalers\n' +
-            'martial arts belts distributors'
+            'weightlifting straps\n' +
+            'weightlifting belts\n' +
+            'wrist wraps\n' +
+            'knee sleeves\n' +
+            'lifting hooks\n' +
+            'martial arts belts'
           }
         />
       </label>
@@ -583,7 +592,7 @@ export default function FindBuyersPanel({
 
       {!ready && (
         <p className="ui-banner ui-banner--warn hunt-ready-hint" role="status">
-          Paste hunt lines in the description (one product × buyer role per line), and set a location.
+          Paste products (one per row), pick buyer types, and set a location.
         </p>
       )}
 

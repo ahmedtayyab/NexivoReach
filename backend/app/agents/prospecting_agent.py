@@ -41,8 +41,8 @@ MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 30
 DEFAULT_HUNT_LIMIT = 40
 # Stop fetching more sites once we can fill this many persistable leads
 EARLY_EXIT_PERSISTABLE = 28
-WAVE1_QUERY_CAP = 10
-WAVE2_QUERY_CAP = 6
+WAVE1_QUERY_CAP = 36
+WAVE2_QUERY_CAP = 8
 
 
 def _domain(url: str) -> str:

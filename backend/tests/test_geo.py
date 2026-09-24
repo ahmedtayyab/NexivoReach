@@ -91,6 +91,40 @@ def test_prompt_focus_leads_categories_and_queries():
     assert "fleece" in queries[0].query.lower()
 
 
+def test_product_lines_cross_buyer_types_and_location():
+    """Product-only hunt lines × selected buyer chips × location → individual SERP queries."""
+    details = (
+        "weightlifting straps\n"
+        "martial arts belts"
+    )
+    prompt = (
+        "Target location: California, United States\n"
+        "Buyer types: Distributors, Importers\n\n"
+        "Priority hunt lines (each product line × buyer types below):\n"
+        f"{details}"
+    )
+    profile = infer_seller_profile(
+        products=[],
+        icp={
+            "targetBuyerTypes": ["Distributors", "Importers"],
+            "targetCountries": ["California, United States"],
+        },
+        business={"name": "Demo", "description": ""},
+    )
+    profile = apply_prompt_focus(
+        apply_prompt_roles(apply_prompt_geo(profile, prompt), prompt),
+        prompt,
+    )
+    queries = [q.query.lower() for q in plan_wave1(profile, prompt)]
+    assert len(queries) >= 4
+    assert any("weightlifting straps distributors in california" == q for q in queries)
+    assert any("weightlifting straps importers in california" == q for q in queries)
+    assert any("martial arts belts distributors in california" == q for q in queries)
+    assert any("martial arts belts importers in california" == q for q in queries)
+    # Must not search product-only without a buyer role
+    assert not any(q == "weightlifting straps in california" for q in queries)
+
+
 def test_prompt_roles_prioritize_importers():
     profile = infer_seller_profile(
         products=[{"name": "Belts", "category": "Martial arts"}],

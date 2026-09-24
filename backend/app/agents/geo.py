@@ -462,6 +462,8 @@ def extract_offer_terms_from_prompt(prompt: str) -> List[str]:
             continue
         if line.lower().startswith("target location:") or line.lower().startswith("context:"):
             continue
+        if line.lower().startswith("buyer types:"):
+            continue
         # Drop emoji / short section headers like "Fitness / Bodybuilding"
         cleaned = re.sub(r"^[^\w]+", "", line).strip()
         if "/" in cleaned and len(cleaned.split()) <= 4 and not re.search(
@@ -488,7 +490,13 @@ def extract_offer_terms_from_prompt(prompt: str) -> List[str]:
             if stem:
                 for part in re.split(r"\s+and\s+", stem, flags=re.I):
                     _add(part.strip())
-
+            continue
+        # Product-only hunt lines (roles selected separately in Buyer types)
+        if (
+            len(cleaned.split()) >= 2
+            and not re.search(r"\b(location|priority|search each|exactly|buyer types)\b", cleaned, re.I)
+        ):
+            _add(cleaned)
     # When multi-line hunt description already gave product stems, stop — avoid
     # turning "Target location / Priority hunt lines" into fake categories.
     if phrases:
@@ -543,6 +551,8 @@ def extract_hunt_detail_lines(prompt: str) -> List[str]:
             continue
         if low.startswith("target location:") or low.startswith("context:"):
             continue
+        if low.startswith("buyer types:"):
+            continue
         # Skip short section titles
         if len(line.split()) <= 3 and "/" in line:
             continue
@@ -551,11 +561,11 @@ def extract_hunt_detail_lines(prompt: str) -> List[str]:
             line,
             re.I,
         ):
-            # Still keep product-ish lines with 2+ words
+            # Still keep product-ish lines with 2+ words (roles come from Buyer types chips)
             if len(line.split()) < 2:
                 continue
             # Skip meta / instruction lines without a buyer role
-            if re.search(r"\b(location|priority|search each|exactly)\b", low):
+            if re.search(r"\b(location|priority|search each|exactly|buyer types)\b", low):
                 continue
         key = line.lower()
         if key in seen:
@@ -567,18 +577,90 @@ def extract_hunt_detail_lines(prompt: str) -> List[str]:
     return out
 
 
+def line_has_buyer_role(line: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(distributors?|wholesalers?|importers?|retailers?|buyers?|dealers?|"
+            r"gyms?|clinics?|brands?|hotels?|restaurants?|salons?)\b",
+            line or "",
+            re.I,
+        )
+    )
+
+
+def normalize_buyer_query_term(buyer: str) -> str:
+    """Map 'Regional distributors' → 'distributors' for SERP queries."""
+    b = re.sub(r"\s+", " ", (buyer or "").strip().lower())
+    if not b:
+        return ""
+    for label, forms in BUYER_ROLE_FORMS:
+        if b == label or any(re.search(rf"\b{re.escape(f)}\b", b) for f in forms):
+            return label
+    b = re.sub(r"\b(regional|national|local|global|online|b2b)\b", "", b).strip()
+    b = re.sub(r"\s+", " ", b).strip()
+    return b
+
+
+def expand_product_buyer_lines(detail_lines: List[str], buyers: List[str]) -> List[str]:
+    """
+    Product-only lines × selected buyer types → concrete SERP angles.
+    Lines that already include a buyer role are kept as-is.
+    """
+    roles = []
+    seen_roles = set()
+    for raw in buyers or []:
+        form = normalize_buyer_query_term(raw)
+        if not form:
+            continue
+        key = form.rstrip("s")
+        if key in seen_roles:
+            continue
+        seen_roles.add(key)
+        roles.append(form)
+    if not roles:
+        roles = ["distributors"]
+
+    out: List[str] = []
+    seen = set()
+    for line in detail_lines or []:
+        line = re.sub(r"\s+", " ", (line or "").strip())
+        if not line:
+            continue
+        stems = [line] if line_has_buyer_role(line) else [f"{line} {role}" for role in roles]
+        for stem in stems:
+            key = stem.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(stem)
+            if len(out) >= 48:
+                return out
+    return out
+
+
 def extract_buyers_from_prompt(prompt: str) -> List[str]:
     """Pull buyer roles the user named (e.g. importers) so search prioritizes them."""
-    low = (prompt or "").lower()
-    if not low:
+    text = prompt or ""
+    if not text:
         return []
     found: List[str] = []
+    # Prefer explicit "Buyer types:" header from composeHuntPrompt
+    for raw in text.splitlines():
+        low = raw.strip().lower()
+        if low.startswith("buyer types:"):
+            chunk = raw.split(":", 1)[-1]
+            for part in re.split(r"[,;/|]+", chunk):
+                form = normalize_buyer_query_term(part)
+                if form and form not in found:
+                    found.append(form)
+            if found:
+                return found[:8]
+    low = text.lower()
     for label, forms in BUYER_ROLE_FORMS:
-        if any(_word_hit(low, f) or f in low for f in forms):
-            # Prefer exact word hits over substring for short forms like "brand"
-            if any(re.search(rf"\b{re.escape(f)}\b", low) for f in forms):
+        if any(re.search(rf"\b{re.escape(f)}\b", low) for f in forms):
+            if label not in found:
                 found.append(label)
-    return found[:4]
+    return found[:8]
 
 
 def format_location_display(text: str, prefer_places: Optional[List[str]] = None) -> str:

@@ -117,7 +117,7 @@ def apply_prompt_roles(profile: SellerProfile, user_prompt: str) -> SellerProfil
     if not prompt_buyers:
         return profile
 
-    buyers = _uniq([*prompt_buyers, *profile.buyers], 6)
+    buyers = _uniq([*prompt_buyers, *profile.buyers], 8)
     pools = {**profile.pools}
     sales_motion = profile.sales_motion
     use_maps = profile.use_maps
@@ -149,7 +149,7 @@ def apply_prompt_roles(profile: SellerProfile, user_prompt: str) -> SellerProfil
         hunting_buyers=profile.hunting_buyers,
         geo_mode=profile.geo_mode,
         categories=profile.categories,
-        buyers=buyers[:4],
+        buyers=buyers[:8],
         places=profile.places,
         use_maps=use_maps,
         pools=pools,
@@ -215,7 +215,7 @@ def infer_seller_profile(
     ], limit=6)
     cats = [c for c in categories if c][:4] or ["wholesale"]
 
-    buyers = _uniq(list(icp.get("targetBuyerTypes") or icp.get("target_buyer_types") or []), 6)
+    buyers = _uniq(list(icp.get("targetBuyerTypes") or icp.get("target_buyer_types") or []), 8)
     if not buyers:
         buyers = ["distributors", "retailers", "wholesalers", "importers"]
 
@@ -320,7 +320,7 @@ def infer_seller_profile(
         hunting_buyers=hunting_buyers,
         geo_mode=geo_mode,
         categories=cats,
-        buyers=buyers[:4],
+        buyers=buyers[:8],
         places=places,
         use_maps=use_maps,
         pools=pools,
@@ -346,14 +346,21 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
     neg = _neg(profile)
     prompt = (user_prompt or "").strip()
 
-    from app.agents.geo import extract_hunt_detail_lines
+    from app.agents.geo import expand_product_buyer_lines, extract_hunt_detail_lines
 
     detail_lines = extract_hunt_detail_lines(prompt) if prompt else []
+    # Product lines × selected buyer types (ICP / Buyer types chips), then attach location.
+    # e.g. "martial arts belts" + [importers, distributors] + California
+    #   → "martial arts belts importers in California"
+    #   → "martial arts belts distributors in California"
+    expanded_lines = (
+        expand_product_buyer_lines(detail_lines, profile.buyers)
+        if detail_lines
+        else []
+    )
 
-    if prompt and detail_lines:
-        # Primary path: each hunt-description line is its own SERP query with location.
-        # e.g. "weightlifting straps distributors" + NYC → "weightlifting straps distributors in New York"
-        for line in detail_lines:
+    if prompt and expanded_lines:
+        for line in expanded_lines:
             qn = line
             if place and place.lower() not in line.lower():
                 qn = f"{line} in {place}"
@@ -362,7 +369,7 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
                 queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
         # Fan out extra places for the same product×buyer lines
         for extra_place in (profile.places or [])[1:3]:
-            for line in detail_lines[:12]:
+            for line in expanded_lines[:24]:
                 if extra_place.lower() in line.lower():
                     continue
                 qn = f"{line} in {extra_place}"
@@ -403,8 +410,8 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
         queries.append(PlannedQuery(q, family, pool, maps and profile.use_maps, 1))
 
     # When hunt lines drive the wave, skip pool fan-out that reintroduces broad categories.
-    if detail_lines:
-        return queries[:40]
+    if expanded_lines:
+        return queries[:48]
 
     if profile.pools.get("direct_icp") in ("primary", "sample"):
         add(f"{buyer} {cat} {place} {neg}", "icp_retrieval", "direct_icp")

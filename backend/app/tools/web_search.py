@@ -304,7 +304,7 @@ class WebSearchTool:
         exclude_domains: Optional[set] = None,
         limit: int = 140,
         use_maps: bool = False,
-        max_queries: int = 10,
+        max_queries: int = 36,
     ) -> List[Dict[str, Any]]:
         """Run a wave of web searches (Maps only when the plan says so)."""
         exclude_domains = exclude_domains or set()
