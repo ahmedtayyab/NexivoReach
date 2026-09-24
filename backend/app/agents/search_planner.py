@@ -346,13 +346,12 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
     neg = _neg(profile)
     prompt = (user_prompt or "").strip()
 
-    from app.agents.geo import expand_product_buyer_lines, extract_hunt_detail_lines
+    from app.agents.geo import expand_product_buyer_lines, extract_hunt_detail_lines, format_precise_hunt_query
 
     detail_lines = extract_hunt_detail_lines(prompt) if prompt else []
     # Product lines × selected buyer types (ICP / Buyer types chips), then attach location.
     # e.g. "martial arts belts" + [importers, distributors] + California
-    #   → "martial arts belts importers in California"
-    #   → "martial arts belts distributors in California"
+    #   → '"martial arts belts" importers in California'
     expanded_lines = (
         expand_product_buyer_lines(detail_lines, profile.buyers)
         if detail_lines
@@ -361,10 +360,7 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
 
     if prompt and expanded_lines:
         for line in expanded_lines:
-            qn = line
-            if place and place.lower() not in line.lower():
-                qn = f"{line} in {place}"
-            qn = re.sub(r"\s+", " ", qn).strip()
+            qn = format_precise_hunt_query(line, place)
             if qn and not any(x.query.lower() == qn.lower() for x in queries):
                 queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
         # Fan out extra places for the same product×buyer lines
@@ -372,8 +368,8 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
             for line in expanded_lines[:24]:
                 if extra_place.lower() in line.lower():
                     continue
-                qn = f"{line} in {extra_place}"
-                if not any(x.query.lower() == qn.lower() for x in queries):
+                qn = format_precise_hunt_query(line, extra_place)
+                if qn and not any(x.query.lower() == qn.lower() for x in queries):
                     queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
         # Skip broad catalog paraphrases — they pull gym-machinery noise for accessory hunts.
     elif prompt:

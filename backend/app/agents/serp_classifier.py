@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 
@@ -69,6 +69,7 @@ def classify_serp_row(
     hunting_buyers: bool,
     target_places: List[str],
     strict_geo: bool = False,
+    offer_categories: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     url = (row.get("website") or "").strip()
     title = (row.get("title") or row.get("company_name") or "")
@@ -107,6 +108,13 @@ def classify_serp_row(
     path = (urlparse(url).path or "").lower()
     if any(h in path for h in ("/blog", "/wiki", "/guide")) and not reject:
         reject, entity, reason = True, "article", "Article URL"
+
+    # Keep multi-word hunt products faithful (e.g. weightlifting straps ≠ cargo straps)
+    if not reject and offer_categories:
+        from app.agents.geo import serp_blob_matches_products
+
+        if not serp_blob_matches_products(blob, offer_categories):
+            reject, entity, reason = True, "wrong_product", "SERP text does not match hunt products"
 
     geo_source = (location or "").strip() or blob
     geo_ok = places_mentioned(geo_source, target_places) if target_places else None

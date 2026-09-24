@@ -114,9 +114,9 @@ def qualify_account(
         fit_summary = "low"
     elif icp == "unknown" and motion == "unknown" and offer == "low" and not site_text:
         fit_summary = "low"
-    elif specific_offer_hunt and site_text and offer == "unknown":
-        # Concrete hunt products (e.g. weightlifting straps) — generic fitness sites without
-        # those product mentions are not leads.
+    elif specific_offer_hunt and site_text and offer in ("unknown", "low"):
+        # Concrete hunt products (e.g. weightlifting straps) — bare "straps" or no product
+        # mention (truck cargo, generic fitness) are not leads.
         fit_summary = "low"
     else:
         # unknown dims stay neutral (medium); never invent high from unknowns alone.
@@ -191,7 +191,7 @@ def qualify_account(
         and (row.get("website") or "").strip()
         and icp != "low"
         and motion != "low"
-        and not (specific_offer_hunt and site_text and offer == "unknown")
+        and not (specific_offer_hunt and site_text and offer in ("unknown", "low"))
     ):
         persist = True
         if priority == "reject":
@@ -204,7 +204,7 @@ def qualify_account(
         and fit_summary != "low"
         and icp != "low"
         and motion != "low"
-        and not (specific_offer_hunt and site_text and offer == "unknown")
+        and not (specific_offer_hunt and site_text and offer in ("unknown", "low"))
     ):
         persist = True
         if priority == "reject":
@@ -404,6 +404,13 @@ def _offer_fit(
     ev = []
     if not site_text:
         return "unknown", ev
+
+    from app.agents.geo import (
+        AMBIGUOUS_PRODUCT_HEADS,
+        page_matches_specific_products,
+        product_phrases_from_profile_categories,
+    )
+
     # Prefer concrete product / hunt keywords over broad category labels (e.g. "fitness").
     cats = [c for c in profile.categories if c and len(str(c).split()) >= 1]
     # Broad single-word categories are weak alone (fitness, gym, sports…)
@@ -415,6 +422,43 @@ def _offer_fit(
         c for c in cats
         if len(str(c).split()) >= 2 or str(c).lower() not in weak_broad
     ]
+    phrases = product_phrases_from_profile_categories(specific_cats)
+    # Multi-word hunt products: require phrase / modifier fidelity (not bare "straps")
+    if phrases:
+        fidelity = page_matches_specific_products(text, specific_cats)
+        if fidelity == "high":
+            label = next((p for p in phrases if p in (text or "").lower()), phrases[0])
+            ev.append(_evidence(
+                "offer",
+                f"Site text matches hunt product “{label}”.",
+                _excerpt(text, re.escape(label.split()[0])),
+                url,
+                source_type,
+                0.75,
+            ))
+            return "high", ev
+        if fidelity == "medium":
+            ev.append(_evidence(
+                "offer",
+                "Partial product overlap with hunt terms (modifier + context).",
+                phrases[0],
+                url,
+                source_type,
+                0.5,
+            ))
+            return "medium", ev
+        if fidelity == "low":
+            ev.append(_evidence(
+                "offer",
+                "Only an ambiguous product word matched (e.g. straps without weightlifting) — not a fit.",
+                phrases[0].split()[-1],
+                url,
+                source_type,
+                0.2,
+            ))
+            return "low", ev
+        return "unknown", ev
+
     product_tokens: List[str] = []
     for p in (products or [])[:20]:
         for part in (p.get("name"), p.get("category")):
@@ -425,19 +469,18 @@ def _offer_fit(
                 if len(t) >= 4 and t not in {
                     "with", "from", "that", "this", "padded", "training", "quick", "kind",
                     *weak_broad,
+                    *AMBIGUOUS_PRODUCT_HEADS,
                 }:
                     product_tokens.append(t)
-    # Profile categories from hunt lines (e.g. "weightlifting straps") → tokens
     for c in specific_cats:
         for tok in re.split(r"[^a-zA-Z0-9]+", str(c)):
             t = tok.lower()
-            if len(t) >= 4 and t not in weak_broad:
+            if len(t) >= 4 and t not in weak_broad and t not in AMBIGUOUS_PRODUCT_HEADS:
                 product_tokens.append(t)
     blob = (text or "").lower()
     cat_hits = _token_hits(specific_cats, text)
     unique_tokens = sorted(set(product_tokens), key=len, reverse=True)
     token_hits = [t for t in unique_tokens[:40] if re.search(rf"\b{re.escape(t)}\b", blob)]
-    # Multi-word hunt phrases present on the page are strong signal
     phrase_hits = [
         c for c in specific_cats
         if len(str(c).split()) >= 2 and str(c).lower() in blob

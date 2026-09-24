@@ -638,6 +638,180 @@ def expand_product_buyer_lines(detail_lines: List[str], buyers: List[str]) -> Li
     return out
 
 
+# Ambiguous product headwords — alone they match truck straps, seat belts, etc.
+AMBIGUOUS_PRODUCT_HEADS = frozenset({
+    "straps", "strap", "belts", "belt", "wraps", "wrap", "sleeves", "sleeve",
+    "hooks", "hook", "bands", "band", "pads", "pad", "bags", "bag", "gloves", "glove",
+})
+
+# Fitness / combat context that validates an ambiguous headword on a page
+PRODUCT_CONTEXT_WORDS = frozenset({
+    "weight", "weightlifting", "lifting", "gym", "fitness", "workout", "training",
+    "powerlifting", "bodybuilding", "crossfit", "martial", "karate", "bjj", "jiu",
+    "knee", "wrist", "ankle", "deadlift", "barbell", "dumbbell", "strength",
+})
+
+# SERP negatives when hunting products whose headword collides with other industries
+PRODUCT_HEAD_NEGATIVES: dict[str, tuple[str, ...]] = {
+    "straps": ("-truck", "-cargo", "-ratchet", "-tow", "-tie-down", "-tiedown", "-lashing", "-pallet"),
+    "strap": ("-truck", "-cargo", "-ratchet", "-tow", "-tie-down", "-tiedown", "-lashing", "-pallet"),
+    "belts": ("-seatbelt", "-seat-belt", "-conveyor", "-timing"),
+    "belt": ("-seatbelt", "-seat-belt", "-conveyor", "-timing"),
+    "hooks": ("-crane", "-towing", "-trailer"),
+    "hook": ("-crane", "-towing", "-trailer"),
+    "bands": ("-rubber-band-office", "-network"),
+    "sleeves": ("-pipe", "-cable", "-insulation"),
+    "sleeve": ("-pipe", "-cable", "-insulation"),
+}
+
+
+def split_product_and_role(line: str) -> tuple[str, str]:
+    """Split 'weightlifting straps distributors' → ('weightlifting straps', 'distributors')."""
+    text = re.sub(r"\s+", " ", (line or "").strip())
+    if not text:
+        return "", ""
+    m = re.search(
+        r"^(?P<product>.+?)\s+(?P<role>distributors?|wholesalers?|importers?|retailers?|"
+        r"buyers?|dealers?|gyms?|clinics?|brands?)\s*$",
+        text,
+        re.I,
+    )
+    if m:
+        return m.group("product").strip(), m.group("role").strip().lower()
+    return text, ""
+
+
+def format_precise_hunt_query(line: str, place: str = "") -> str:
+    """
+    Keep multi-word products intact for SERP (quoted) and add industry negatives.
+    e.g. weightlifting straps distributors + California
+      → "weightlifting straps" distributors in California -truck -cargo …
+    """
+    product, role = split_product_and_role(line)
+    if not product:
+        return ""
+    words = product.lower().split()
+    # Quote multi-word products so engines don't match bare 'straps'
+    if len(words) >= 2:
+        core = f'"{product}"'
+    else:
+        core = product
+    parts = [core]
+    if role:
+        parts.append(role)
+    q = " ".join(parts)
+    if place and place.lower() not in q.lower():
+        q = f"{q} in {place}"
+    head = words[-1] if words else ""
+    negs = PRODUCT_HEAD_NEGATIVES.get(head, ())
+    if negs:
+        q = f"{q} {' '.join(negs)}"
+    return re.sub(r"\s+", " ", q).strip()
+
+
+def product_phrases_from_profile_categories(categories: List[str]) -> List[str]:
+    """Multi-word hunt products that must stay faithful in matching."""
+    out: List[str] = []
+    seen = set()
+    for c in categories or []:
+        p = re.sub(r"\s+", " ", (c or "").strip().lower())
+        if len(p.split()) < 2:
+            continue
+        if p in seen:
+            continue
+        seen.add(p)
+        out.append(p)
+    return out
+
+
+def serp_blob_matches_products(blob: str, categories: List[str]) -> bool:
+    """
+    True when SERP title/snippet clearly relates to hunt products.
+    Rejects cargo-strap style hits that only share an ambiguous headword.
+    """
+    text = (blob or "").lower()
+    if not text.strip():
+        return True  # unknown — don't reject on empty
+    phrases = product_phrases_from_profile_categories(categories)
+    if not phrases:
+        return True
+    # Full phrase hit is ideal
+    if any(p in text for p in phrases):
+        return True
+    # All distinctive modifiers from any phrase present
+    for phrase in phrases:
+        words = [w for w in phrase.split() if len(w) > 2]
+        if len(words) < 2:
+            continue
+        head = words[-1]
+        mods = words[:-1]
+        if head in AMBIGUOUS_PRODUCT_HEADS:
+            # Need a modifier or fitness context — bare 'straps' is not enough
+            if any(m in text for m in mods):
+                return True
+            if any(c in text for c in PRODUCT_CONTEXT_WORDS):
+                return True
+        else:
+            # Non-ambiguous: require majority of tokens
+            hits = sum(1 for w in words if re.search(rf"\b{re.escape(w)}\b", text))
+            if hits >= min(2, len(words)):
+                return True
+    # If the blob only shows an ambiguous head from our hunt with wrong industry cues, fail
+    heads = {p.split()[-1] for p in phrases}
+    amb_heads = heads & AMBIGUOUS_PRODUCT_HEADS
+    if amb_heads and any(re.search(rf"\b{re.escape(h)}\b", text) for h in amb_heads):
+        wrong = (
+            "truck", "cargo", "ratchet", "tow", "tie-down", "tiedown", "lashing",
+            "pallet", "seat belt", "seatbelt", "conveyor", "crane",
+        )
+        if any(w in text for w in wrong):
+            return False
+        # Ambiguous head alone with no product modifier/context → not a match
+        return False
+    # No product signal at all — allow through for later homepage qualify
+    # (snippet may be thin), unless wrong-industry cues dominate
+    return True
+
+
+def page_matches_specific_products(blob: str, categories: List[str]) -> str:
+    """
+    Offer fidelity for scraped pages.
+    Returns 'high' | 'medium' | 'low' | 'unknown'.
+    """
+    text = (blob or "").lower()
+    phrases = product_phrases_from_profile_categories(categories)
+    if not phrases:
+        return "unknown"
+    if not text.strip():
+        return "unknown"
+    if any(p in text for p in phrases):
+        return "high"
+    for phrase in phrases:
+        words = [w for w in phrase.split() if len(w) > 2]
+        if len(words) < 2:
+            continue
+        head, mods = words[-1], words[:-1]
+        mod_hit = any(re.search(rf"\b{re.escape(m)}\b", text) for m in mods)
+        head_hit = bool(re.search(rf"\b{re.escape(head)}\b", text))
+        ctx = any(c in text for c in PRODUCT_CONTEXT_WORDS)
+        if head in AMBIGUOUS_PRODUCT_HEADS:
+            if head_hit and mod_hit:
+                return "high"
+            if head_hit and ctx:
+                return "medium"
+            if mod_hit and ctx:
+                return "medium"
+            if head_hit and not mod_hit and not ctx:
+                return "low"  # bare 'straps' / truck straps
+        else:
+            hits = sum(1 for w in words if re.search(rf"\b{re.escape(w)}\b", text))
+            if hits >= len(words):
+                return "high"
+            if hits >= 2 or (hits >= 1 and ctx):
+                return "medium"
+    return "unknown"
+
+
 def extract_buyers_from_prompt(prompt: str) -> List[str]:
     """Pull buyer roles the user named (e.g. importers) so search prioritizes them."""
     text = prompt or ""

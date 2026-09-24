@@ -117,12 +117,95 @@ def test_product_lines_cross_buyer_types_and_location():
     )
     queries = [q.query.lower() for q in plan_wave1(profile, prompt)]
     assert len(queries) >= 4
-    assert any("weightlifting straps distributors in california" == q for q in queries)
-    assert any("weightlifting straps importers in california" == q for q in queries)
-    assert any("martial arts belts distributors in california" == q for q in queries)
-    assert any("martial arts belts importers in california" == q for q in queries)
-    # Must not search product-only without a buyer role
+    assert any(
+        '"weightlifting straps" distributors in california' in q and "-truck" in q
+        for q in queries
+    )
+    assert any(
+        '"weightlifting straps" importers in california' in q
+        for q in queries
+    )
+    assert any(
+        '"martial arts belts" distributors in california' in q
+        for q in queries
+    )
+    assert any(
+        '"martial arts belts" importers in california' in q
+        for q in queries
+    )
+    # Must not search product-only without a buyer role / without quotes
     assert not any(q == "weightlifting straps in california" for q in queries)
+    assert not any(q.startswith("weightlifting straps distributors") and '"' not in q for q in queries)
+
+
+def test_rejects_cargo_straps_serp_for_weightlifting_hunt():
+    from app.agents.serp_classifier import classify_serp_row
+
+    row = classify_serp_row(
+        {
+            "company_name": "CargoStrap USA",
+            "website": "https://cargostraps.example/",
+            "title": "Heavy Duty Truck Cargo Straps",
+            "snippet": "Ratchet straps and tie-downs for trucking fleets",
+            "source": "web",
+        },
+        hunting_buyers=True,
+        target_places=["California"],
+        offer_categories=["weightlifting straps", "knee sleeves"],
+    )
+    assert row["reject"] is True
+    assert row["entity_type"] == "wrong_product"
+
+
+def test_accepts_lifting_straps_serp():
+    from app.agents.serp_classifier import classify_serp_row
+
+    row = classify_serp_row(
+        {
+            "company_name": "Iron Grip Supply",
+            "website": "https://irongripsupply.example/",
+            "title": "Weightlifting Straps Wholesaler California",
+            "snippet": "Distributor of lifting straps and gym accessories",
+            "source": "web",
+        },
+        hunting_buyers=True,
+        target_places=["California"],
+        offer_categories=["weightlifting straps"],
+    )
+    assert row["reject"] is False
+
+
+def test_qualify_rejects_bare_straps_page():
+    from app.agents.qualify import qualify_account
+    from app.agents.search_planner import SellerProfile
+
+    profile = SellerProfile(
+        offer_class="goods",
+        sales_motion="wholesale",
+        hunting_buyers=True,
+        geo_mode="local",
+        categories=["weightlifting straps"],
+        buyers=["distributors"],
+        places=["California"],
+        use_maps=False,
+        pools={"direct_icp": "primary"},
+        strict_geo=True,
+    )
+    q = qualify_account(
+        row={
+            "company_name": "Pacific Cargo Gear",
+            "website": "https://paccargo.example/",
+            "snippet": "Straps distributor",
+            "source": "web",
+            "location": "Los Angeles, CA",
+        },
+        site_text="We sell heavy duty cargo straps and ratchet tie-downs for trucks.",
+        profile=profile,
+        products=[],
+        page_url="https://paccargo.example/",
+    )
+    assert q["offerFit"] == "low"
+    assert q["shouldPersist"] is False
 
 
 def test_prompt_roles_prioritize_importers():

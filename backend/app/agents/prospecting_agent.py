@@ -125,6 +125,7 @@ class ProspectingAgent:
                 hunting_buyers=profile.hunting_buyers,
                 target_places=profile.places,
                 strict_geo=profile.strict_geo,
+                offer_categories=profile.categories,
             )
             for row in leads
         ]
@@ -197,6 +198,7 @@ class ProspectingAgent:
                     hunting_buyers=profile.hunting_buyers,
                     target_places=profile.places,
                     strict_geo=profile.strict_geo,
+                    offer_categories=profile.categories,
                 )
                 for row in more
             ]
