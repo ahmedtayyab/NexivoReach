@@ -341,6 +341,17 @@ export default function OutreachInboxView({
       )}
 
       <div className="toolbar nr-enter nr-enter-delay-1">
+        {onSendSelected && filtered.length > 0 && (
+          <button
+            type="button"
+            onClick={selectAllVisible}
+            className={`btn btn-primary${allVisibleSelected ? '' : ' nr-soft-pulse'}`}
+            aria-pressed={allVisibleSelected}
+            title="Select every lead in this list"
+          >
+            Select all ({visibleIds.length})
+          </button>
+        )}
         {gmailConnected && onSendAllReady && sendableCount > 0 && (
           <button type="button" onClick={() => onSendAllReady()} className="btn btn-primary">
             Send all ready ({sendableCount})
@@ -349,20 +360,6 @@ export default function OutreachInboxView({
         {gmailConnected && onPrepareAndSend && (
           <button type="button" onClick={() => onPrepareAndSend()} className="btn btn-secondary">
             Prepare & send
-          </button>
-        )}
-        {onSendSelected && filtered.length > 0 && (
-          <button
-            type="button"
-            onClick={selectAllVisible}
-            className={`btn btn-ghost${allVisibleSelected ? ' is-active' : ''}`}
-            title={
-              filter === 'with_email'
-                ? 'Select all visible leads (no-email leads are already hidden)'
-                : 'Select all visible leads. Switch to With email first to ignore leads without email.'
-            }
-          >
-            Select all ({visibleIds.length})
           </button>
         )}
         {onSendSelected && filter !== 'with_email' && withEmailIds.length > 0 && withEmailIds.length < visibleIds.length && (

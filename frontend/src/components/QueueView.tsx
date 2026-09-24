@@ -7,7 +7,6 @@ import { computeOutcomes, hasEmail } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
 import { FitScoreBadge } from './FitScoreBadge';
 import { useConfirm } from './ConfirmDialog';
-import OutcomesStrip from './OutcomesStrip';
 import PageAmbient from './brand/PageAmbient';
 import TemplatesCta from './TemplatesCta';
 
@@ -266,8 +265,6 @@ export default function QueueView({
         </p>
       </div>
 
-      <OutcomesStrip outcomes={outcomes} className="mb-4 nr-enter nr-enter-delay-1" />
-
       {onGoTemplates && (
         <div className="templates-cta-row nr-enter nr-enter-delay-1">
           <TemplatesCta templateCount={templateCount} onClick={onGoTemplates} />
@@ -280,6 +277,37 @@ export default function QueueView({
       )}
 
       <div className="toolbar nr-enter nr-enter-delay-1">
+        <button
+          type="button"
+          className={`btn btn-primary${emailFilter === 'has_email' ? '' : ' nr-soft-pulse'}`}
+          aria-pressed={emailFilter === 'has_email'}
+          onClick={() => {
+            setEmailFilter('has_email');
+            setFilter('All');
+          }}
+          title="Show only leads you can email"
+        >
+          With email ({outcomes.withEmail || 0})
+        </button>
+        <button
+          type="button"
+          className={emailFilter === 'missing_email' ? 'btn btn-secondary' : 'btn btn-ghost'}
+          onClick={() => {
+            setEmailFilter(emailFilter === 'missing_email' ? 'all' : 'missing_email');
+            setFilter('All');
+          }}
+        >
+          No email ({outcomes.missingEmail || 0})
+        </button>
+        {latestHuntId ? (
+          <button
+            type="button"
+            className={huntScope === 'latest' ? 'btn btn-secondary' : 'btn btn-ghost'}
+            onClick={() => setHuntScope(huntScope === 'latest' ? 'all' : 'latest')}
+          >
+            Latest hunt ({latestHuntProspects.length})
+          </button>
+        ) : null}
         <button
           type="button"
           className="btn btn-ghost"
@@ -403,36 +431,10 @@ export default function QueueView({
         </span>
       </div>
 
-      <div className="seg mb-3 overflow-x-auto max-w-full nr-enter nr-enter-delay-2" role="group" aria-label="Hunt scope">
+      <div className="seg mb-4 overflow-x-auto max-w-full nr-enter nr-enter-delay-2" role="group" aria-label="Lead stage">
         <button
           type="button"
-          className={huntScope === 'latest' ? 'is-active' : undefined}
-          disabled={!latestHuntId}
-          title={
-            latestHuntId
-              ? 'Only leads added by the most recent Find buyers run'
-              : 'Run Find buyers to tag a latest hunt'
-          }
-          onClick={() => {
-            setHuntScope('latest');
-            setFilter('All');
-          }}
-        >
-          Latest hunt {latestHuntId ? latestHuntProspects.length : 0}
-        </button>
-        <button
-          type="button"
-          className={huntScope === 'all' ? 'is-active' : undefined}
-          onClick={() => setHuntScope('all')}
-        >
-          All leads {prospects.length}
-        </button>
-      </div>
-
-      <div className="seg mb-4 overflow-x-auto max-w-full nr-enter nr-enter-delay-2" role="group" aria-label="Email filter">
-        <button
-          type="button"
-          className={emailFilter === 'all' && filter === 'All' ? 'is-active' : undefined}
+          className={filter === 'All' && emailFilter === 'all' ? 'is-active' : undefined}
           onClick={() => {
             setEmailFilter('all');
             setFilter('All');
@@ -440,36 +442,12 @@ export default function QueueView({
         >
           All {scopedProspects.length}
         </button>
-        <button
-          type="button"
-          className={emailFilter === 'has_email' ? 'is-active' : undefined}
-          onClick={() => {
-            setEmailFilter('has_email');
-            setFilter('All');
-          }}
-          title="Hide leads without email — then use Select all"
-        >
-          With email {outcomes.withEmail || 0}
-        </button>
-        <button
-          type="button"
-          className={emailFilter === 'missing_email' ? 'is-active' : undefined}
-          onClick={() => {
-            setEmailFilter('missing_email');
-            setFilter('All');
-          }}
-        >
-          No email {outcomes.missingEmail || 0}
-        </button>
         {LEAD_STAGES.map(s => (
           <button
             key={s}
             type="button"
-            className={filter === s && emailFilter === 'all' ? 'is-active' : undefined}
-            onClick={() => {
-              setFilter(s);
-              setEmailFilter('all');
-            }}
+            className={filter === s ? 'is-active' : undefined}
+            onClick={() => setFilter(s)}
           >
             {s} {stageCounts[s] || 0}
           </button>
@@ -484,7 +462,7 @@ export default function QueueView({
               setFilter('All');
             }}
           >
-            Clear filters
+            Clear
           </button>
         )}
       </div>
@@ -529,9 +507,7 @@ export default function QueueView({
             <p className="empty-state__title">No leads match these filters</p>
             <p className="empty-state__desc">
               {filtersActive
-                ? huntScope === 'latest'
-                  ? 'No leads in the latest hunt for this filter. Switch to All leads, or try With email / No email.'
-                  : 'Try Latest hunt, With email, or Clear filters.'
+                ? 'Nothing in this view. Try With email, or Clear.'
                 : 'Describe who to find in Hunt, then run Find buyers. Qualified accounts land here.'}
             </p>
             {!(filtersActive) && onGoWorkspace && (

@@ -22,14 +22,9 @@ export default function OutreachModeBar({
   onModeChange,
   onGoTemplates,
   busy = false,
-  templates = [],
   activeDraftTemplateName = '',
 }: Props) {
   const usingTemplates = mode === 'templates';
-  const names = templates
-    .map(t => (t.name || '').trim())
-    .filter(Boolean)
-    .slice(0, 6);
 
   const selectTemplates = () => {
     if (templateCount <= 0) {
@@ -69,44 +64,11 @@ export default function OutreachModeBar({
         )}
       </div>
 
-      {usingTemplates ? (
-        <div className="ui-banner ui-banner--ok outreach-mode-bar__status" role="status">
-          <p className="m-0">
-            <strong>Custom email templates are active.</strong>{' '}
-            Prepare matches each lead by product tags and keywords — not broad categories.
-          </p>
-          {activeDraftTemplateName ? (
-            <p className="m-0 mt-1.5 text-[13px]">
-              This draft:{' '}
-              <strong>{activeDraftTemplateName}</strong>
-            </p>
-          ) : null}
-          {names.length > 0 ? (
-            <p className="m-0 mt-1.5 text-[12.5px] text-ink-secondary">
-              Your templates: {names.join(' · ')}
-              {templateCount > names.length ? ` · +${templateCount - names.length} more` : ''}
-            </p>
-          ) : (
-            onGoTemplates && (
-              <p className="m-0 mt-1.5">
-                <button type="button" className="linkish" onClick={onGoTemplates}>
-                  Add a template
-                </button>
-              </p>
-            )
-          )}
-        </div>
-      ) : (
+      {usingTemplates && activeDraftTemplateName ? (
         <p className="outreach-mode-bar__hint" role="status">
-          AI writes a fresh draft per lead.
-          {templateCount > 0 && (
-            <>
-              {' '}
-              Switch to <strong>Custom email template</strong> to send your saved copy instead.
-            </>
-          )}
+          Template: <strong>{activeDraftTemplateName}</strong>
         </p>
-      )}
+      ) : null}
     </div>
   );
 }
