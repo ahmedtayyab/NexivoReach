@@ -184,7 +184,7 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
             icp=req.icp,
             business=business_payload,
             exclude_websites=exclude,
-            limit=100,
+            limit=50,
         )
         n_found = len(res.get("prospects") or [])
         _update_job(
@@ -200,28 +200,58 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
         skipped_existing = 0
 
         with Session(engine) as session:
-            known = {
-                _domain(r.website)
-                for r in session.exec(
-                    select(ProspectRecord).where(ProspectRecord.business_id == business_id)
-                ).all()
-                if r.website
-            }
-            known_names = {
-                (r.company_name or "").strip().lower()
-                for r in session.exec(
-                    select(ProspectRecord).where(ProspectRecord.business_id == business_id)
-                ).all()
-            }
+            existing_rows = session.exec(
+                select(ProspectRecord).where(ProspectRecord.business_id == business_id)
+            ).all()
+            known_by_domain: Dict[str, Any] = {}
+            known_by_name: Dict[str, Any] = {}
+            for r in existing_rows:
+                dom = _domain(r.website) if r.website else ""
+                if dom:
+                    known_by_domain[dom] = r
+                name_key = (r.company_name or "").strip().lower()
+                if name_key:
+                    known_by_name[name_key] = r
+
             for prospect in prospects:
                 website = prospect.get("website") or ""
                 name = (prospect.get("companyName") or "").strip().lower()
-                # Email-only shortlist — skip companies we could not contact after deep enrich
-                if not (prospect.get("email") or "").strip():
-                    continue
                 dom = _domain(website)
-                if (dom and dom in known) or (name and name in known_names):
+                existing = (dom and known_by_domain.get(dom)) or (name and known_by_name.get(name)) or None
+                if existing:
                     skipped_existing += 1
+                    # Merge useful new info onto the existing lead
+                    changed = False
+                    new_email = (prospect.get("email") or "").strip()
+                    if new_email and not (existing.email or "").strip():
+                        existing.email = new_email
+                        changed = True
+                    new_phone = (prospect.get("phone") or "").strip()
+                    if new_phone and not (existing.phone or "").strip():
+                        existing.phone = new_phone
+                        changed = True
+                    fb = dict(existing.fit_breakdown or {})
+                    new_fb = prospect.get("fitBreakdown") or {}
+                    old_intents = list(fb.get("matchedSearchIntents") or [])
+                    for intent in new_fb.get("matchedSearchIntents") or []:
+                        if intent and intent not in old_intents:
+                            old_intents.append(intent)
+                            changed = True
+                    if old_intents:
+                        fb["matchedSearchIntents"] = old_intents[:16]
+                    if new_fb.get("relevance") and not fb.get("relevance"):
+                        fb["relevance"] = new_fb["relevance"]
+                        changed = True
+                    if new_fb.get("emailStatus"):
+                        fb["emailStatus"] = new_fb["emailStatus"]
+                        changed = True
+                    if changed:
+                        existing.fit_breakdown = fb
+                        if prospect.get("contacts"):
+                            existing.contacts = prospect.get("contacts") or existing.contacts
+                        session.add(existing)
+                        saved_front.append(prospect_to_frontend(existing))
+                        saved_ids.append(existing.id)
                     continue
                 prospect_id = prospect.get("id") or f"prospect-{uuid4().hex[:8]}"
                 pr = ProspectRecord(
@@ -257,9 +287,9 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
                 saved_front.append(prospect_to_frontend(pr))
                 saved_ids.append(prospect_id)
                 if dom:
-                    known.add(dom)
+                    known_by_domain[dom] = pr
                 if name:
-                    known_names.add(name)
+                    known_by_name[name] = pr
 
             run_id = agent_log.get("id") or f"run-{uuid4().hex[:8]}"
             ar = AgentRunRecord(

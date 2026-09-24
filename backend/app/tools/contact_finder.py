@@ -67,6 +67,7 @@ PREFERRED_LOCAL = (
 CONTACT_PATH_HINTS = (
     "contact", "get-in-touch", "getintouch", "enquiry", "inquiry", "connect",
     "about-us", "about", "team", "support", "sales", "wholesale", "b2b",
+    "distributor", "distribution", "dealer", "dealers", "company",
     "customer-service", "customer-care", "reach-us", "reachus", "lets-talk",
     "talk-to-us", "write-to-us", "email-us", "help-center",
 )
@@ -74,7 +75,7 @@ CONTACT_LINK_TEXT = (
     "contact", "contact us", "contactus", "get in touch", "get in-touch",
     "enquire", "enquiry", "inquiry", "reach us", "email us", "write to us",
     "talk to us", "let's talk", "lets talk", "customer service", "support",
-    "sales", "wholesale", "b2b",
+    "sales", "wholesale", "b2b", "distributors", "dealers", "about us",
 )
 # Prefer true contact pages before about/team
 DEFAULT_CONTACT_PATHS = (
@@ -84,7 +85,12 @@ DEFAULT_CONTACT_PATHS = (
     "/get-in-touch", "/getintouch", "/enquiry", "/inquiry",
     "/customer-service", "/customer-care", "/reach-us", "/lets-talk",
     "/support/contact", "/en/contact", "/us/contact",
+    "/sales", "/pages/sales", "/b2b", "/pages/b2b",
+    "/wholesale", "/wholesale-program", "/pages/wholesale",
+    "/distributors", "/distributor", "/distribution", "/dealers", "/dealer",
+    "/pages/distributors", "/pages/wholesale-program",
     "/about", "/about-us", "/pages/about", "/pages/about-us",
+    "/company", "/pages/company",
 )
 
 # Provenance weights — contact-page mailto beats homepage footer noise
@@ -123,6 +129,8 @@ def _path_is_contact(url: str) -> bool:
             "contact", "get-in-touch", "getintouch", "enquiry", "inquiry",
             "reach-us", "reachus", "lets-talk", "customer-service",
             "customer-care", "email-us", "write-to-us", "talk-to-us",
+            "sales", "wholesale", "distributor", "distribution", "dealer",
+            "b2b", "about", "company",
         )
     )
 

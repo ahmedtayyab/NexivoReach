@@ -797,3 +797,43 @@ def test_qualify_rejects_nj_address_despite_boston_on_site():
         page_url="https://woldorf.example/",
     )
     assert q["shouldPersist"] is False
+
+
+def test_website_relevance_high_b2b_medium_product_low_retail():
+    from app.agents.relevance import website_relevance
+
+    high = website_relevance(
+        product="weightlifting belts",
+        buyer_type="distributors",
+        company_name="Fit Supply Co",
+        title="Wholesale Weightlifting Belts",
+        snippet="Distributor of gym accessories",
+        site_text="We wholesale weightlifting belts. Become a dealer. B2B portal.",
+        categories=["weightlifting belts"],
+    )
+    assert high["level"] == "high"
+    assert high["relevant"] is True
+
+    retail = website_relevance(
+        product="weightlifting belts",
+        buyer_type="distributors",
+        company_name="Karate Mart Shop",
+        title="Buy Weightlifting Belts Online",
+        snippet="Shop martial arts gear",
+        site_text="Add to cart. Buy now. Free shipping. Weightlifting belts for home gyms.",
+        categories=["weightlifting belts"],
+    )
+    assert retail["level"] == "low"
+    assert retail["relevant"] is True
+
+    junk = website_relevance(
+        product="lifting hooks",
+        buyer_type="wholesalers",
+        company_name="Harbor Rigging",
+        title="Industrial Crane Hooks",
+        snippet="Cargo lifting hooks and shackles",
+        site_text="Industrial crane lifting hooks for construction and cargo.",
+        categories=["lifting hooks"],
+    )
+    assert junk["level"] == "irrelevant"
+    assert junk["relevant"] is False

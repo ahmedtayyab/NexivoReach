@@ -403,7 +403,7 @@ class WebSearchTool:
             if dq and dq not in matches:
                 matches.append(dq)
 
-        per_query_cap = max(8, (limit // max(len(batches), 1)) + 4)
+        per_query_cap = max(16, min(20, (limit // max(len(batches), 1)) + 6))
         cursors = [0] * len(batches)
         progressed = True
         while progressed and len(merged) < limit:
@@ -412,7 +412,7 @@ class WebSearchTool:
                 if len(merged) >= limit:
                     break
                 taken = 0
-                while cursors[i] < len(batch) and taken < 3 and len(merged) < limit:
+                while cursors[i] < len(batch) and taken < 5 and len(merged) < limit:
                     if cursors[i] >= per_query_cap:
                         break
                     row = batch[cursors[i]]

@@ -85,48 +85,166 @@ def heuristic_relevance(
     categories: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Cheap fallback when no LLM is configured — still softer than the old pipeline."""
+    graded = website_relevance(
+        product=product,
+        buyer_type=buyer_type,
+        company_name=company_name,
+        title=title,
+        snippet=snippet,
+        site_text=site_text,
+        categories=categories,
+    )
+    level = graded.get("level") or "irrelevant"
+    if level == "irrelevant":
+        return {
+            "relevant": False,
+            "confidence": float(graded.get("confidence") or 0.8),
+            "reason": str(graded.get("reason") or "Not relevant."),
+            "level": level,
+        }
+    return {
+        "relevant": True,
+        "confidence": float(graded.get("confidence") or 0.55),
+        "reason": str(graded.get("reason") or "Relevant."),
+        "level": level,
+        "evidence": graded.get("evidence") or "",
+    }
+
+
+B2B_SIGNAL_RE = re.compile(
+    r"\b("
+    r"wholesale|wholesaler|wholesalers|distributor|distributors|distribution|"
+    r"dealer|dealers|importer|importers|b2b|bulk\s*orders?|trade\s*only|"
+    r"wholesale\s*program|become\s+a\s+(?:dealer|distributor)|for\s+retailers|"
+    r"stockist|reseller|dealer\s+network|distribute\s+to"
+    r")\b",
+    re.I,
+)
+RETAIL_SIGNAL_RE = re.compile(
+    r"\b(add\s+to\s+cart|buy\s+now|shop\s+now|free\s+shipping|your\s+cart|"
+    r"checkout|retail\s+price|customer\s+reviews?)\b",
+    re.I,
+)
+CHANNEL_BUYERS = {"distributor", "distributors", "wholesaler", "wholesalers", "importer", "importers", "dealer", "dealers"}
+
+
+def website_relevance(
+    *,
+    product: str,
+    buyer_type: str,
+    company_name: str,
+    title: str,
+    snippet: str,
+    site_text: str,
+    categories: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Stage-2 relevance after website inspection.
+    Levels: high | medium | low | irrelevant
+    Email is NOT part of this decision.
+    """
     cats = list(categories or [])
     if product and product not in cats:
         cats = [product, *cats]
     blob = f"{company_name}\n{title}\n{snippet}\n{site_text or ''}"
+    role = (buyer_type or "").strip().lower().rstrip("s")
+    role_hit = bool(role and re.search(rf"\b{re.escape(role)}s?\b", blob, re.I))
+    b2b = bool(B2B_SIGNAL_RE.search(blob))
+    retail = bool(RETAIL_SIGNAL_RE.search(blob))
+    channel_hunt = (buyer_type or "").strip().lower() in CHANNEL_BUYERS or role in {
+        "distributor", "wholesaler", "importer", "dealer",
+    }
+
     if looks_unrelated_business(blob, cats):
         return {
+            "level": "irrelevant",
             "relevant": False,
-            "confidence": 0.85,
-            "reason": "Appears to be an unrelated industry (jewelry, medical, industrial, etc.).",
+            "confidence": 0.88,
+            "reason": "Unrelated industry (jewelry, medical, industrial, etc.).",
+            "evidence": "",
         }
     offer = page_matches_specific_products(blob, cats) if cats else "unknown"
     if offer == "low":
         return {
+            "level": "irrelevant",
             "relevant": False,
-            "confidence": 0.8,
-            "reason": "Product mention looks like a different industry (e.g. cargo straps or crane hooks).",
+            "confidence": 0.85,
+            "reason": "Wrong-industry product collision (cargo straps, crane hooks, etc.).",
+            "evidence": "",
+        }
+
+    product_label = product or (cats[0] if cats else "product")
+    if offer in ("high", "medium") and b2b:
+        return {
+            "level": "high",
+            "relevant": True,
+            "confidence": 0.88 if offer == "high" else 0.78,
+            "reason": f"Lists “{product_label}” with wholesale/distributor signals.",
+            "evidence": f"Product match={offer}; B2B language present.",
+        }
+    if offer in ("high", "medium") and role_hit:
+        return {
+            "level": "high" if offer == "high" else "medium",
+            "relevant": True,
+            "confidence": 0.8 if offer == "high" else 0.68,
+            "reason": f"Product overlap and buyer-type language (“{role}”).",
+            "evidence": f"Product match={offer}; role mention.",
+        }
+    if offer in ("high", "medium") and channel_hunt and retail and not b2b:
+        return {
+            "level": "low",
+            "relevant": True,
+            "confidence": 0.5,
+            "reason": f"Sells “{product_label}” but looks retail-only (no wholesale/B2B evidence).",
+            "evidence": "Retail checkout signals; no B2B language.",
         }
     if offer in ("high", "medium"):
         return {
+            "level": "medium",
             "relevant": True,
-            "confidence": 0.75 if offer == "high" else 0.6,
-            "reason": f"Site overlaps hunt product “{product or cats[0]}”.",
+            "confidence": 0.7 if offer == "high" else 0.6,
+            "reason": f"Website overlaps hunt product “{product_label}”.",
+            "evidence": f"Product match={offer}.",
+        }
+    if has_related_trade_context(blob, cats) and b2b:
+        return {
+            "level": "medium",
+            "relevant": True,
+            "confidence": 0.68 if role_hit else 0.6,
+            "reason": "Fitness/sports trade context with wholesale/distributor signals.",
+            "evidence": "Related trade + B2B.",
         }
     if has_related_trade_context(blob, cats):
-        role = (buyer_type or "").rstrip("s")
-        role_hit = bool(role and re.search(rf"\b{re.escape(role)}s?\b", blob, re.I))
         return {
+            "level": "low",
             "relevant": True,
-            "confidence": 0.65 if role_hit else 0.55,
-            "reason": "Sports/fitness/gym trade context; exact SKU not required on homepage.",
+            "confidence": 0.52,
+            "reason": "Sports/fitness trade context; exact SKU not confirmed on inspected pages.",
+            "evidence": "Related trade context.",
         }
-    # Thin evidence — keep for human review when SERP already matched the query
-    if snippet or title:
+    # Site fetched but thin — still keep if Google returned it for the exact query
+    if (snippet or title) and (site_text or "").strip():
         return {
+            "level": "low",
             "relevant": True,
             "confidence": 0.4,
-            "reason": "Thin site text; kept because Google returned it for the exact hunt query.",
+            "reason": "Thin site evidence; kept because Google returned it for this hunt query.",
+            "evidence": "SERP match; weak page text.",
+        }
+    if snippet or title:
+        return {
+            "level": "low",
+            "relevant": True,
+            "confidence": 0.38,
+            "reason": "Could not load useful page text; SERP still matched the hunt query.",
+            "evidence": "SERP-only.",
         }
     return {
+        "level": "irrelevant",
         "relevant": False,
         "confidence": 0.55,
         "reason": "No usable site or SERP evidence of commercial relevance.",
+        "evidence": "",
     }
 
 
@@ -242,25 +360,28 @@ def qualify_from_fast_decision(
             "industry": _industry_label(f"{name}\n{snippet}", profile),
         }
 
-    # If we fetched a page, re-run heuristic on full text
+    # If we fetched a page, score high/medium/low/irrelevant from site content
     if site_text.strip():
-        ai = heuristic_relevance(
+        graded = website_relevance(
             product=product,
             buyer_type=role,
-            location=(profile.places[0] if profile.places else "") or "",
             company_name=name,
             title=title,
             snippet=snippet,
             site_text=site_text,
             categories=list(profile.categories or []),
         )
-        relevant = bool(ai.get("relevant"))
-        conf = float(ai.get("confidence") or 0.5)
-        reason = str(ai.get("reason") or "")
+        relevant = bool(graded.get("relevant"))
+        conf = float(graded.get("confidence") or 0.5)
+        reason = str(graded.get("reason") or "")
+        level = str(graded.get("level") or ("medium" if relevant else "irrelevant"))
+        evidence_note = str(graded.get("evidence") or "")
     else:
         relevant = triage.get("verdict") == "keep"
         conf = float(triage.get("confidence") or 0.5)
         reason = str(triage.get("reason") or "")
+        level = "medium" if relevant else "irrelevant"
+        evidence_note = ""
 
     if not relevant:
         return {
@@ -278,10 +399,12 @@ def qualify_from_fast_decision(
             "fitBreakdown": {
                 "aiRelevant": False,
                 "aiReason": reason,
+                "relevance": level if site_text.strip() else "irrelevant",
                 "discoveryQuery": dq,
                 "huntProduct": product,
                 "huntBuyerType": role,
                 "huntMatches": _hunt_matches(row),
+                "matchedSearchIntents": list(row.get("discovery_queries") or ([dq] if dq else [])),
                 "triage": triage.get("verdict"),
             },
             "buyingSignals": [],
@@ -292,22 +415,28 @@ def qualify_from_fast_decision(
             "industry": _industry_label(f"{name}\n{snippet}\n{site_text}", profile),
         }
 
-    offer = "high" if conf >= 0.7 else "medium"
-    icp = "high" if conf >= 0.65 else "medium"
-    fit_summary = "high" if conf >= 0.7 else "medium"
-    priority = "nurture" if conf >= 0.7 else "review"
+    offer = level if level in ("high", "medium", "low") else ("high" if conf >= 0.7 else "medium")
+    icp = "high" if level == "high" else ("medium" if level == "medium" else "low")
+    fit_summary = offer
+    priority = "priority" if level == "high" else ("nurture" if level == "medium" else "review")
     text = f"{name}\n{snippet}\n{site_text or ''}"
+    intents = [
+        q for q in list(row.get("discovery_queries") or [])
+        if (q or "").strip()
+    ]
+    if dq and dq not in intents:
+        intents.insert(0, dq)
     evidence = [{
         "claim": "offer",
         "statement": reason,
-        "quote": reason[:160],
+        "quote": (evidence_note or reason)[:160],
         "url": url,
         "sourceType": "homepage" if site_text else "serp",
         "confidence": conf,
     }]
     score = _fit_score_only(
         icp=icp,
-        offer=offer,
+        offer="high" if offer == "high" else ("medium" if offer == "medium" else "low"),
         motion="unknown",
         location=location,
         profile=profile,
@@ -337,19 +466,26 @@ def qualify_from_fast_decision(
             "intent": "none",
             "confidence": round(conf, 2),
             "priority": priority,
+            "relevance": level,
             "entityType": row.get("entity_type") or "company",
             "discoveryPool": row.get("discovery_pool") or "",
             "discoveryQuery": dq,
             "huntProduct": _hunt_product_label(text, profile, dq) or product,
             "huntBuyerType": _hunt_buyer_label(text, profile, dq) or role,
             "huntMatches": _hunt_matches(row),
+            "matchedSearchIntents": intents[:12],
             "aiRelevant": True,
             "aiReason": reason,
             "triage": triage.get("verdict") or "keep",
             "evidence": evidence,
         },
         "buyingSignals": [],
-        "productFit": offer_ev_as_matches(offer, products, text, name),
+        "productFit": offer_ev_as_matches(
+            "high" if offer == "high" else ("medium" if offer == "medium" else "low"),
+            products,
+            text,
+            name,
+        ),
         "shouldPersist": True,
         "recommendedApproach": _approach(profile, name, fit_summary, "none"),
         "location": location,

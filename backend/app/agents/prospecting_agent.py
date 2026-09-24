@@ -8,8 +8,6 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 from urllib.parse import urlparse
 
-import httpx
-
 from app.agents.search_planner import (
     apply_prompt_focus,
     apply_prompt_geo,
@@ -20,30 +18,30 @@ from app.agents.search_planner import (
     profile_to_dict,
 )
 from app.agents.serp_classifier import classify_serp_row, summarize_classifications
-from app.agents.relevance import qualify_from_fast_decision, serp_triage
-from app.tools.web_search import WebSearchTool, HEADERS
+from app.agents.relevance import qualify_from_fast_decision, serp_triage, website_relevance
+from app.tools.web_search import WebSearchTool
 from app.services.enrichment import enrich_website
 
 
-# Organic-first discovery: trust Google results, keep volume high.
-TARGET_LEADS = 100
-MIN_LEADS = 40
-SAVE_CAP = 120
-STRONG_SAVE = 60
-AVERAGE_SAVE = 60
-WAVE1_RESULT_CAP = 480
+# Multi-query Google hunt → Stage-1 junk filter → Stage-2 website inspect → contacts.
+# Targets are goals, not guarantees — never invent leads to hit them.
+MIN_LEADS = 20
+PREFERRED_LEADS = 30
+TARGET_LEADS = PREFERRED_LEADS
+MAX_LEADS = 50
+SAVE_CAP = 50
+STRONG_SAVE = 30
+AVERAGE_SAVE = 20
+WAVE1_RESULT_CAP = 320
 WAVE2_RESULT_CAP = 120
-# Homepage fetch only if somehow still thin after organic keeps
-AMBIGUOUS_FETCH_CAP = 8
-SCRAPE_CONCURRENCY = 12
 MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = MIN_LEADS
-DEFAULT_HUNT_LIMIT = 100
+DEFAULT_HUNT_LIMIT = PREFERRED_LEADS
 WAVE1_QUERY_CAP = 48
 WAVE2_QUERY_CAP = 12
-# Same depth as the UI "Find email" button (site + contact pages + Hunter)
+# Site inspect + contact pages + optional Hunter — bounded per domain
 CONTACT_CONCURRENCY = 10
-CONTACT_BUDGET_SEC = 55.0
-# Enrich more candidates than we save so email-only shortlist still has volume
+CONTACT_BUDGET_SEC = 70.0
+SITE_ENRICH_TIMEOUT_SEC = 14.0
 CONTACT_ENRICH_CAP = 80
 
 
@@ -78,7 +76,7 @@ class ProspectingAgent:
         start_time = time.time()
         decisions_log: List[Dict[str, Any]] = []
         business = business or {}
-        limit = max(limit, DEFAULT_HUNT_LIMIT)
+        limit = min(max(limit or DEFAULT_HUNT_LIMIT, MIN_LEADS), MAX_LEADS)
         profile = apply_prompt_focus(
             apply_prompt_roles(
                 apply_prompt_geo(infer_seller_profile(products, icp, business), user_prompt),
@@ -104,8 +102,8 @@ class ProspectingAgent:
             )
             decision = (
                 f"Wave 1: {len(intent['primary_queries'])} exact Google searches in parallel. "
-                f"keep most organic company hits (light junk filter only); "
-                f"target up to {TARGET_LEADS} leads."
+                f"Stage-1 junk filter → Stage-2 website inspect → contacts; "
+                f"target {PREFERRED_LEADS} leads (max {MAX_LEADS})."
             )
             snippet = "; ".join(intent["primary_queries"][:6])
         else:
@@ -197,9 +195,8 @@ class ProspectingAgent:
             "filteredOut": reject_samples,
         })
 
-        # --- Fast SERP triage (title + snippet) before any website fetch ---
-        kept_items: List[Dict[str, Any]] = []
-        ambiguous_rows: List[Dict[str, Any]] = []
+        # --- Stage 1: cheap SERP junk filter (title/snippet/URL only) ---
+        promising_rows: List[Dict[str, Any]] = []
         triage_reject = 0
         seen_names: set = set()
         for row in classified:
@@ -217,39 +214,28 @@ class ProspectingAgent:
                 buyers=profile.buyers,
             )
             row["_triage"] = triage
-            verdict = triage.get("verdict")
-            if verdict == "reject":
+            if triage.get("verdict") == "reject":
                 triage_reject += 1
                 continue
-            if verdict == "keep":
-                q = qualify_from_fast_decision(
-                    row=row, profile=profile, products=products, triage=triage, site_text="",
-                )
-                if q.get("shouldPersist"):
-                    kept_items.append({
-                        "co": row, "q": q, "page": {}, "site_text": "",
-                        "outreach_ready": True, "source": row.get("source") or "web",
-                    })
-            else:
-                ambiguous_rows.append(row)
+            promising_rows.append(row)
 
         decisions_log.append({
             "step": 3,
             "observation": (
-                f"SERP triage: {len(kept_items)} keep, {len(ambiguous_rows)} ambiguous, "
+                f"Stage-1 SERP filter: {len(promising_rows)} promising candidates, "
                 f"{triage_reject} rejected (+ {stats['rejected']} junk hosts)."
             ),
             "decision": (
-                f"Target {TARGET_LEADS} leads. Homepage fetch only for ambiguous rows "
-                f"when below target. No contact crawl during discovery."
+                f"Target {PREFERRED_LEADS} leads (min {MIN_LEADS}, max {MAX_LEADS}). "
+                f"Website inspect + contact enrich for promising domains only."
             ),
             "toolCalled": "SerpTriage",
-            "toolResultSnippet": f"kept={len(kept_items)} ambiguous={len(ambiguous_rows)}",
+            "toolResultSnippet": f"promising={len(promising_rows)} rejected={triage_reject}",
         })
 
-        # Wave 2 only if we are short of MIN_LEADS after primary searches
+        # Wave 2 variants only when primary pool is thin
         wave2 = plan_wave2(profile, stats, stats.get("learned_terms"), user_prompt=user_prompt)[:WAVE2_QUERY_CAP]
-        need_wave2 = bool(wave2) and len(kept_items) < MIN_LEADS
+        need_wave2 = bool(wave2) and len(promising_rows) < MIN_LEADS
         if need_wave2:
             more = await self.web_search.hunt_leads(
                 wave2,
@@ -281,22 +267,15 @@ class ProspectingAgent:
                     buyers=profile.buyers,
                 )
                 classified_row["_triage"] = triage
-                if triage.get("verdict") == "keep":
-                    q = qualify_from_fast_decision(
-                        row=classified_row, profile=profile, products=products,
-                        triage=triage, site_text="",
-                    )
-                    if q.get("shouldPersist"):
-                        kept_items.append({
-                            "co": classified_row, "q": q, "page": {}, "site_text": "",
-                            "outreach_ready": True, "source": classified_row.get("source") or "web",
-                        })
-                elif triage.get("verdict") == "ambiguous":
-                    ambiguous_rows.append(classified_row)
+                if triage.get("verdict") != "reject":
+                    promising_rows.append(classified_row)
             decisions_log.append({
                 "step": 3.5,
-                "observation": f"Wave 2: {len(wave2)} variant searches → {len(more)} URLs; kept now {len(kept_items)}.",
-                "decision": "Continue only if still below target.",
+                "observation": (
+                    f"Wave 2: {len(wave2)} variant searches → {len(more)} URLs; "
+                    f"promising now {len(promising_rows)}."
+                ),
+                "decision": "Continue website inspection on the combined pool.",
                 "toolCalled": "AdaptiveSearch",
                 "toolResultSnippet": "; ".join(q.query for q in wave2[:3]),
             })
@@ -304,16 +283,16 @@ class ProspectingAgent:
             decisions_log.append({
                 "step": 3.5,
                 "observation": (
-                    f"Skipped wave 2 — already have {len(kept_items)} SERP keeps "
+                    f"Skipped wave 2 — already have {len(promising_rows)} promising candidates "
                     f"(min {MIN_LEADS})."
-                    if len(kept_items) >= MIN_LEADS
+                    if len(promising_rows) >= MIN_LEADS
                     else "No useful wave-2 queries."
                 ),
-                "decision": "Proceed to ambiguous homepage checks only if needed.",
+                "decision": "Proceed to website inspection.",
                 "toolCalled": "AdaptiveSearch",
             })
 
-        if not kept_items and not ambiguous_rows:
+        if not promising_rows:
             duration_ms = int((time.time() - start_time) * 1000)
             return {
                 "prospects": [],
@@ -327,7 +306,7 @@ class ProspectingAgent:
                     "status": "CompletedWithNoCandidates",
                     "decisions": decisions_log + [{
                         "step": 4,
-                        "observation": "No keep or ambiguous candidates after triage.",
+                        "observation": "No promising candidates after Stage-1 filter.",
                         "decision": "Do not persist junk as leads.",
                         "toolCalled": "LeadPipeline",
                     }],
@@ -335,109 +314,218 @@ class ProspectingAgent:
                 },
             }
 
-        # Homepage only for ambiguous rows, and only until we hit TARGET_LEADS
-        fetched_count = 0
-        need_more = max(0, TARGET_LEADS - len(kept_items))
-        if need_more > 0 and ambiguous_rows:
-            # Round-robin ambiguous by product so one product doesn't eat the budget
+        # Domain-level merge: one enrichment per domain, keep all matched intents
+        by_domain: Dict[str, Dict[str, Any]] = {}
+        for row in promising_rows:
+            website = (row.get("website") or "").strip()
+            key = _domain(website) or _legal_name_key(row.get("company_name") or "") or uuid4().hex
+            if key in by_domain:
+                kept = by_domain[key]
+                dq = (row.get("discovery_query") or "").strip()
+                matches = kept.setdefault("discovery_queries", [])
+                if dq and dq not in matches:
+                    matches.append(dq)
+                for extra_q in row.get("discovery_queries") or []:
+                    if extra_q and extra_q not in matches:
+                        matches.append(extra_q)
+                continue
+            row = dict(row)
+            intents = list(row.get("discovery_queries") or [])
+            dq0 = (row.get("discovery_query") or "").strip()
+            if dq0 and dq0 not in intents:
+                intents.insert(0, dq0)
+            row["discovery_queries"] = intents
+            by_domain[key] = row
+
+        domain_pool = list(by_domain.values())
+
+        def _product_key_row(row: Dict[str, Any]) -> str:
             from app.agents.geo import parse_discovery_query
 
-            by_product: Dict[str, List[Dict[str, Any]]] = {}
-            product_order: List[str] = []
-            for c in ambiguous_rows:
-                if not (c.get("website") or "").strip():
-                    continue
-                prod, _r, _p = parse_discovery_query(c.get("discovery_query") or "")
-                key = (prod or "general").lower()
-                if key not in by_product:
-                    by_product[key] = []
-                    product_order.append(key)
-                by_product[key].append(c)
-            to_fetch: List[Dict[str, Any]] = []
-            idxs = {k: 0 for k in product_order}
-            fetch_cap = min(AMBIGUOUS_FETCH_CAP, max(need_more * 2, need_more + 4))
-            while len(to_fetch) < fetch_cap and product_order:
+            dq = row.get("discovery_query") or ""
+            product, _role, _place = parse_discovery_query(dq)
+            return (product or "general").lower()
+
+        def _diversify_rows(pool: List[Dict[str, Any]], cap: int) -> List[Dict[str, Any]]:
+            if cap <= 0 or not pool:
+                return []
+            buckets: Dict[str, List[Dict[str, Any]]] = {}
+            order: List[str] = []
+            for row in pool:
+                key = _product_key_row(row)
+                if key not in buckets:
+                    buckets[key] = []
+                    order.append(key)
+                buckets[key].append(row)
+            picked: List[Dict[str, Any]] = []
+            idxs = {k: 0 for k in order}
+            while len(picked) < cap:
                 progressed = False
-                for key in product_order:
+                for key in order:
                     i = idxs[key]
-                    if i < len(by_product[key]):
-                        to_fetch.append(by_product[key][i])
+                    if i < len(buckets[key]):
+                        picked.append(buckets[key][i])
                         idxs[key] = i + 1
                         progressed = True
-                        if len(to_fetch) >= fetch_cap:
+                        if len(picked) >= cap:
                             break
                 if not progressed:
                     break
+            return picked
 
-            async with httpx.AsyncClient(
-                timeout=4.0,
-                follow_redirects=True,
-                headers=HEADERS,
-                limits=httpx.Limits(
-                    max_connections=SCRAPE_CONCURRENCY,
-                    max_keepalive_connections=SCRAPE_CONCURRENCY,
-                ),
-            ) as scrape_client:
-                scrape_sem = asyncio.Semaphore(SCRAPE_CONCURRENCY)
+        inspect_pool = _diversify_rows(domain_pool, min(len(domain_pool), CONTACT_ENRICH_CAP))
+        contact_sem = asyncio.Semaphore(CONTACT_CONCURRENCY)
+        kept_items: List[Dict[str, Any]] = []
+        irrelevant_count = 0
+        email_hits = 0
+        inspected = 0
 
-                async def _scrape_one(url: str) -> Any:
-                    async with scrape_sem:
-                        # Homepage only — no catalog crawl during discovery
-                        return await self.web_search.scrape_homepage(
-                            url, limit=4000, client=scrape_client, keep_html=False,
+        async def _inspect_one(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            nonlocal irrelevant_count, email_hits, inspected
+            website = (row.get("website") or "").strip()
+            triage = row.get("_triage") or {"verdict": "keep", "confidence": 0.5, "reason": ""}
+            site_text = ""
+            page: Dict[str, Any] = {}
+            email = ""
+            phone = row.get("phone") or ""
+            contacts: List[Dict[str, Any]] = []
+            email_status = "email_not_found"
+            email_source = ""
+
+            if website:
+                async with contact_sem:
+                    try:
+                        found = await asyncio.wait_for(
+                            enrich_website(
+                                website,
+                                seed_email="",
+                                seed_phone=phone,
+                                seed_contacts=[],
+                                use_hunter=True,
+                            ),
+                            timeout=SITE_ENRICH_TIMEOUT_SEC,
                         )
+                    except asyncio.TimeoutError:
+                        found = {"email": "", "phone": phone, "contacts": [], "site_text": "", "sources": []}
+                    except Exception:
+                        found = {"email": "", "phone": phone, "contacts": [], "site_text": "", "sources": []}
+                inspected += 1
+                site_text = (found.get("site_text") or "")[:8000]
+                page = {"ok": bool(site_text), "text": site_text, "emails": []}
+                if found.get("email"):
+                    email = found["email"]
+                    email_hits += 1
+                    email_status = "email_found"
+                    sources = found.get("sources") or []
+                    email_source = sources[0] if sources else "website"
+                phone = found.get("phone") or phone
+                contacts = list(found.get("contacts") or [])
+                if found.get("location") and not (row.get("location") or "").strip():
+                    row["location"] = found["location"]
 
-                pages = await asyncio.gather(
-                    *[_scrape_one(c["website"]) for c in to_fetch],
-                    return_exceptions=True,
-                )
-                fetched_count = len(to_fetch)
-                for cand, page in zip(to_fetch, pages):
-                    if len(kept_items) >= TARGET_LEADS:
+            from app.agents.geo import parse_discovery_query
+
+            dq = (row.get("discovery_query") or "")
+            product, role, _place = parse_discovery_query(dq)
+            if not product:
+                product = (profile.categories[0] if profile.categories else "") or ""
+            if not role:
+                role = (profile.buyers[0] if profile.buyers else "distributors") or "distributors"
+
+            graded = website_relevance(
+                product=product,
+                buyer_type=role,
+                company_name=row.get("company_name") or "",
+                title=row.get("title") or "",
+                snippet=row.get("snippet") or "",
+                site_text=site_text or f"{row.get('title') or ''}\n{row.get('snippet') or ''}",
+                categories=list(profile.categories or []),
+            )
+            if graded.get("level") == "irrelevant" or not graded.get("relevant"):
+                irrelevant_count += 1
+                return None
+
+            q = qualify_from_fast_decision(
+                row=row,
+                profile=profile,
+                products=products,
+                triage=triage,
+                site_text=site_text or f"{row.get('title') or ''}\n{row.get('snippet') or ''}",
+            )
+            if not q.get("shouldPersist"):
+                irrelevant_count += 1
+                return None
+
+            fb = q.setdefault("fitBreakdown", {})
+            fb["relevance"] = graded.get("level") or fb.get("relevance")
+            fb["matchedSearchIntents"] = list(row.get("discovery_queries") or [])
+            fb["emailStatus"] = email_status
+            fb["emailSource"] = email_source
+            if graded.get("evidence"):
+                fb["relevanceEvidence"] = graded["evidence"]
+
+            return {
+                "co": row,
+                "q": q,
+                "page": page,
+                "site_text": site_text,
+                "email": email,
+                "phone": phone,
+                "contacts": contacts,
+                "email_status": email_status,
+                "email_source": email_source,
+                "relevance": graded.get("level") or "medium",
+                "outreach_ready": True,
+                "source": row.get("source") or "web",
+            }
+
+        if inspect_pool:
+            tasks = [asyncio.create_task(_inspect_one(row)) for row in inspect_pool]
+            done, pending = await asyncio.wait(tasks, timeout=CONTACT_BUDGET_SEC)
+            for t in pending:
+                t.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            for t in done:
+                try:
+                    item = t.result()
+                except Exception:
+                    continue
+                if item:
+                    kept_items.append(item)
+                    if len(kept_items) >= MAX_LEADS:
                         break
-                    site_text = ""
-                    if isinstance(page, dict) and page.get("ok"):
-                        site_text = page.get("text") or ""
-                        if page.get("location") and not (cand.get("location") or "").strip():
-                            cand["location"] = page["location"]
-                        if page.get("emails"):
-                            cand.setdefault("_seed_emails", page["emails"])
-                    triage = cand.get("_triage") or {"verdict": "ambiguous", "confidence": 0.4, "reason": ""}
-                    q = qualify_from_fast_decision(
-                        row=cand, profile=profile, products=products,
-                        triage=triage, site_text=site_text,
-                    )
-                    if q.get("shouldPersist"):
-                        kept_items.append({
-                            "co": cand, "q": q,
-                            "page": page if isinstance(page, dict) else {},
-                            "site_text": site_text,
-                            "outreach_ready": True,
-                            "source": cand.get("source") or "web",
-                        })
 
         decisions_log.append({
             "step": 4,
             "observation": (
-                f"{len(kept_items)} candidates after triage"
-                + (f"; fetched {fetched_count} ambiguous homepages." if fetched_count else " (no homepage fetches needed).")
+                f"Stage-2 inspect: {inspected}/{len(inspect_pool)} domains checked; "
+                f"{len(kept_items)} relevant (high/medium/low), {irrelevant_count} irrelevant; "
+                f"{email_hits} emails found."
             ),
-            "decision": "Show leads now. Contact enrichment runs in the background after save.",
-            "toolCalled": "FastQualify",
-            "toolResultSnippet": f"kept={len(kept_items)} fetched={fetched_count}",
+            "decision": (
+                "Relevance from website content; email is enrichment only. "
+                "Keep relevant companies even without email."
+            ),
+            "toolCalled": "WebsiteInspect",
+            "toolResultSnippet": (
+                f"relevant={len(kept_items)} emails={email_hits} irrelevant={irrelevant_count}"
+            ),
         })
 
         primary_buyer = (profile.buyers[0] or "").lower().rstrip("s") if profile.buyers else ""
 
         def _q_rank(item: Dict[str, Any]) -> tuple:
             q = item["q"]
+            rel = {"high": 3, "medium": 2, "low": 1}.get(item.get("relevance") or "", 0)
+            has_email = 1 if (item.get("email") or "").strip() else 0
             pri = {"priority": 3, "nurture": 2, "review": 1, "low": 0}.get(q.get("priority") or "", 0)
             loc_bonus = 1 if (q.get("location") or "").strip() else 0
             role_bonus = 1 if primary_buyer and primary_buyer in (
                 f"{item.get('site_text') or ''} {q.get('whyThisProspect') or ''} "
                 f"{(item.get('co') or {}).get('snippet') or ''}"
             ).lower() else 0
-            return (pri, role_bonus, loc_bonus, int(q.get("fitScore") or 0))
+            return (has_email, rel, pri, role_bonus, loc_bonus, int(q.get("fitScore") or 0))
 
         kept_items.sort(key=_q_rank, reverse=True)
 
@@ -478,69 +566,41 @@ class ProspectingAgent:
                     break
             return picked
 
-        # Deep enrich like UI "Find email", then keep only contactable leads.
-        enrich_pool = _diversify(kept_items, min(len(kept_items), CONTACT_ENRICH_CAP))
-        now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        contact_sem = asyncio.Semaphore(CONTACT_CONCURRENCY)
-        contact_hits = 0
-
-        async def _fill_contacts(item: Dict[str, Any]) -> None:
-            nonlocal contact_hits
-            co = item["co"]
-            page = item.get("page") or {}
-            website = (co.get("website") or "").strip()
-            phone = co.get("phone") or ""
-            seed_emails = list(page.get("emails") or co.get("_seed_emails") or [])
-            if page.get("phones") and not phone:
-                phone = (page.get("phones") or [""])[0] or phone
-            email = (seed_emails[0] if seed_emails else "") or ""
-            contacts: List[Dict[str, Any]] = []
-            if website:
-                async with contact_sem:
-                    try:
-                        found = await enrich_website(
-                            website,
-                            seed_email=email,
-                            seed_phone=phone,
-                            seed_contacts=[],
-                            use_hunter=True,
-                        )
-                        if found.get("email"):
-                            email = found["email"]
-                        phone = found.get("phone") or phone
-                        contacts = list(found.get("contacts") or [])
-                    except Exception:
-                        pass
-            item["email"] = email
-            item["phone"] = phone
-            item["contacts"] = contacts
-            if email:
-                contact_hits += 1
-
-        if enrich_pool:
-            tasks = [asyncio.create_task(_fill_contacts(item)) for item in enrich_pool]
-            done, pending = await asyncio.wait(tasks, timeout=CONTACT_BUDGET_SEC)
-            for t in pending:
-                t.cancel()
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
-
-        emailed = [item for item in enrich_pool if (item.get("email") or "").strip()]
-        target = min(limit, SAVE_CAP, max(TARGET_LEADS, MIN_LEADS))
-        qualified = _diversify(emailed, target) if emailed else []
+        # Prefer contactable, but never drop relevant no-email leads to invent volume
+        with_email = [i for i in kept_items if (i.get("email") or "").strip()]
+        without_email = [i for i in kept_items if not (i.get("email") or "").strip()]
+        target = min(limit, SAVE_CAP, MAX_LEADS)
+        preferred = min(PREFERRED_LEADS, target)
+        qualified = _diversify(with_email, preferred)
+        if len(qualified) < preferred:
+            need = preferred - len(qualified)
+            qualified.extend(_diversify(without_email, need))
+        if len(qualified) < target and len(kept_items) > len(qualified):
+            # Fill toward max from remaining relevant (email first via sort)
+            seen_ids = {id(x) for x in qualified}
+            for item in kept_items:
+                if len(qualified) >= target:
+                    break
+                if id(item) not in seen_ids:
+                    qualified.append(item)
+                    seen_ids.add(id(item))
 
         decisions_log.append({
             "step": 4.5,
             "observation": (
-                f"Deep contact check (site + Hunter like Find email): "
-                f"{contact_hits}/{len(enrich_pool)} emails in ≤{int(CONTACT_BUDGET_SEC)}s; "
-                f"keeping {len(qualified)} with email."
+                f"Shortlist {len(qualified)} relevant leads "
+                f"({sum(1 for i in qualified if (i.get('email') or '').strip())} with email) "
+                f"from {len(kept_items)} relevant / {len(inspect_pool)} inspected."
             ),
-            "decision": "Skip leads with no email after deep enrich — only contactable companies are saved.",
+            "decision": (
+                f"Prefer emailed companies, keep relevant without email. "
+                f"Target {PREFERRED_LEADS} (cap {MAX_LEADS})."
+            ),
             "toolCalled": "ContactFinder",
-            "toolResultSnippet": f"emails={contact_hits} kept={len(qualified)}",
+            "toolResultSnippet": f"saved={len(qualified)} emails={email_hits}",
         })
+
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         async def _enrich(item: Dict[str, Any]) -> Dict[str, Any]:
             co = item["co"]
@@ -549,11 +609,34 @@ class ProspectingAgent:
             email = item.get("email") or ""
             phone = item.get("phone") or co.get("phone") or ""
             contacts = list(item.get("contacts") or [])
+            email_status = item.get("email_status") or ("email_found" if email else "email_not_found")
             timeline = [
-                {"time": time.strftime("%H:%M"), "action": f"Discovered via {source} ({co.get('discovery_pool') or 'search'})"},
-                {"time": time.strftime("%H:%M"), "action": f"Fit {q['fitSummary']} · {q['priority']} (organic Google)"},
-                {"time": time.strftime("%H:%M"), "action": f"Found contact email {email}"},
+                {
+                    "time": time.strftime("%H:%M"),
+                    "action": f"Discovered via {source} ({co.get('discovery_pool') or 'search'})",
+                },
+                {
+                    "time": time.strftime("%H:%M"),
+                    "action": (
+                        f"Fit {q['fitSummary']} · {item.get('relevance') or q['priority']} "
+                        f"(website inspect)"
+                    ),
+                },
             ]
+            if email:
+                timeline.append({
+                    "time": time.strftime("%H:%M"),
+                    "action": f"Found contact email {email} ({item.get('email_source') or 'website'})",
+                })
+            else:
+                timeline.append({
+                    "time": time.strftime("%H:%M"),
+                    "action": "Email not found on inspected pages — lead kept as relevant",
+                })
+            fb = dict(q.get("fitBreakdown") or {})
+            fb["emailStatus"] = email_status
+            fb["emailSource"] = item.get("email_source") or ""
+            fb["matchedSearchIntents"] = list(co.get("discovery_queries") or fb.get("matchedSearchIntents") or [])
             return {
                 "id": f"prospect-{uuid4().hex[:10]}",
                 "companyName": co.get("company_name") or "Unknown",
@@ -569,7 +652,7 @@ class ProspectingAgent:
                 "replySummary": "",
                 "source": source,
                 "fitScore": q["fitScore"],
-                "fitBreakdown": q["fitBreakdown"],
+                "fitBreakdown": fb,
                 "whyThisProspect": q["whyThisProspect"],
                 "whyNow": q["whyNow"],
                 "icpFit": q["icpFit"],
@@ -593,36 +676,42 @@ class ProspectingAgent:
         prospects = [await _enrich(item) for item in qualified]
 
         def _rank(p: Dict[str, Any]) -> tuple:
+            has_email = 1 if (p.get("email") or "").strip() else 0
+            fb = p.get("fitBreakdown") or {}
+            rel = {"high": 3, "medium": 2, "low": 1}.get(fb.get("relevance") or "", 0)
             pri = {"priority": 3, "nurture": 2, "review": 1, "low": 0}.get(p.get("priority") or "", 0)
-            return (pri, int(p.get("fitScore") or 0))
+            return (has_email, rel, pri, int(p.get("fitScore") or 0))
 
         prospects.sort(key=_rank, reverse=True)
 
         duration_ms = int((time.time() - start_time) * 1000)
-        with_email = sum(1 for p in prospects if (p.get("email") or "").strip())
+        with_email_n = sum(1 for p in prospects if (p.get("email") or "").strip())
         agent_log = {
             "id": f"run-{int(time.time())}",
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "task": user_prompt or f"Find buyers ({profile.sales_motion})",
             "durationMs": duration_ms,
-            "toolsUsed": ["SearchPlanner", "WebSearchTool", "SerpClassifier", "SerpTriage"]
-            + (["SiteFetch"] if fetched_count else [])
-            + (["ContactFinder"] if enrich_pool else []),
+            "toolsUsed": [
+                "SearchPlanner", "WebSearchTool", "SerpClassifier", "SerpTriage",
+                "WebsiteInspect", "ContactFinder",
+            ],
             "sourcesCount": len(classified),
             "status": "Completed" if prospects else "CompletedWithNoCandidates",
             "sellerProfile": profile_to_dict(profile),
             "decisions": decisions_log + [{
                 "step": 5,
                 "observation": (
-                    f"Returned {len(prospects)} contactable leads ({with_email} with email) "
-                    f"in {duration_ms}ms after deep enrich of {len(enrich_pool)} companies."
+                    f"Returned {len(prospects)} relevant leads ({with_email_n} with email) "
+                    f"in {duration_ms}ms after inspecting {inspected} domains."
                 ),
                 "decision": (
-                    "Organic Google discovery, then the same Find-email depth check; "
-                    "no-email companies are dropped."
+                    "Independent product×buyer Google searches → Stage-1 junk filter → "
+                    "website relevance → contact enrichment. Email is not a relevance gate."
                 ),
                 "toolCalled": "LeadPipeline",
-                "toolResultSnippet": f"{len(prospects)} leads · {with_email} emails · enriched={len(enrich_pool)}",
+                "toolResultSnippet": (
+                    f"{len(prospects)} leads · {with_email_n} emails · inspected={inspected}"
+                ),
             }],
         }
         return {"prospects": prospects, "agent_log": agent_log, "prospect": prospects[0] if prospects else None}

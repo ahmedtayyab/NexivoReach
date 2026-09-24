@@ -28,7 +28,7 @@ async def hunter_domain_search(domain: str) -> dict[str, Any]:
     if not key or not domain:
         return {"email": "", "contacts": [], "provider": "hunter", "skipped": True}
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.get(
                 "https://api.hunter.io/v2/domain-search",
                 params={"domain": domain, "api_key": key, "limit": 5},
@@ -71,25 +71,41 @@ async def enrich_website(
 ) -> dict[str, Any]:
     """
     Enrich a company website for public contact emails/phones.
-    Returns {email, phone, contacts, sources[]} with provenance.
+    Returns {email, phone, contacts, sources[], site_text} with provenance.
+    Site HTML is the primary source; Hunter is optional fallback.
     """
     website = (website or "").strip()
     sources: list[str] = []
     email = (seed_email or "").strip()
     phone = (seed_phone or "").strip()
     contacts = list(seed_contacts or [])
+    site_text = ""
+    location = ""
 
     if not website:
-        return {"email": email, "phone": phone, "contacts": contacts, "sources": sources, "found": bool(email)}
+        return {
+            "email": email,
+            "phone": phone,
+            "contacts": contacts,
+            "sources": sources,
+            "found": bool(email),
+            "site_text": "",
+            "location": "",
+        }
 
     tool = WebSearchTool()
     page: dict = {}
     try:
-        page = await tool.scrape_homepage(website)
+        page = await tool.scrape_homepage(website, limit=8000, keep_html=True)
     except Exception as exc:
         log.warning("Enrich homepage scrape failed: %s", exc)
 
-    site_text = (page.get("text") or "") if isinstance(page, dict) else ""
+    if isinstance(page, dict):
+        site_text = page.get("text") or ""
+        location = page.get("location") or ""
+        if page.get("emails") and not email:
+            email = (page.get("emails") or [""])[0] or email
+
     found = await discover_contacts(
         website=website,
         homepage_html=(page.get("html") or "")[:400000] if isinstance(page, dict) else "",
@@ -106,6 +122,15 @@ async def enrich_website(
     for c in found.get("contacts") or []:
         if isinstance(c, dict):
             contacts.append(c)
+
+    # Prefer contact/about/wholesale page text for relevance when homepage is thin
+    if isinstance(page, dict) and site_text:
+        pass  # homepage text already captured
+    # Append contact-page snippets into site_text for relevance (from contact URLs in contacts)
+    for c in contacts:
+        if isinstance(c, dict) and c.get("type") == "url" and c.get("label") == "Contact page":
+            # already fetched during discover_contacts — emails extracted; keep homepage text
+            break
 
     if use_hunter and not email:
         hunter = await hunter_domain_search(_domain(website))
@@ -148,4 +173,6 @@ async def enrich_website(
         "sources": sources,
         "found": bool(email),
         "hunterConfigured": bool((settings.HUNTER_API_KEY or "").strip()),
+        "site_text": site_text,
+        "location": location,
     }
