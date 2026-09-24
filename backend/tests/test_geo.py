@@ -156,6 +156,52 @@ def test_intent_keeps_exact_product_and_defers_broader_terms():
     assert not any(q.startswith("straps ") for q in straps["primary_queries"])
 
 
+def test_runon_query_splits_pairs_and_keeps_exact_products():
+    """A single sentence of product+buyer pairs is not one giant phrase, and roles are not crossed."""
+    from app.agents.geo import interpret_prompt_intent, parse_product_buyer_combinations
+
+    blob = (
+        "weightlifting straps distributors weightlifting straps wholesalers "
+        "weightlifting straps importers weightlifting belts distributors "
+        "knee sleeves distributors knee sleeves wholesalers "
+        "martial arts belts distributors martial arts belts wholesalers"
+    )
+    pairs = parse_product_buyer_combinations(blob, "Los Angeles")
+    assert ("weightlifting straps", "distributors") in pairs
+    assert ("weightlifting straps", "importers") in pairs
+    assert ("knee sleeves", "wholesalers") in pairs
+    assert ("martial arts belts", "distributors") in pairs
+    assert ("knee sleeves", "importers") not in pairs
+    assert all(p != "straps" and p != "belts" for p, _r in pairs)
+
+    prompt = f"Target location: Los Angeles\n\nPriority hunt lines:\n{blob}"
+    profile = infer_seller_profile(
+        products=[],
+        icp={
+            "targetBuyerTypes": ["Retailers", "Gyms"],
+            "targetCountries": ["Los Angeles"],
+        },
+        business={"name": "Demo", "description": ""},
+    )
+    profile = apply_prompt_focus(
+        apply_prompt_roles(apply_prompt_geo(profile, prompt), prompt),
+        prompt,
+    )
+    intent = interpret_prompt_intent(prompt, "Los Angeles")
+    queries = [q.query.lower() for q in plan_wave1(profile, prompt)]
+    assert "weightlifting straps distributors in los angeles" in queries
+    assert "weightlifting straps wholesalers in los angeles" in queries
+    assert "weightlifting straps importers in los angeles" in queries
+    assert '"weightlifting straps" wholesale los angeles' in queries
+    assert "martial arts belts distributors in los angeles" in queries
+    assert "knee sleeves importers in los angeles" not in queries
+    assert not any(q.startswith("straps ") or q.startswith("belts ") for q in queries)
+    assert not any("fitness equipment" in q for q in queries)
+    assert not any("retailers" in q or q.startswith("gym ") for q in intent["primary_queries"])
+    joined = " ".join(queries)
+    assert "weightlifting straps distributors weightlifting" not in joined
+
+
 def test_product_query_order_interleaves_products():
     """First queries should cover every product for the first buyer role — not all straps."""
     from app.agents.geo import expand_product_buyer_lines

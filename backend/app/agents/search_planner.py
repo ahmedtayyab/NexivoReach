@@ -346,17 +346,10 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
     neg = _neg(profile)
     prompt = (user_prompt or "").strip()
 
-    from app.agents.geo import extract_hunt_detail_lines, interpret_hunt_intent
+    from app.agents.geo import interpret_prompt_intent
 
-    detail_lines = extract_hunt_detail_lines(prompt) if prompt else []
-    # Intent interpreter: exact product × selected buyer type × location.
-    # Primary queries run first. Volume variants keep the same product phrase.
-    # Broader categories are NOT mixed into wave 1.
-    intent = (
-        interpret_hunt_intent(detail_lines, profile.buyers, place)
-        if detail_lines
-        else None
-    )
+    detail_prompt = prompt
+    intent = interpret_prompt_intent(detail_prompt, place) if prompt else None
 
     if prompt and intent and intent["primary_queries"]:
         for qn in intent["primary_queries"]:
@@ -400,7 +393,7 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
 
     # Exact-product hunts must not fall through into catalog paraphrases.
     if intent and intent["primary_queries"]:
-        return queries[:72]
+        return queries[:96]
 
     if profile.pools.get("direct_icp") in ("primary", "sample"):
         add(f"{buyer} {cat} {place} {neg}", "icp_retrieval", "direct_icp")
@@ -491,16 +484,15 @@ def plan_wave2(
     user_prompt: str = "",
 ) -> List[PlannedQuery]:
     """Follow-up searches. Exact-product hunts only broaden after primaries are thin."""
-    from app.agents.geo import extract_hunt_detail_lines, interpret_hunt_intent
+    from app.agents.geo import interpret_prompt_intent
 
     prompt = (user_prompt or "").strip()
-    detail_lines = extract_hunt_detail_lines(prompt) if prompt else []
-    if detail_lines:
+    intent = interpret_prompt_intent(prompt, _place(profile)) if prompt else None
+    if intent and intent.get("primary_queries"):
         # Do not truncate products ("martial arts belts" → "martial arts") or learn junk terms.
         relevant = int(wave1_stats.get("relevant_count") or 0)
         if relevant >= 40:
             return []
-        intent = interpret_hunt_intent(detail_lines, profile.buyers, _place(profile))
         out: List[PlannedQuery] = []
         for qn in intent.get("secondary_queries") or []:
             out.append(PlannedQuery(qn, "secondary_expand", "direct_icp", False, 2))

@@ -41,7 +41,7 @@ MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 50
 DEFAULT_HUNT_LIMIT = 60
 # Stop fetching more sites once we can fill this many persistable leads
 EARLY_EXIT_PERSISTABLE = 52
-WAVE1_QUERY_CAP = 60
+WAVE1_QUERY_CAP = 80
 WAVE2_QUERY_CAP = 8
 
 
@@ -88,10 +88,9 @@ class ProspectingAgent:
         place = profile.places[0] if profile.places else ""
         exclude_domains = {_domain(u) for u in (exclude_websites or []) if _domain(u)}
 
-        from app.agents.geo import extract_hunt_detail_lines, interpret_hunt_intent
+        from app.agents.geo import interpret_prompt_intent
 
-        detail_lines = extract_hunt_detail_lines(user_prompt or "")
-        intent = interpret_hunt_intent(detail_lines, profile.buyers, place) if detail_lines else None
+        intent = interpret_prompt_intent(user_prompt or "", place) if (user_prompt or "").strip() else None
         if intent and intent.get("primary_queries"):
             observation = (
                 f"Interpreted exact products={intent['products']}, "

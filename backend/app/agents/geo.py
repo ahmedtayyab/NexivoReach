@@ -379,12 +379,12 @@ def extract_places_from_prompt(prompt: str) -> Tuple[List[str], bool]:
             found.append(" ".join(w.capitalize() for w in state.split()))
             strict = True
 
-    for state, aliases in US_STATE_ALIASES.items():
-        state_label = " ".join(w.capitalize() for w in state.split())
+    for _state, aliases in US_STATE_ALIASES.items():
         for city in aliases[1:]:
             if _word_hit(low, city):
-                if state_label not in found:
-                    found.append(state_label)
+                city_label = " ".join(w.capitalize() for w in city.split())
+                if city_label not in found:
+                    found.insert(0, city_label)
                 strict = True
 
     for country, aliases in COUNTRY_ALIASES.items():
@@ -424,6 +424,137 @@ BUYER_ROLE_FORMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("salons", ("salons", "salon", "spas", "spa")),
 )
 
+# Roles the hunt query itself names. Short business types (gym, brand, spa) are
+# excluded so "gym equipment distributors" stays one product, not a split on "gym".
+HUNT_QUERY_ROLES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("importers", ("importers", "importer", "importing", "import company")),
+    ("distributors", ("distributors", "distributor")),
+    ("wholesalers", ("wholesalers", "wholesaler", "wholesale")),
+    ("retailers", ("retailers", "retailer")),
+    ("dealers", ("dealers", "dealer")),
+)
+
+_VOLUME_ROLE_SHORT: dict[str, str] = {
+    "importers": "importer",
+    "distributors": "distributor",
+    "wholesalers": "wholesale",
+    "retailers": "retailer",
+    "dealers": "dealer",
+    "brands": "brand",
+    "gyms": "gym",
+    "clinics": "clinic",
+    "hotels": "hotel",
+    "restaurants": "restaurant",
+    "salons": "salon",
+}
+
+
+def _hunt_role_pattern() -> re.Pattern[str]:
+    forms: List[str] = []
+    seen = set()
+    for _label, variants in HUNT_QUERY_ROLES:
+        for variant in sorted(variants, key=len, reverse=True):
+            key = variant.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            forms.append(variant)
+    forms.sort(key=len, reverse=True)
+    return re.compile(r"\b(?:" + "|".join(re.escape(f) for f in forms) + r")\b", re.I)
+
+
+_HUNT_ROLE_RE = _hunt_role_pattern()
+
+
+def canonical_hunt_role(matched: str) -> str:
+    token = re.sub(r"\s+", " ", (matched or "").strip().lower())
+    for label, variants in HUNT_QUERY_ROLES:
+        if token == label or token in variants:
+            return label
+    return normalize_buyer_query_term(token) or token
+
+
+def _clean_product_span(span: str, place: str = "") -> str:
+    """Words between two buyer roles are the product. Drop place and filler."""
+    text = re.sub(r"\s+", " ", (span or "")).strip(" \t,.;:|/-+")
+    if not text:
+        return ""
+    if place:
+        text = re.sub(
+            rf"\b(?:in|near|around|within)\s+{re.escape(place)}\b",
+            " ",
+            text,
+            flags=re.I,
+        )
+        text = re.sub(rf"\b{re.escape(place)}\b", " ", text, flags=re.I)
+    text = re.sub(r"^(?:and|or|plus|also|with)\b", "", text, flags=re.I)
+    text = re.sub(r"\b(?:and|or|plus|also)\s*$", "", text, flags=re.I)
+    text = re.sub(r"\s+", " ", text).strip(" \t,.;:|/-")
+    words = [w for w in text.split() if w.lower() not in _PROMPT_FILLER and not w.startswith("http")]
+    if not words:
+        return ""
+    return " ".join(words).lower()
+
+
+def _product_chunks(span: str, place: str = "") -> List[str]:
+    """'wrist straps and ankle straps' before a role → two products, same buyer."""
+    parts = re.split(r"\s+and\s+|,", span or "", flags=re.I)
+    out: List[str] = []
+    seen = set()
+    for part in parts:
+        product = _clean_product_span(part, place)
+        if not product or product in seen:
+            continue
+        seen.add(product)
+        out.append(product)
+    return out
+
+
+def _hunt_body_text(prompt: str) -> str:
+    lines: List[str] = []
+    for raw in (prompt or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        low = line.lower()
+        if low.startswith("target location:") or low.startswith("context:"):
+            continue
+        if low.startswith("buyer types:") or low.startswith("priority hunt"):
+            continue
+        lines.append(line)
+    return " ".join(lines)
+
+
+def parse_product_buyer_combinations(prompt: str, place: str = "") -> List[Tuple[str, str]]:
+    """
+    Split a natural-language hunt into (product, buyer role) pairs.
+    One line or a run-on sentence both work:
+    'weightlifting straps distributors weightlifting straps wholesalers'
+    → (weightlifting straps, distributors), (weightlifting straps, wholesalers).
+    """
+    text = _hunt_body_text(prompt)
+    if not text:
+        return []
+    pairs: List[Tuple[str, str]] = []
+    seen = set()
+    pos = 0
+    for match in _HUNT_ROLE_RE.finditer(text):
+        products = _product_chunks(text[pos:match.start()], place)
+        role = canonical_hunt_role(match.group(0))
+        pos = match.end()
+        if not role:
+            continue
+        for product in products:
+            key = (product, role)
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append((product, role))
+            if len(pairs) >= 48:
+                return pairs
+    return pairs
+
+
 _PROMPT_FILLER = frozenset({
     "find", "looking", "search", "hunt", "need", "needs", "want", "wants",
     "get", "for", "the", "a", "an", "and", "or", "of", "to", "with", "that",
@@ -454,6 +585,12 @@ def extract_offer_terms_from_prompt(prompt: str) -> List[str]:
             return
         seen.add(p)
         phrases.append(p)
+
+    pairs = parse_product_buyer_combinations(text)
+    if pairs:
+        for product, _role in pairs:
+            _add(product)
+        return phrases[:10]
 
     # Multi-line product×buyer angles (client hunt description)
     for raw_line in text.splitlines():
@@ -807,15 +944,18 @@ def interpret_hunt_intent(
 
     for role in roles:
         singular_role = _singular_token(role) if role.endswith("s") else role
+        short_role = _VOLUME_ROLE_SHORT.get(role, singular_role)
         for product in exact_products:
             words = product.split()
             singular_product = " ".join(words[:-1] + [_singular_token(words[-1])]) if words else product
             if place:
                 _add(volume, f'"{product}" {role} in {place}')
-                if singular_product.lower() != product.lower() or singular_role != role:
+                _add(volume, f'"{product}" {short_role} {place}')
+                if singular_product.lower() != product.lower() and singular_role != short_role:
                     _add(volume, f'"{singular_product}" {singular_role} {place}')
             else:
                 _add(volume, f'"{product}" {role}')
+                _add(volume, f'"{product}" {short_role}')
 
     for product in exact_products:
         for broader in secondary_product_phrases(product):
@@ -833,6 +973,81 @@ def interpret_hunt_intent(
         "volume_queries": volume,
         "secondary_queries": secondary,
     }
+
+
+def interpret_prompt_intent(
+    prompt: str,
+    location: str,
+    fallback_buyers: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    First-agent interpreter.
+    When the query names product + buyer type pairs, search those pairs only.
+    Product-only lines still cross with an explicit Buyer types header, or with
+    fallback buyers when the user did not name a role.
+    """
+    place = re.sub(r"\s+", " ", (location or "").strip())
+    pairs = parse_product_buyer_combinations(prompt, place)
+    if pairs:
+        products = []
+        buyers = []
+        seen_p = set()
+        seen_b = set()
+        for product, role in pairs:
+            if product not in seen_p:
+                seen_p.add(product)
+                products.append(product)
+            if role not in seen_b:
+                seen_b.add(role)
+                buyers.append(role)
+        primary: List[str] = []
+        volume: List[str] = []
+        secondary: List[str] = []
+        seen_q = set()
+
+        def _add(bucket: List[str], q: str) -> None:
+            qn = re.sub(r"\s+", " ", (q or "").strip())
+            if not qn or qn.lower() in seen_q:
+                return
+            seen_q.add(qn.lower())
+            bucket.append(qn)
+
+        for product, role in pairs:
+            short_role = _VOLUME_ROLE_SHORT.get(role, _singular_token(role))
+            if place:
+                _add(primary, f"{product} {role} in {place}")
+                _add(volume, f'"{product}" {role} in {place}')
+                _add(volume, f'"{product}" {short_role} {place}')
+            else:
+                _add(primary, f"{product} {role}")
+                _add(volume, f'"{product}" {role}')
+                _add(volume, f'"{product}" {short_role}')
+        for product, role in pairs:
+            for broader in secondary_product_phrases(product):
+                if place:
+                    _add(secondary, f"{broader} {role} in {place}")
+                else:
+                    _add(secondary, f"{broader} {role}")
+        return {
+            "products": products,
+            "buyers": buyers,
+            "location": place,
+            "pairs": [{"product": p, "buyer": r} for p, r in pairs],
+            "primary_queries": primary,
+            "volume_queries": volume,
+            "secondary_queries": secondary,
+        }
+
+    lines = extract_hunt_detail_lines(prompt)
+    named = extract_buyers_from_prompt(prompt)
+    buyers = named or list(fallback_buyers or [])
+    intent = interpret_hunt_intent(lines, buyers, place)
+    intent["pairs"] = [
+        {"product": p, "buyer": r}
+        for r in intent["buyers"]
+        for p in intent["products"]
+    ]
+    return intent
 
 
 def format_precise_hunt_query(line: str, place: str = "", *, force_unquoted: bool = False) -> str:

@@ -1869,6 +1869,70 @@ input:focus, textarea:focus, select:focus {
 }
 @media (max-width: 800px) {
   .outreach-layout { grid-template-columns: 1fr; }
+  .outreach-toolbar .seg { display: none; }
+  .outreach-toolbar .toolbar-spacer { display: none; }
+  .outreach-filter-select {
+    display: block;
+    width: 100%;
+    min-height: 2.5rem;
+    font-size: 14px;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    color: var(--text-primary);
+    padding: 0.4rem 0.65rem;
+    border-radius: var(--radius-md);
+  }
+  .outreach-layout.is-reading .outreach-list { display: none; }
+  .outreach-layout:not(.is-reading) .outreach-editor { display: none; }
+  .outreach-list {
+    max-height: none;
+    border-right: 0;
+  }
+  .outreach-lead__email {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .outreach-back { display: inline-flex; }
+  .outreach-to {
+    flex-direction: column;
+  }
+  .outreach-to .btn { width: 100%; }
+  .outreach-editor {
+    min-height: 70vh;
+  }
+  .outreach-editor input,
+  .outreach-editor textarea {
+    min-height: 18rem;
+    width: 100%;
+    font-size: 16px;
+    line-height: 1.55;
+  }
+  .outreach-editor input {
+    min-height: 2.75rem;
+  }
+  .outreach-editor__actions {
+    position: sticky;
+    bottom: 4.75rem;
+    z-index: 3;
+    background: var(--bg-panel);
+    margin-left: -0.15rem;
+    margin-right: -0.15rem;
+    padding: 0.75rem 0.15rem 0.85rem;
+    box-shadow: 0 -10px 18px color-mix(in srgb, var(--bg-canvas, #000) 18%, transparent);
+  }
+  .outreach-editor__actions .btn-primary {
+    flex: 1 1 100%;
+    min-height: 2.75rem;
+  }
+  .outreach-mode-bar__edit { margin-left: 0; }
+  .outreach-mode-bar__seg {
+    width: 100%;
+    display: flex;
+  }
+  .outreach-mode-bar__seg button { flex: 1; }
 }
 .outreach-list {
   border-right: 1px solid var(--border);
@@ -1976,6 +2040,40 @@ input:focus, textarea:focus, select:focus {
   border: 1px solid var(--border);
   padding: 0.65rem 0.75rem;
   resize: vertical;
+}
+.outreach-editor__head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.outreach-back {
+  display: none;
+  align-items: center;
+  gap: 0.15rem;
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0.15rem 0;
+  cursor: pointer;
+}
+.outreach-to {
+  display: flex;
+  gap: 0.5rem;
+}
+.outreach-filter-select {
+  display: none;
+}
+.outreach-editor__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 0.75rem;
+  margin-top: auto;
 }
 .field-label {
   display: block;

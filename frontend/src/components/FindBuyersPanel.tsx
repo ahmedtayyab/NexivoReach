@@ -2,14 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product } from '../types';
 import { Check, FileSpreadsheet, Loader2, RotateCcw, Search, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
-import { categoriesFromProducts, suggestionsForField } from '../data/taxonomy';
 import {
   HUNT_LOCATION_OPTIONS,
 } from '../data/huntTaxonomy';
 import { isPlaceholderCompanyName } from '../lib/workspace';
 import PageAmbient from './brand/PageAmbient';
 import HuntCombobox from './FindBuyers/HuntCombobox';
-import PredictiveField from './PredictiveField';
 
 interface Props {
   businessInfo: BusinessInfo;
@@ -54,26 +52,18 @@ export function composeHuntPrompt(
   category: string,
   location: string,
   details = '',
-  buyerTypes = '',
 ): string {
   const cat = (category || '').trim();
   const loc = (location || '').trim();
   const detail = (details || '').trim();
-  const buyers = (buyerTypes || '').trim();
-  // Hunt description lines are the primary search input.
+  // The description is the search. Product + buyer type pairs are parsed from it.
   if (detail) {
     const headerParts: string[] = [];
     if (loc) headerParts.push(`Target location: ${loc}`);
-    if (buyers) headerParts.push(`Buyer types: ${buyers}`);
     if (cat) headerParts.push(`Context: ${cat}`);
     const header = headerParts.join('\n').trim();
     if (!header) return detail;
-    return [
-      header,
-      '',
-      'Priority hunt lines (each product line × buyer types below):',
-      detail,
-    ].join('\n');
+    return [header, '', 'Priority hunt lines:', detail].join('\n');
   }
   const headerParts: string[] = [];
   if (cat && loc) {
@@ -118,14 +108,12 @@ export default function FindBuyersPanel({
   onAddProspects,
   onAddLog,
   onComplete,
-  onSaveICP,
   compact = false,
   sheetsConnected = false,
   onGoConnect,
 }: Props) {
   const [location, setLocation] = useState('');
   const [details, setDetails] = useState('');
-  const [buyerTypes, setBuyerTypes] = useState((icp.targetBuyerTypes ?? []).join(', '));
   const [openField, setOpenField] = useState<'location' | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [statusText, setStatusText] = useState('');
@@ -139,8 +127,8 @@ export default function FindBuyersPanel({
   const [recentHunts, setRecentHunts] = useState<RecentHunt[]>([]);
 
   const query = useMemo(
-    () => composeHuntPrompt('', location, details, buyerTypes),
-    [location, details, buyerTypes],
+    () => composeHuntPrompt('', location, details),
+    [location, details],
   );
 
   const loadRecentHunts = async () => {
@@ -170,38 +158,6 @@ export default function FindBuyersPanel({
   }, [businessInfo.id]);
 
   const placeHint = location.trim() || (icp.targetCountries || [])[0] || '';
-
-  const catalogCats = useMemo(() => categoriesFromProducts(products), [products]);
-  const buyerContext = useMemo(
-    () =>
-      [
-        businessInfo.description,
-        details,
-        buyerTypes,
-        ...catalogCats,
-      ].join(' '),
-    [businessInfo, details, buyerTypes, catalogCats],
-  );
-  const buyerSuggestions = useMemo(
-    () => suggestionsForField('buyers', buyerContext, catalogCats),
-    [buyerContext, catalogCats],
-  );
-
-  // Persist optional buyer types into ICP as the user types.
-  useEffect(() => {
-    if (!onSaveICP) return;
-    const timer = window.setTimeout(() => {
-      const nextTypes = buyerTypes.split(',').map(s => s.trim()).filter(Boolean);
-      const prev = (icp.targetBuyerTypes ?? []).join(', ');
-      if (nextTypes.join(', ') === prev) return;
-      onSaveICP({
-        ...icp,
-        targetBuyerTypes: nextTypes,
-      });
-    }, 450);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- draft buyer types only
-  }, [buyerTypes]);
 
   const hasBrief =
     Boolean(businessInfo.description?.trim()) ||
@@ -266,8 +222,21 @@ export default function FindBuyersPanel({
         if (parts.location) setLocation(parts.location);
       }
       const buyerMatch = header.match(/Buyer types:\s*(.+)/i);
-      if (buyerMatch?.[1]) setBuyerTypes(buyerMatch[1].trim());
-      setDetails(afterColon);
+      const roles = (buyerMatch?.[1] || '')
+        .split(/[,;/|]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      const lines = afterColon.split('\n').map(s => s.trim()).filter(Boolean);
+      const hasRole = (line: string) =>
+        /\b(distributors?|wholesalers?|importers?|retailers?|dealers?|wholesale)\b/i.test(line);
+      if (roles.length && lines.some(line => !hasRole(line))) {
+        const expanded = lines.flatMap(line =>
+          hasRole(line) ? [line] : roles.map(role => `${line} ${role}`),
+        );
+        setDetails(expanded.join('\n'));
+      } else {
+        setDetails(afterColon);
+      }
       return;
     }
     const parts = splitHuntPrompt(raw);
@@ -299,7 +268,7 @@ export default function FindBuyersPanel({
           products,
           icp: {
             ...icp,
-            targetBuyerTypes: buyerTypes.split(',').map(s => s.trim()).filter(Boolean),
+            targetBuyerTypes: [],
             targetCountries: location.trim()
               ? [location.trim()]
               : (icp.targetCountries?.length
@@ -553,9 +522,9 @@ export default function FindBuyersPanel({
       <label className="hunt-details">
         <span className="hunt-details__label">Hunt description</span>
         <p className="hunt-details__hint text-[12px] text-ink-muted m-0 mb-1.5">
-          One product per row. Selected buyer types expand each into separate searches
-          (e.g. martial arts belts × distributors → “martial arts belts distributors in California”).
-          Or paste full lines like “weightlifting straps distributors”.
+          Write each product with the buyer you want, in one box. The hunt splits that into
+          separate searches, then adds the location. Example: weightlifting straps distributors,
+          weightlifting straps wholesalers, martial arts belts distributors.
         </p>
         <textarea
           className="hunt-details__input"
@@ -565,34 +534,16 @@ export default function FindBuyersPanel({
           disabled={isRunning}
           rows={10}
           placeholder={
-            'weightlifting straps\n' +
-            'weightlifting belts\n' +
-            'wrist wraps\n' +
-            'knee sleeves\n' +
-            'lifting hooks\n' +
-            'martial arts belts'
+            'weightlifting straps distributors weightlifting straps wholesalers weightlifting straps importers\n' +
+            'weightlifting belts distributors weightlifting belts wholesalers\n' +
+            'martial arts belts distributors martial arts belts wholesalers'
           }
         />
       </label>
 
-      <div className="hunt-buyer-types">
-        <PredictiveField
-          label="Buyer types (optional)"
-          value={buyerTypes}
-          onChange={setBuyerTypes}
-          suggestions={buyerSuggestions}
-          placeholder="Buyer type"
-          aiContext={{
-            field: 'buyers',
-            description: businessInfo.description,
-            catalogCategories: catalogCats,
-          }}
-        />
-      </div>
-
       {!ready && (
         <p className="ui-banner ui-banner--warn hunt-ready-hint" role="status">
-          Paste products (one per row), pick buyer types, and set a location.
+          Describe the products and who should buy them, and set a location.
         </p>
       )}
 

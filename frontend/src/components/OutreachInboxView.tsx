@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { OutreachMode, OutreachTemplate, Prospect } from '../types';
-import { ChevronDown, ChevronUp, Loader2, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronUp, Loader2, X } from 'lucide-react';
 import { recipientEmail } from '../lib/leadTone';
 import { isDueFollowUp } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
@@ -111,6 +111,7 @@ export default function OutreachInboxView({
   }, [withDrafts, filter]);
 
   const [index, setIndex] = useState(0);
+  const [mobileReading, setMobileReading] = useState(false);
   const current = filtered[index] || null;
   const draft = current?.outreachDraft;
 
@@ -340,7 +341,7 @@ export default function OutreachInboxView({
         </p>
       )}
 
-      <div className="toolbar nr-enter nr-enter-delay-1">
+      <div className="toolbar outreach-toolbar nr-enter nr-enter-delay-1">
         {onSendSelected && filtered.length > 0 && (
           <button
             type="button"
@@ -420,6 +421,26 @@ export default function OutreachInboxView({
           </button>
         )}
         <span className="toolbar-spacer" />
+        <select
+          className="outreach-filter-select"
+          value={filter}
+          aria-label="Outreach filter"
+          onChange={e => setFilter(e.target.value as Filter)}
+        >
+          {(
+            [
+              ['best_fit', 'Best fit'],
+              ['needs_review', 'All drafts'],
+              ['with_email', withEmailCount > 0 ? `With email (${withEmailCount})` : 'With email'],
+              ['no_email', noEmailCount > 0 ? `No email (${noEmailCount})` : 'No email'],
+              ['follow_up', followUpCount > 0 ? `Follow-up (${followUpCount})` : 'Follow-up'],
+              ['sent', 'Sent'],
+              ['all', 'All'],
+            ] as [Filter, string][]
+          ).map(([id, label]) => (
+            <option key={id} value={id}>{label}</option>
+          ))}
+        </select>
         <div className="seg" role="group" aria-label="Outreach filter">
           {(
             [
@@ -444,7 +465,7 @@ export default function OutreachInboxView({
         </div>
       </div>
 
-      <div className="outreach-layout nr-enter nr-enter-delay-2">
+      <div className={`outreach-layout nr-enter nr-enter-delay-2${mobileReading ? ' is-reading' : ''}`}>
         <div className="outreach-list">
           {filtered.length === 0 ? (
             <p className="p-4 text-[13px] text-ink-muted">
@@ -476,7 +497,10 @@ export default function OutreachInboxView({
                     )}
                     <button
                       type="button"
-                      onClick={() => setIndex(i)}
+                      onClick={() => {
+                        setIndex(i);
+                        setMobileReading(true);
+                      }}
                       className="outreach-lead__btn"
                     >
                       <div className="outreach-lead__top">
@@ -510,42 +534,52 @@ export default function OutreachInboxView({
 
         {current && draft ? (
           <div key={current.id} className="outreach-editor nr-pop">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h2 className="text-[15px] font-semibold text-ink truncate">{current.companyName}</h2>
-                <p className="text-[12px] text-ink-muted mt-0.5">
-                  Fit {current.fitScore}
-                  {current.intent || current.fitBreakdown?.intent
-                    ? ` · Intent ${current.intent || current.fitBreakdown?.intent}`
-                    : ''}
-                  {isBestFit(current) ? ' · Best fit' : ''}
-                </p>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  aria-label="Previous"
-                  disabled={index <= 0}
-                  onClick={() => setIndex(i => Math.max(0, i - 1))}
-                  className="p-1.5 border border-border disabled:opacity-30"
-                >
-                  <ChevronUp className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Next"
-                  disabled={index >= filtered.length - 1}
-                  onClick={() => setIndex(i => Math.min(filtered.length - 1, i + 1))}
-                  className="p-1.5 border border-border disabled:opacity-30"
-                >
-                  <ChevronDown className="w-4 h-4" />
-                </button>
+            <div className="outreach-editor__head">
+              <button
+                type="button"
+                className="outreach-back"
+                onClick={() => setMobileReading(false)}
+              >
+                <ChevronLeft className="w-4 h-4" aria-hidden />
+                All drafts
+              </button>
+              <div className="flex items-start justify-between gap-3 min-w-0 flex-1">
+                <div className="min-w-0">
+                  <h2 className="text-[15px] font-semibold text-ink truncate">{current.companyName}</h2>
+                  <p className="text-[12px] text-ink-muted mt-0.5">
+                    Fit {current.fitScore}
+                    {current.intent || current.fitBreakdown?.intent
+                      ? ` · Intent ${current.intent || current.fitBreakdown?.intent}`
+                      : ''}
+                    {isBestFit(current) ? ' · Best fit' : ''}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    aria-label="Previous"
+                    disabled={index <= 0}
+                    onClick={() => setIndex(i => Math.max(0, i - 1))}
+                    className="p-1.5 border border-border disabled:opacity-30"
+                  >
+                    <ChevronUp className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Next"
+                    disabled={index >= filtered.length - 1}
+                    onClick={() => setIndex(i => Math.min(filtered.length - 1, i + 1))}
+                    className="p-1.5 border border-border disabled:opacity-30"
+                  >
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
 
             <div>
               <label className="field-label">Buyer email (To)</label>
-              <div className="flex gap-2">
+              <div className="outreach-to">
                 <input
                   type="email"
                   value={toEmail}
@@ -631,7 +665,7 @@ export default function OutreachInboxView({
               </div>
             )}
 
-            <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle pt-3 mt-auto">
+            <div className="outreach-editor__actions">
               {(draft.status === 'Draft' || draft.status === 'Approved') && (
                 <button
                   type="button"
