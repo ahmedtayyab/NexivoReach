@@ -118,8 +118,13 @@ def qualify_account(
         fit_summary = "low"
     elif icp == "unknown" and motion == "unknown" and offer == "low" and not site_text:
         fit_summary = "low"
-    elif specific_offer_hunt and site_text and offer in ("low", "unknown"):
-        # Wrong product, or no evidence they sell the hunted product (jewelry, hobby, unrelated wholesale).
+    elif specific_offer_hunt and site_text and offer == "low":
+        # Confirmed wrong/ambiguous product (e.g. cargo straps) — drop
+        fit_summary = "low"
+    elif specific_offer_hunt and site_text and offer == "unknown" and not _in_related_trade(text, profile):
+        # "Does this company appear to sell/distribute this kind of product at all?"
+        # Jewelry, medical, hobby, logistics… with no sports/fitness tie → drop.
+        # The exact SKU need not be on the homepage; the trade must match.
         fit_summary = "low"
     elif specific_offer_hunt and site_text and offer == "unknown" and icp == "unknown" and not channel_buyers:
         fit_summary = "low"
@@ -303,6 +308,7 @@ def qualify_account(
             "discoveryQuery": row.get("discovery_query") or "",
             "huntProduct": _hunt_product_label(text, profile, row.get("discovery_query") or ""),
             "huntBuyerType": _hunt_buyer_label(text, profile, row.get("discovery_query") or ""),
+            "huntMatches": _hunt_matches(row),
             "whyNow": why_now,
             "evidence": evidence,
         },
@@ -663,6 +669,40 @@ def _approach(profile: SellerProfile, name: str, fit: str, intent: str) -> str:
     if intent == "high":
         return f"Lead with the current timing signal. Pitch {seller_motion} supply, not a generic catalog dump."
     return f"Fit-based outreach to {name}: confirm they buy via {seller_motion} before a full pitch. No urgency claimed."
+
+
+def _hunt_matches(row: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Every product + buyer search job that surfaced this company (deduplicated)."""
+    from app.agents.geo import parse_discovery_query
+
+    queries = list(row.get("discovery_queries") or [])
+    if row.get("discovery_query") and row["discovery_query"] not in queries:
+        queries.insert(0, row["discovery_query"])
+    out: List[Dict[str, str]] = []
+    seen = set()
+    for dq in queries:
+        product, role, _place = parse_discovery_query(dq or "")
+        product = (product or "").strip().lower()
+        role = (role or "").strip().lower()
+        if not product:
+            continue
+        key = (product, role)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"product": product, "buyer": role})
+        if len(out) >= 8:
+            break
+    return out
+
+
+def _in_related_trade(text: str, profile: SellerProfile) -> bool:
+    from app.agents.geo import has_related_trade_context, looks_unrelated_business
+
+    cats = list(profile.categories or [])
+    if looks_unrelated_business(text, cats):
+        return False
+    return has_related_trade_context(text, cats)
 
 
 def _industry_label(text: str, profile: SellerProfile) -> str:

@@ -88,6 +88,18 @@ export default function LeadRationaleChips({
   if (buyer) chips.push({ label: 'Buyer type', value: buyer, tone: 'good' });
   chips.push({ label: 'Location', value: location, tone: 'muted' });
 
+  // Same company found by other product + buyer searches — keep them on the one lead.
+  const seenMatch = new Set([`${product.toLowerCase()}|${buyer.toLowerCase()}`]);
+  for (const m of bd.huntMatches || []) {
+    const p = (m.product || '').trim();
+    const b = titleCaseRole(m.buyer || '');
+    if (!looksLikeHuntProduct(p)) continue;
+    const key = `${p.toLowerCase()}|${b.toLowerCase()}`;
+    if (seenMatch.has(key)) continue;
+    seenMatch.add(key);
+    chips.push({ label: 'Also matched', value: b ? `${p} · ${b}` : p, tone: 'accent' });
+  }
+
   const shown = compact ? chips.slice(0, 3) : chips;
 
   return (

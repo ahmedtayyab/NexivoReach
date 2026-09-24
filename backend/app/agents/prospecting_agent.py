@@ -26,11 +26,11 @@ from app.tools.contact_finder import discover_contacts, contacts_from_text
 from app.providers.factory import get_ai_provider
 
 
-FETCH_CAP = 90
+FETCH_CAP = 120
 SAVE_CAP = 60
 STRONG_SAVE = 30  # amazing / ready to pursue
 AVERAGE_SAVE = 30  # workable / worth a look
-WAVE1_RESULT_CAP = 280
+WAVE1_RESULT_CAP = 360
 WAVE2_RESULT_CAP = 100
 ENRICH_CAP = 0  # drafts belong in Outreach — keep Discover fast
 CONTACT_DURING_HUNT = 0  # all contact crawl is background — keep hunt snappy
@@ -41,7 +41,7 @@ MIN_CANDIDATES_BEFORE_SKIP_WAVE2 = 50
 DEFAULT_HUNT_LIMIT = 60
 # Stop fetching more sites once we can fill this many persistable leads
 EARLY_EXIT_PERSISTABLE = 80
-WAVE1_QUERY_CAP = 80
+WAVE1_QUERY_CAP = 96
 WAVE2_QUERY_CAP = 8
 
 

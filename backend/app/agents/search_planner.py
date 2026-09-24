@@ -393,7 +393,7 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
 
     # Exact-product hunts must not fall through into catalog paraphrases.
     if intent and intent["primary_queries"]:
-        return queries[:96]
+        return queries[:120]
 
     if profile.pools.get("direct_icp") in ("primary", "sample"):
         add(f"{buyer} {cat} {place} {neg}", "icp_retrieval", "direct_icp")

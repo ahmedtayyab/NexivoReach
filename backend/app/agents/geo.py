@@ -836,6 +836,90 @@ PRODUCT_MOD_SYNONYMS: dict[str, tuple[str, ...]] = {
     "lifting": ("lifting", "weightlifting", "deadlift"),
 }
 
+# Businesses that are obviously a different trade from sports / fitness / combat gear.
+# A hit here with no product or context word means "reject without a second look".
+UNRELATED_INDUSTRY_RE = re.compile(
+    r"\b("
+    r"jewel+ery|jewelry|jewelers?|gemstones?|diamonds?|gold buyers?|"
+    r"dental|dentist|medical|healthcare|health care|pharmac\w*|clinic|hospital|surgical|"
+    r"automotive|auto parts|auto repair|car dealer|tires?|"
+    r"construction|roofing|plumbing|hvac|electrical contractor|lumber|"
+    r"restaurant|catering|bakery|cafe|coffee shop|"
+    r"real estate|realtor|mortgage|property management|"
+    r"insurance|law firm|attorneys?|accounting|"
+    r"anime|hobby shop|toys?|collectibles|comics?|"
+    r"fulfil+ment|3pl|freight forward\w*|logistics|"
+    r"cosmetics?|beauty supply|salon|spa|"
+    r"furniture|flooring|kitchen cabinets?|"
+    r"software|saas|it services|web design"
+    r")\b",
+    re.I,
+)
+
+# Words that place a business in the right trade even when the exact product is
+# not on the homepage (distributors keep most SKUs deeper in the catalog).
+RELATED_TRADE_WORDS = frozenset({
+    *PRODUCT_CONTEXT_WORDS,
+    "sporting goods", "sports", "athletic", "athletics", "exercise", "boxing", "mma",
+    "combat sports", "martial arts", "wrestling", "judo", "taekwondo", "karate",
+    "gym equipment", "fitness equipment", "strength training", "lifting",
+})
+
+
+def looks_unrelated_business(blob: str, categories: List[str]) -> bool:
+    """
+    True when name/title/snippet/site clearly belongs to a different industry
+    (jewelry, dental, real estate…) and nothing ties it to the hunted trade.
+    """
+    text = (blob or "").lower()
+    if not text.strip():
+        return False
+    if not UNRELATED_INDUSTRY_RE.search(text):
+        return False
+    phrases = product_phrases_from_profile_categories(categories) or [
+        re.sub(r"\s+", " ", (c or "").strip().lower()) for c in (categories or []) if c
+    ]
+    for p in phrases:
+        if p and p in text:
+            return False
+        words = [w for w in p.split() if len(w) > 2]
+        mods = words[:-1] if len(words) >= 2 else words
+        for m in mods:
+            if re.search(rf"\b{re.escape(m)}\b", text):
+                return False
+            for syn in PRODUCT_MOD_SYNONYMS.get(m, ()):
+                if syn in text:
+                    return False
+    if any(w in text for w in RELATED_TRADE_WORDS):
+        return False
+    return True
+
+
+def has_related_trade_context(blob: str, categories: List[str]) -> bool:
+    """Does the page read like a sports / fitness / combat-gear business at all?"""
+    text = (blob or "").lower()
+    if not text.strip():
+        return False
+    phrases = product_phrases_from_profile_categories(categories) or [
+        re.sub(r"\s+", " ", (c or "").strip().lower()) for c in (categories or []) if c
+    ]
+    for p in phrases:
+        if p and p in text:
+            return True
+        words = [w for w in p.split() if len(w) > 2]
+        head = words[-1] if words else ""
+        mods = words[:-1] if len(words) >= 2 else []
+        for m in mods:
+            if re.search(rf"\b{re.escape(m)}\b", text):
+                return True
+            for syn in PRODUCT_MOD_SYNONYMS.get(m, ()):
+                if syn in text:
+                    return True
+        if head and head not in AMBIGUOUS_PRODUCT_HEADS and re.search(rf"\b{re.escape(head)}\b", text):
+            return True
+    return any(w in text for w in RELATED_TRADE_WORDS)
+
+
 _CHANNEL_SERP_RE = re.compile(
     r"\b(distributor|distributors|wholesale|wholesaler|importer|importers|dealer|b2b)\b",
     re.I,
@@ -1012,16 +1096,22 @@ def interpret_prompt_intent(
             seen_q.add(qn.lower())
             bucket.append(qn)
 
+        # Search job per pair: the typed phrase + location first, then close
+        # variations of the SAME product (quoted, role synonyms, supplier).
         for product, role in pairs:
-            short_role = _VOLUME_ROLE_SHORT.get(role, _singular_token(role))
             if place:
                 _add(primary, f"{product} {role} in {place}")
-                _add(volume, f'"{product}" {role} in {place}')
-                _add(volume, f'"{product}" {short_role} {place}')
             else:
                 _add(primary, f"{product} {role}")
-                _add(volume, f'"{product}" {role}')
-                _add(volume, f'"{product}" {short_role}')
+        for product, role in pairs:
+            short_role = _VOLUME_ROLE_SHORT.get(role, _singular_token(role))
+            tail = f" {place}" if place else ""
+            _add(volume, f'"{product}" {role}{tail}')
+            _add(volume, f'"{product}" {short_role}{tail}')
+        for product in products:
+            tail = f" {place}" if place else ""
+            for alt in ("wholesale", "distributor", "importer", "supplier"):
+                _add(volume, f'"{product}" {alt}{tail}')
         for product, role in pairs:
             for broader in secondary_product_phrases(product):
                 if place:
@@ -1175,13 +1265,8 @@ def serp_blob_matches_products(blob: str, categories: List[str]) -> bool:
             return False
         return True  # e.g. thin "Straps wholesaler California" snippet
 
-    # Generic fitness retail with no hunt product nouns
-    if any(c in text for c in ("gym", "fitness", "sports store")) and not _CHANNEL_SERP_RE.search(text):
-        product_tokens = set()
-        for p in phrases:
-            product_tokens.update(w for w in p.split() if len(w) > 3)
-        if not any(re.search(rf"\b{re.escape(t)}\b", text) for t in product_tokens):
-            return False
+    # Fitness / sports businesses without the product noun in the snippet are
+    # still worth a homepage look — the catalog is usually deeper than the SERP.
     return True
 
 

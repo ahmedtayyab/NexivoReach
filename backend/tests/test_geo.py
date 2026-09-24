@@ -193,7 +193,15 @@ def test_runon_query_splits_pairs_and_keeps_exact_products():
     assert "weightlifting straps wholesalers in los angeles" in queries
     assert "weightlifting straps importers in los angeles" in queries
     assert '"weightlifting straps" wholesale los angeles' in queries
+    assert '"weightlifting straps" supplier los angeles' in queries
+    assert '"knee sleeves" importer los angeles' in queries
     assert "martial arts belts distributors in los angeles" in queries
+    # Typed searches run before any variation
+    assert queries[:3] == [
+        "weightlifting straps distributors in los angeles",
+        "weightlifting straps wholesalers in los angeles",
+        "weightlifting straps importers in los angeles",
+    ]
     assert "knee sleeves importers in los angeles" not in queries
     assert not any(q.startswith("straps ") or q.startswith("belts ") for q in queries)
     assert not any("fitness equipment" in q for q in queries)
@@ -225,7 +233,8 @@ def test_product_query_order_interleaves_products():
     assert sum(1 for l in first6 if "weightlifting straps" in l) <= 2
 
 
-def test_rejects_generic_fitness_store_serp():
+def test_fitness_store_serp_is_inspected_not_rejected():
+    """'ABC Fitness Equipment' is potentially relevant — the homepage decides, not the snippet."""
     from app.agents.serp_classifier import classify_serp_row
 
     row = classify_serp_row(
@@ -245,7 +254,86 @@ def test_rejects_generic_fitness_store_serp():
             "wrist wraps",
         ],
     )
-    assert row["reject"] is True
+    assert row["reject"] is False
+
+
+def test_rejects_obviously_unrelated_business_serp():
+    from app.agents.serp_classifier import classify_serp_row
+
+    jewelry = classify_serp_row(
+        {
+            "company_name": "Chicago Jewelry Wholesale",
+            "website": "https://chicagojewelrywholesale.example/",
+            "title": "Chicago Jewelry Wholesale – Distributors of Fine Jewelry",
+            "snippet": "Wholesale distributor of gold chains and gemstones in Chicago.",
+            "source": "web",
+            "discovery_query": "lifting hooks distributors in Chicago",
+        },
+        hunting_buyers=True,
+        target_places=["Chicago"],
+        offer_categories=["lifting hooks", "weightlifting straps"],
+    )
+    assert jewelry["reject"] is True
+    assert jewelry["entity_type"] == "unrelated_business"
+
+    sports = classify_serp_row(
+        {
+            "company_name": "XYZ Sports & Fitness Distributors",
+            "website": "https://xyzsportsfitness.example/",
+            "title": "XYZ Sports & Fitness – Wholesale Distributor Chicago",
+            "snippet": "Distributor of gym accessories and strength equipment for retailers.",
+            "source": "web",
+            "discovery_query": "lifting hooks distributors in Chicago",
+        },
+        hunting_buyers=True,
+        target_places=["Chicago"],
+        offer_categories=["lifting hooks", "weightlifting straps"],
+    )
+    assert sports["reject"] is False
+
+
+def test_qualify_keeps_fitness_distributor_without_exact_product_on_homepage():
+    """A legitimate sports distributor may list lifting hooks deeper in the catalog."""
+    from app.agents.qualify import qualify_account
+    from app.agents.search_planner import SellerProfile
+
+    profile = SellerProfile(
+        offer_class="goods",
+        sales_motion="wholesale",
+        hunting_buyers=True,
+        geo_mode="local",
+        categories=["lifting hooks", "weightlifting straps"],
+        buyers=["distributors", "wholesalers"],
+        places=["Chicago"],
+        use_maps=False,
+        pools={"direct_icp": "primary"},
+        strict_geo=True,
+    )
+    q = qualify_account(
+        row={
+            "company_name": "XYZ Sports & Fitness Distributors",
+            "website": "https://xyzsportsfitness.example/",
+            "snippet": "Wholesale distributor Chicago",
+            "source": "web",
+            "location": "Chicago, IL",
+            "discovery_query": "lifting hooks distributors in Chicago",
+            "discovery_queries": [
+                "lifting hooks distributors in Chicago",
+                '"weightlifting straps" wholesale Chicago',
+            ],
+        },
+        site_text=(
+            "XYZ Sports & Fitness is a wholesale distributor serving gyms and sporting goods "
+            "retailers across Chicago. Browse our full catalog of strength training accessories."
+        ),
+        profile=profile,
+        products=[],
+        page_url="https://xyzsportsfitness.example/",
+    )
+    assert q["shouldPersist"] is True
+    matches = q["fitBreakdown"]["huntMatches"]
+    assert {"product": "lifting hooks", "buyer": "distributors"} in matches
+    assert {"product": "weightlifting straps", "buyer": "wholesalers"} in matches
 
 
 def test_rejects_shopify_product_page_for_distributor_hunt():

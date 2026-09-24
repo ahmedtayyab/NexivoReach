@@ -102,6 +102,8 @@ export interface Prospect {
     discoveryQuery?: string;
     huntProduct?: string;
     huntBuyerType?: string;
+    /** Every product + buyer search that surfaced this company (deduplicated lead). */
+    huntMatches?: { product: string; buyer: string }[];
     whyNow?: string;
     evidence?: ProspectEvidence[];
     contactEnrich?: {

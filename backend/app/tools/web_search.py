@@ -365,6 +365,18 @@ class WebSearchTool:
         if not batches:
             return merged
 
+        # One lead per company, but remember every search job that found it.
+        kept_by_domain: Dict[str, Dict[str, Any]] = {}
+
+        def _remember_match(domain: str, row: Dict[str, Any]) -> None:
+            kept = kept_by_domain.get(domain)
+            if not kept:
+                return
+            dq = (row.get("discovery_query") or "").strip()
+            matches = kept.setdefault("discovery_queries", [])
+            if dq and dq not in matches:
+                matches.append(dq)
+
         per_query_cap = max(8, (limit // max(len(batches), 1)) + 4)
         cursors = [0] * len(batches)
         progressed = True
@@ -381,24 +393,33 @@ class WebSearchTool:
                     cursors[i] += 1
                     website = (row.get("website") or "").strip()
                     domain = _registrable_domain(website) if website else (row.get("company_name") or "").lower()
-                    if not domain or domain in seen:
+                    if not domain:
+                        continue
+                    if domain in seen:
+                        _remember_match(domain, row)
                         continue
                     seen.add(domain)
+                    row["discovery_queries"] = [row.get("discovery_query") or ""]
+                    kept_by_domain[domain] = row
                     merged.append(row)
                     taken += 1
                     progressed = True
         # Second pass: fill remaining slots from any leftover hits
-        if len(merged) < limit:
-            for batch in batches:
-                for row in batch:
-                    if len(merged) >= limit:
-                        break
-                    website = (row.get("website") or "").strip()
-                    domain = _registrable_domain(website) if website else (row.get("company_name") or "").lower()
-                    if not domain or domain in seen:
-                        continue
-                    seen.add(domain)
-                    merged.append(row)
+        for batch in batches:
+            for row in batch:
+                website = (row.get("website") or "").strip()
+                domain = _registrable_domain(website) if website else (row.get("company_name") or "").lower()
+                if not domain:
+                    continue
+                if domain in seen:
+                    _remember_match(domain, row)
+                    continue
+                if len(merged) >= limit:
+                    continue
+                seen.add(domain)
+                row["discovery_queries"] = [row.get("discovery_query") or ""]
+                kept_by_domain[domain] = row
+                merged.append(row)
         return merged
 
     def _search_sync(self, query: str) -> List[Dict[str, str]]:

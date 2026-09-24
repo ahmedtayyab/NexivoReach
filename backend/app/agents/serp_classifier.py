@@ -120,9 +120,11 @@ def classify_serp_row(
 
     # Keep multi-word hunt products faithful (e.g. weightlifting straps ≠ cargo straps)
     if not reject and offer_categories:
-        from app.agents.geo import serp_blob_matches_products
+        from app.agents.geo import looks_unrelated_business, serp_blob_matches_products
 
-        if not serp_blob_matches_products(blob, offer_categories):
+        if looks_unrelated_business(blob, offer_categories):
+            reject, entity, reason = True, "unrelated_business", "Obviously a different industry (jewelry, medical, real estate…)"
+        elif not serp_blob_matches_products(blob, offer_categories):
             reject, entity, reason = True, "wrong_product", "SERP text does not match hunt products"
 
     # When hunting distributors/wholesalers/importers, skip DTC product pages & shopfront noise
