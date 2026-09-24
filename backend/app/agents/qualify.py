@@ -673,18 +673,31 @@ def _industry_label(text: str, profile: SellerProfile) -> str:
 
 
 def _hunt_product_label(text: str, profile: SellerProfile, discovery_query: str = "") -> str:
-    """Best product phrase from the hunt that matches this lead (or first hunt product)."""
+    """Product from the discovering query first — never invent junk like 'structure'."""
     from app.agents.geo import parse_discovery_query, product_phrases_from_profile_categories
 
     cats = list(profile.categories or [])
     phrases = product_phrases_from_profile_categories(cats) or [c for c in cats if c]
-    blob = f"{text or ''}\n{discovery_query or ''}".lower()
-    for p in phrases:
-        if p.lower() in blob:
-            return p[:80]
+    phrase_keys = {p.lower() for p in phrases}
+
     dq_product, _role, _place = parse_discovery_query(discovery_query)
-    if dq_product:
+    dq_l = (dq_product or "").strip().lower()
+    if dq_l and dq_l in phrase_keys:
         return dq_product[:80]
+    # Discovery query product that still looks like a hunt line (2+ tokens)
+    if dq_l and len(dq_l.split()) >= 2 and dq_l not in {"priority hunt", "target location"}:
+        # Prefer known phrase containment (e.g. query shorter/longer)
+        for p in phrases:
+            if p.lower() in dq_l or dq_l in p.lower():
+                return p[:80]
+        return dq_product[:80]
+
+    blob = (text or "").lower()
+    # Prefer the longest matching hunt phrase on the page (not always straps first)
+    hits = [p for p in phrases if p.lower() in blob]
+    if hits:
+        hits.sort(key=lambda p: len(p), reverse=True)
+        return hits[0][:80]
     return (phrases[0] if phrases else "")[:80]
 
 

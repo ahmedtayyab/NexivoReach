@@ -721,28 +721,29 @@ def split_product_and_role(line: str) -> tuple[str, str]:
     return text, ""
 
 
-def format_precise_hunt_query(line: str, place: str = "") -> str:
+def format_precise_hunt_query(line: str, place: str = "", *, force_unquoted: bool = False) -> str:
     """
-    Keep multi-word products intact for SERP (quoted) and add industry negatives.
-    e.g. weightlifting straps distributors + California
-      → "weightlifting straps" distributors in California -truck -cargo …
+    Keep multi-word products intact for SERP and add industry negatives.
+    Quote only ambiguous heads (straps/belts/…) so engines don't drift to cargo straps,
+    while still allowing enough recall for volume.
     """
     product, role = split_product_and_role(line)
     if not product:
         return ""
     words = product.lower().split()
-    # Quote multi-word products so engines don't match bare 'straps'
-    if len(words) >= 2:
-        core = f'"{product}"'
-    else:
-        core = product
+    head = words[-1] if words else ""
+    use_quotes = (
+        not force_unquoted
+        and len(words) >= 2
+        and head in AMBIGUOUS_PRODUCT_HEADS
+    )
+    core = f'"{product}"' if use_quotes else product
     parts = [core]
     if role:
         parts.append(role)
     q = " ".join(parts)
     if place and place.lower() not in q.lower():
         q = f"{q} in {place}"
-    head = words[-1] if words else ""
     negs = PRODUCT_HEAD_NEGATIVES.get(head, ())
     if negs:
         q = f"{q} {' '.join(negs)}"

@@ -2,6 +2,9 @@ import type { Prospect } from '../../types';
 
 type Chip = { label: string; value: string; tone?: 'good' | 'warn' | 'muted' | 'accent' };
 
+const ROLE_RE =
+  /\b(distributors?|wholesalers?|importers?|retailers?|buyers?|dealers?|gyms?|clinics?|brands?)\b/i;
+
 /** Pull product / buyer / place from a discovery SERP query when stored. */
 function parseDiscoveryQuery(query: string): { product: string; buyer: string; place: string } {
   let raw = (query || '').trim().replace(/\s+/g, ' ');
@@ -17,10 +20,10 @@ function parseDiscoveryQuery(query: string): { product: string; buyer: string; p
   if (quoted) {
     return { product: quoted[1].trim(), buyer: (quoted[2] || '').trim(), place };
   }
-  const roleRe =
-    /\s+(distributors?|wholesalers?|importers?|retailers?|buyers?|dealers?|gyms?|clinics?|brands?)\s*$/i;
-  const roleMatch = raw.match(roleRe);
-  if (roleMatch) {
+  const roleMatch = raw.match(
+    /\s+(distributors?|wholesalers?|importers?|retailers?|buyers?|dealers?|gyms?|clinics?|brands?)\s*$/i,
+  );
+  if (roleMatch && roleMatch.index != null) {
     return {
       product: raw.slice(0, roleMatch.index).trim(),
       buyer: roleMatch[1].trim(),
@@ -36,6 +39,22 @@ function titleCaseRole(role: string): string {
   return r.replace(/\b\w/g, c => c.toUpperCase());
 }
 
+/** Drop junk labels like "structure" from wave-2 / catalog fallbacks. */
+function looksLikeHuntProduct(value: string): boolean {
+  const v = (value || '').trim();
+  if (!v) return false;
+  const words = v.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return false;
+  if (ROLE_RE.test(v)) return false;
+  const junk = new Set([
+    'structure', 'company', 'business', 'website', 'homepage', 'about',
+    'priority hunt', 'target location', 'buyer types', 'general',
+  ]);
+  if (junk.has(v.toLowerCase())) return false;
+  if (words.every(w => junk.has(w.toLowerCase()))) return false;
+  return true;
+}
+
 /** Compact hunt context chips: Product · Buyer type · Location. */
 export default function LeadRationaleChips({
   prospect,
@@ -49,13 +68,10 @@ export default function LeadRationaleChips({
   const bd = prospect.fitBreakdown || ({} as Prospect['fitBreakdown']);
   const parsed = parseDiscoveryQuery(bd.discoveryQuery || '');
 
-  const product = (
-    bd.huntProduct ||
-    parsed.product ||
-    (prospect.productFit || [])[0]?.productName ||
-    prospect.industry ||
-    ''
-  ).trim();
+  // Prefer hunt fields / discovery query only — never seller catalog productFit names
+  // (those caused chips like Product: Structure from the workspace catalog).
+  const candidates = [bd.huntProduct, parsed.product, prospect.industry];
+  const product = (candidates.find(v => looksLikeHuntProduct(String(v || ''))) || '').trim();
 
   const buyer = titleCaseRole(
     (bd.huntBuyerType || parsed.buyer || '').trim(),

@@ -363,6 +363,11 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
             qn = format_precise_hunt_query(line, place)
             if qn and not any(x.query.lower() == qn.lower() for x in queries):
                 queries.append(PlannedQuery(qn, "user", "direct_icp", False, 1))
+            # Volume twin without quotes (still keeps industry negatives)
+            qn2 = format_precise_hunt_query(line, place, force_unquoted=True)
+            if qn2 and qn2.lower() != (qn or "").lower():
+                if not any(x.query.lower() == qn2.lower() for x in queries):
+                    queries.append(PlannedQuery(qn2, "user_volume", "direct_icp", False, 1))
         # Fan out extra places for the same product×buyer lines
         for extra_place in (profile.places or [])[1:3]:
             for line in expanded_lines[:24]:
@@ -407,7 +412,7 @@ def plan_wave1(profile: SellerProfile, user_prompt: str = "") -> List[PlannedQue
 
     # When hunt lines drive the wave, skip pool fan-out that reintroduces broad categories.
     if expanded_lines:
-        return queries[:48]
+        return queries[:60]
 
     if profile.pools.get("direct_icp") in ("primary", "sample"):
         add(f"{buyer} {cat} {place} {neg}", "icp_retrieval", "direct_icp")
@@ -533,6 +538,13 @@ def plan_wave2(
         term = (term or "").strip()
         if len(term) < 4:
             continue
+        # Only keep learned terms that clearly relate to hunt products —
+        # otherwise titles inject junk like "Structure" as fake products.
+        term_l = term.lower()
+        cat_blob = " ".join(profile.categories or []).lower()
+        if not any(tok and tok in term_l for tok in cat_blob.split() if len(tok) > 3):
+            if not any(tok and tok in cat_blob for tok in term_l.split() if len(tok) > 3):
+                continue
         queries.append(PlannedQuery(
             f"{term} {place} {neg2}".strip(),
             "learned_term", "direct_icp", False, 2,

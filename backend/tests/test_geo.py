@@ -118,24 +118,23 @@ def test_product_lines_cross_buyer_types_and_location():
     queries = [q.query.lower() for q in plan_wave1(profile, prompt)]
     assert len(queries) >= 4
     assert any(
-        '"weightlifting straps" distributors in california' in q and "-truck" in q
+        "weightlifting straps" in q and "distributors" in q and "california" in q and "-truck" in q
         for q in queries
     )
     assert any(
-        '"weightlifting straps" importers in california' in q
+        "weightlifting straps" in q and "importers" in q and "california" in q
         for q in queries
     )
     assert any(
-        '"martial arts belts" distributors in california' in q
+        "martial arts belts" in q and "distributors" in q and "california" in q
         for q in queries
     )
     assert any(
-        '"martial arts belts" importers in california' in q
+        "martial arts belts" in q and "importers" in q and "california" in q
         for q in queries
     )
-    # Must not search product-only without a buyer role / without quotes
+    # Must not search product-only without a buyer role
     assert not any(q == "weightlifting straps in california" for q in queries)
-    assert not any(q.startswith("weightlifting straps distributors") and '"' not in q for q in queries)
 
 
 def test_product_query_order_interleaves_products():
