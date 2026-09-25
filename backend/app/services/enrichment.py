@@ -52,6 +52,8 @@ async def hunter_domain_search(domain: str) -> dict[str, Any]:
                         "value": val,
                         "label": (row.get("type") or "Email").title(),
                         "source": "hunter",
+                        "sourceUrl": f"hunter://domain/{domain}",
+                        "evidence": "Hunter.io domain search",
                         "role": row.get("position") or row.get("type") or "general",
                     }
                 )
@@ -68,11 +70,13 @@ async def enrich_website(
     seed_phone: str = "",
     seed_contacts: list | None = None,
     use_hunter: bool = True,
+    use_browser: bool = True,
 ) -> dict[str, Any]:
     """
     Enrich a company website for public contact emails/phones.
-    Returns {email, phone, contacts, sources[], site_text} with provenance.
-    Site HTML is the primary source; Hunter is optional fallback.
+
+    Pipeline: static site crawl → optional browser render → social → Hunter.
+    Returns email + provenance (emailSource, emailEvidence, telemetry).
     """
     website = (website or "").strip()
     sources: list[str] = []
@@ -81,6 +85,11 @@ async def enrich_website(
     contacts = list(seed_contacts or [])
     site_text = ""
     location = ""
+    email_source = ""
+    email_source_url = ""
+    email_evidence = ""
+    email_status = "not_found"
+    telemetry: dict[str, Any] = {}
 
     if not website:
         return {
@@ -91,6 +100,11 @@ async def enrich_website(
             "found": bool(email),
             "site_text": "",
             "location": "",
+            "emailSource": "",
+            "emailSourceUrl": "",
+            "emailEvidence": "",
+            "emailStatus": "website_unreachable",
+            "telemetry": telemetry,
         }
 
     tool = WebSearchTool()
@@ -113,31 +127,40 @@ async def enrich_website(
         homepage_url=(page.get("url") if isinstance(page, dict) else None) or website,
         seed_phone=phone,
         seed_emails=list((page.get("emails") or []) if isinstance(page, dict) else []),
+        use_browser=use_browser,
     )
+    telemetry = dict(found.get("telemetry") or {})
+    email_status = found.get("emailStatus") or "not_found"
     if found.get("email"):
         email = found["email"]
-        sources.append("site")
+        email_source = found.get("emailSource") or "homepage"
+        email_source_url = found.get("emailSourceUrl") or website
+        email_evidence = found.get("emailEvidence") or email
+        sources.append(email_source or "site")
+        email_status = "found"
     if found.get("phone"):
         phone = found["phone"] or phone
     for c in found.get("contacts") or []:
         if isinstance(c, dict):
             contacts.append(c)
 
-    # Prefer contact/about/wholesale page text for relevance when homepage is thin
-    if isinstance(page, dict) and site_text:
-        pass  # homepage text already captured
-    # Append contact-page snippets into site_text for relevance (from contact URLs in contacts)
-    for c in contacts:
-        if isinstance(c, dict) and c.get("type") == "url" and c.get("label") == "Contact page":
-            # already fetched during discover_contacts — emails extracted; keep homepage text
-            break
-
     if use_hunter and not email:
+        telemetry["hunterChecked"] = True
         hunter = await hunter_domain_search(_domain(website))
-        if hunter.get("email"):
+        if hunter.get("skipped"):
+            telemetry["hunterChecked"] = False
+        elif hunter.get("email"):
             email = hunter["email"]
+            email_source = "hunter"
+            email_source_url = f"hunter://domain/{_domain(website)}"
+            email_evidence = "Hunter.io domain search"
             sources.append("hunter")
             contacts = list(hunter.get("contacts") or []) + contacts
+            email_status = "found"
+        else:
+            email_status = "hunter_no_match" if not hunter.get("skipped") else (
+                found.get("emailStatus") or "not_found"
+            )
 
     # Dedupe contacts by type+value
     seen: set[str] = set()
@@ -161,7 +184,9 @@ async def enrich_website(
                 "type": "email",
                 "value": email,
                 "label": "Email",
-                "source": sources[-1] if sources else "site",
+                "source": email_source or (sources[-1] if sources else "site"),
+                "sourceUrl": email_source_url,
+                "evidence": email_evidence,
                 "role": "general",
             },
         )
@@ -175,4 +200,10 @@ async def enrich_website(
         "hunterConfigured": bool((settings.HUNTER_API_KEY or "").strip()),
         "site_text": site_text,
         "location": location,
+        "emailSource": email_source,
+        "emailSourceUrl": email_source_url,
+        "emailEvidence": email_evidence,
+        "emailStatus": email_status if email else (email_status or "not_found"),
+        "telemetry": telemetry,
+        "pagesChecked": found.get("pagesChecked") or telemetry.get("pagesChecked") or 0,
     }

@@ -487,7 +487,10 @@ async def run_paginated_discovery(
             contacts: List[Dict[str, Any]] = []
             email_status = "email_not_found"
             email_source = ""
+            email_discovery: Dict[str, Any] = {}
             try:
+                from app.config import settings as _cfg
+                enrich_timeout = float(getattr(_cfg, "CONTACT_LEAD_TIMEOUT_SEC", 45.0) or 45.0)
                 found = await asyncio.wait_for(
                     enrich_website(
                         website,
@@ -496,17 +499,36 @@ async def run_paginated_discovery(
                         seed_contacts=[],
                         use_hunter=True,
                     ),
-                    timeout=20.0,
+                    timeout=enrich_timeout,
                 )
+            except asyncio.TimeoutError:
+                found = {
+                    "email": "", "phone": "", "contacts": [], "site_text": "", "sources": [],
+                    "emailStatus": "enrichment_timeout", "telemetry": {},
+                }
             except Exception:
                 found = {"email": "", "phone": "", "contacts": [], "site_text": "", "sources": []}
             stats.websites_inspected += 1
             site_text = (found.get("site_text") or "")[:8000]
+            email_discovery = {
+                "emailStatus": found.get("emailStatus") or "",
+                "emailSource": found.get("emailSource") or "",
+                "emailSourceUrl": found.get("emailSourceUrl") or "",
+                "emailEvidence": (found.get("emailEvidence") or "")[:180],
+                "telemetry": found.get("telemetry") or {},
+            }
             if found.get("email"):
                 email = found["email"]
                 email_status = "email_found"
-                email_source = (found.get("sources") or ["website"])[0]
+                email_source = found.get("emailSource") or (found.get("sources") or ["website"])[0]
                 stats.emails_found += 1
+            else:
+                # Preserve richer discovery status for debugging false "no email"
+                rich = (found.get("emailStatus") or "").strip()
+                if rich and rich not in ("found", "not_found", ""):
+                    email_status = rich
+                else:
+                    email_status = "email_not_found"
             phone = found.get("phone") or ""
             contacts = list(found.get("contacts") or [])
 
@@ -610,6 +632,11 @@ async def run_paginated_discovery(
                 )[:16]
                 fb["emailStatus"] = email_status
                 fb["emailSource"] = email_source
+                fb["emailSourceUrl"] = email_discovery.get("emailSourceUrl") or ""
+                fb["emailEvidence"] = email_discovery.get("emailEvidence") or ""
+                fb["emailDiscovery"] = email_discovery.get("telemetry") or {}
+                if email_discovery.get("emailStatus"):
+                    fb["emailDiscoveryStatus"] = email_discovery["emailStatus"]
 
                 # Merge into existing prospect or create
                 existing = None

@@ -21,6 +21,7 @@ from app.agents.serp_classifier import classify_serp_row, summarize_classificati
 from app.agents.relevance import qualify_from_fast_decision, serp_triage, website_relevance
 from app.tools.web_search import WebSearchTool
 from app.services.enrichment import enrich_website
+from app.config import settings
 
 
 # Multi-query Google hunt → Stage-1 junk filter → Stage-2 website inspect → contacts.
@@ -40,8 +41,8 @@ WAVE1_QUERY_CAP = 48
 WAVE2_QUERY_CAP = 12
 # Site inspect + contact pages + optional Hunter — bounded per domain
 CONTACT_CONCURRENCY = 10
-CONTACT_BUDGET_SEC = 70.0
-SITE_ENRICH_TIMEOUT_SEC = 20.0
+CONTACT_BUDGET_SEC = 90.0
+SITE_ENRICH_TIMEOUT_SEC = float(getattr(settings, "CONTACT_LEAD_TIMEOUT_SEC", 45.0) or 45.0)
 CONTACT_ENRICH_CAP = 80
 
 
