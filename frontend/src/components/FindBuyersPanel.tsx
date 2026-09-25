@@ -77,6 +77,50 @@ export function composeHuntPrompt(
   return headerParts.join(' ').trim();
 }
 
+/** Short labels for recent-hunt list — avoid dumping the full multi-line prompt. */
+export function summarizeHuntPrompt(prompt: string): { title: string; detail: string } {
+  const raw = (prompt || '').trim();
+  if (!raw || raw === '(brief-only hunt)') {
+    return { title: 'Brief-only hunt', detail: '' };
+  }
+  const locMatch = raw.match(/Target location:\s*(.+)/i);
+  const loc = (locMatch?.[1] || '').split(/\r?\n/)[0]?.trim() || '';
+  const marker = 'Priority hunt lines';
+  const markerIdx = raw.indexOf(marker);
+  let lines: string[] = [];
+  if (markerIdx >= 0) {
+    lines = raw
+      .slice(markerIdx + marker.length)
+      .split(/\r?\n/)
+      .map(s => s.replace(/^[:\s]+/, '').trim())
+      .filter(Boolean);
+  } else {
+    lines = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  }
+  if (loc && lines.length) {
+    const preview =
+      lines.length <= 2
+        ? lines.join(' · ')
+        : `${lines.slice(0, 2).join(' · ')} · +${lines.length - 2} more`;
+    return { title: loc, detail: `${lines.length} lines · ${preview}` };
+  }
+  if (loc) return { title: loc, detail: '' };
+  if (lines.length === 1) return { title: lines[0], detail: '' };
+  if (lines.length > 1) {
+    return {
+      title: lines[0],
+      detail: `${lines.length} lines · ${lines.slice(1, 3).join(' · ')}${
+        lines.length > 3 ? ` · +${lines.length - 3} more` : ''
+      }`,
+    };
+  }
+  const flat = raw.replace(/\s+/g, ' ').trim();
+  return {
+    title: flat.length > 72 ? `${flat.slice(0, 69)}…` : flat,
+    detail: '',
+  };
+}
+
 function buildPhases(query: string, placeHint: string): string[] {
   const focus = (query || '').trim() || 'matching buyers';
   const short = focus.length > 48 ? `${focus.slice(0, 48)}…` : focus;
@@ -607,6 +651,7 @@ export default function FindBuyersPanel({
               const prompt =
                 (hunt.requestPayload?.user_prompt || hunt.userPrompt || '').trim() ||
                 '(brief-only hunt)';
+              const summary = summarizeHuntPrompt(prompt);
               const when = (hunt.createdAt || '').slice(0, 10);
               const count = typeof hunt.foundCount === 'number' ? hunt.foundCount : null;
               return (
@@ -618,7 +663,10 @@ export default function FindBuyersPanel({
                     onClick={() => applyPrompt(prompt === '(brief-only hunt)' ? '' : prompt)}
                     title="Load into search"
                   >
-                    <span className="saved-hunts__prompt">{prompt}</span>
+                    <span className="saved-hunts__prompt">{summary.title}</span>
+                    {summary.detail ? (
+                      <span className="saved-hunts__lines">{summary.detail}</span>
+                    ) : null}
                     <span className="saved-hunts__meta">
                       {when}
                       {count !== null ? ` · ${count} leads` : ''}
@@ -629,7 +677,7 @@ export default function FindBuyersPanel({
                     type="button"
                     className="saved-hunts__rerun"
                     disabled={isRunning}
-                    aria-label={`Run again: ${prompt}`}
+                    aria-label={`Run again: ${summary.title}`}
                     title="Run again"
                     onClick={() => rerunHunt(hunt)}
                   >
