@@ -8,6 +8,7 @@ import {
   emptyAgentLogs,
 } from './data/defaults';
 import { apiFetch, setActiveBusinessId } from './lib/api';
+import { resumePersistedHunt, subscribeHunt } from './lib/huntRunner';
 import { recipientEmail } from './lib/leadTone';
 import { parseIcpResponse, parseProfileResponse, preferredWorkspaceRoute } from './lib/workspace';
 import {
@@ -783,6 +784,35 @@ export default function App() {
     });
   };
 
+  const handleAddLog = (log: AgentRunLog) => {
+    setAgentLogs(prev => [log, ...prev]);
+  };
+
+  // Hunt runner lives outside Workspace so Leads tab switches don't kill polling.
+  useEffect(() => {
+    resumePersistedHunt();
+    return subscribeHunt({
+      onComplete: r => {
+        if (r.prospects.length) handleAddProspects(r.prospects);
+        if (r.agentLog) handleAddLog(r.agentLog);
+        if (r.foundCount > 0) {
+          pushToast(
+            'ok',
+            `Hunt finished — ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}`,
+            'Open Leads → Latest hunt to review.',
+          );
+          setPreferLatestHunt(true);
+        } else {
+          pushToast('info', 'Hunt finished', 'No new leads this round.');
+        }
+      },
+      onError: message => {
+        pushToast('error', 'Hunt failed', message.slice(0, 160));
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleUpdateStage = (prospectId: string, stage: Prospect['stage']) => {
     setProspects(prev =>
       prev.map(p => {
@@ -812,10 +842,6 @@ export default function App() {
     }
     setProspects(prev => prev.filter(p => p.id !== prospectId));
     setSelectedProspectId(prev => (prev === prospectId ? null : prev));
-  };
-
-  const handleAddLog = (log: AgentRunLog) => {
-    setAgentLogs(prev => [log, ...prev]);
   };
 
   const handleSaveBusiness = async (info: BusinessInfo) => {

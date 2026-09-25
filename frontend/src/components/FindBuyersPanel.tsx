@@ -3,6 +3,13 @@ import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product
 import { Check, FileSpreadsheet, Loader2, RotateCcw, Search, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import {
+  startHunt,
+  subscribeHunt,
+  resumePersistedHunt,
+  getActiveHunt,
+  isHuntRunning,
+} from '../lib/huntRunner';
+import {
   HUNT_LOCATION_OPTIONS,
 } from '../data/huntTaxonomy';
 import { isPlaceholderCompanyName } from '../lib/workspace';
@@ -203,9 +210,9 @@ export default function FindBuyersPanel({
   businessInfo,
   icp,
   products = [],
-  onAddProspects,
-  onAddLog,
-  onComplete,
+  onAddProspects: _onAddProspects,
+  onAddLog: _onAddLog,
+  onComplete: _onComplete,
   compact = false,
   sheetsConnected = false,
   onGoConnect,
@@ -266,7 +273,81 @@ export default function FindBuyersPanel({
   useEffect(() => {
     void loadRecentHunts();
     void loadHuntLimits();
+    resumePersistedHunt();
   }, []);
+
+  useEffect(() => {
+    const unsub = subscribeHunt({
+      onProgress: p => {
+        setIsRunning(true);
+        setServerPhase(p.phase);
+        setStatusText(p.phase);
+        setServerProgress(p.progress);
+        if (p.telemetryHint) setTelemetryHint(p.telemetryHint);
+        const started = p.startedAt || Date.now();
+        setElapsedSec(Math.max(0, Math.floor((Date.now() - started) / 1000)));
+      },
+      onComplete: r => {
+        setIsRunning(false);
+        setServerProgress(0);
+        setServerPhase('');
+        setTelemetryHint('');
+        setLastFound(r.foundCount);
+        const sheetsNote = sheetsConnected ? ' Synced to Sheets.' : '';
+        setStatusText(
+          r.foundCount
+            ? `Added ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}${
+                r.skippedExisting ? ` (${r.skippedExisting} already in your list)` : ''
+              } — open Latest hunt on Leads to review new accounts.${sheetsNote}`
+            : r.skippedExisting
+              ? `All matches were already in your list (${r.skippedExisting}). Try a different hunt.`
+              : 'No accounts this round — try more specific hunt lines or another location.',
+        );
+        notifyHuntFinishedInTab(r.foundCount);
+        void loadRecentHunts();
+        // Prospects / navigation are handled by the App-level huntRunner subscriber
+        // so switching tabs mid-hunt still saves leads.
+      },
+      onError: message => {
+        setIsRunning(false);
+        setServerProgress(0);
+        setServerPhase('');
+        setTelemetryHint('');
+        setStatusText(message);
+        notifyHuntFinishedInTab(0, true);
+      },
+    });
+    // Sync UI if a hunt is already in flight (navigated back mid-run)
+    const current = getActiveHunt();
+    if (current || isHuntRunning()) {
+      setIsRunning(true);
+      if (current) {
+        setElapsedSec(Math.max(0, Math.floor((Date.now() - current.startedAt) / 1000)));
+        if (current.userPrompt) applyPrompt(current.userPrompt);
+      }
+    }
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheetsConnected]);
+
+  useEffect(() => {
+    if (!isRunning) return;
+    const active = getActiveHunt();
+    const startedAt = active?.startedAt;
+    setElapsedSec(
+      startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : 0,
+    );
+    setPhaseIndex(0);
+    const tick = window.setInterval(() => {
+      const cur = getActiveHunt();
+      if (cur?.startedAt) {
+        setElapsedSec(Math.max(0, Math.floor((Date.now() - cur.startedAt) / 1000)));
+      } else {
+        setElapsedSec(s => s + 1);
+      }
+    }, 1000);
+    return () => window.clearInterval(tick);
+  }, [isRunning]);
 
   // Prefill location from ICP / markets when empty
   useEffect(() => {
@@ -295,14 +376,6 @@ export default function FindBuyersPanel({
     () => estimateHuntSeconds(lineCount || 8, leadsPerRun),
     [lineCount, leadsPerRun],
   );
-
-  useEffect(() => {
-    if (!isRunning) return;
-    setElapsedSec(0);
-    setPhaseIndex(0);
-    const tick = window.setInterval(() => setElapsedSec(s => s + 1), 1000);
-    return () => window.clearInterval(tick);
-  }, [isRunning]);
 
   useEffect(() => {
     if (isRunning) {
@@ -395,7 +468,7 @@ export default function FindBuyersPanel({
   const runHunt = async (promptOverride?: string) => {
     const huntQuery = (promptOverride ?? query).trim();
     if (promptOverride !== undefined) applyPrompt(promptOverride);
-    if ((!huntQuery && !hasBrief) || isRunning) return;
+    if ((!huntQuery && !hasBrief) || isRunning || isHuntRunning()) return;
     setShowSheetsPrompt(false);
     setIsRunning(true);
     setStatusText(phases[0]);
@@ -404,124 +477,29 @@ export default function FindBuyersPanel({
     setTelemetryHint('');
     setLastFound(null);
     try {
-      const resp = await apiFetch('/api/discovery/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_prompt: huntQuery || query,
-          products,
-          icp: {
-            ...icp,
-            targetBuyerTypes: [],
-            targetCountries: location.trim()
-              ? [location.trim()]
-              : (icp.targetCountries?.length
-                  ? icp.targetCountries
-                  : businessInfo.targetMarkets || []),
-          },
-          business: businessInfo,
-          async_mode: true,
-        }),
+      await startHunt({
+        userPrompt: huntQuery || query,
+        products,
+        icp: {
+          ...icp,
+          targetBuyerTypes: [],
+          targetCountries: location.trim()
+            ? [location.trim()]
+            : (icp.targetCountries?.length
+                ? icp.targetCountries
+                : businessInfo.targetMarkets || []),
+        },
+        business: businessInfo as unknown as Record<string, unknown>,
       });
-      if (!resp.ok) {
-        const text = await resp.text();
-        throw new Error(text || `Discovery failed (${resp.status})`);
-      }
-      const started = await resp.json();
-      const jobId = started.jobId as string | undefined;
-      if (!jobId) {
-        throw new Error('Hunt started but no job id returned');
-      }
-
-      let data: {
-        status?: string;
-        phase?: string;
-        progress?: number;
-        prospects?: Prospect[];
-        foundCount?: number;
-        skippedExisting?: number;
-        agent_log?: AgentRunLog;
-        error?: string;
-        telemetry?: {
-          searchIntents?: number;
-          completedIntents?: number;
-          googlePages?: number;
-          uniqueDomains?: number;
-          websitesInspected?: number;
-          emailsFound?: number;
-          leadsSaved?: number;
-          leadsPerRun?: number;
-          perIntentCap?: number;
-          alreadyKnown?: number;
-          currentQuery?: string;
-        };
-      } = started;
-
-      while (data.status !== 'completed' && data.status !== 'failed') {
-        await new Promise(r => window.setTimeout(r, 1200));
-        const poll = await apiFetch(`/api/discovery/jobs/${jobId}`);
-        if (!poll.ok) {
-          const text = await poll.text();
-          throw new Error(text || `Could not poll hunt (${poll.status})`);
-        }
-        data = await poll.json();
-        if (data.phase) {
-          setServerPhase(data.phase);
-          setStatusText(data.phase);
-        }
-        if (typeof data.progress === 'number') setServerProgress(data.progress);
-        const t = data.telemetry;
-        if (t && typeof t === 'object') {
-          const bits = [
-            t.leadsSaved != null && t.leadsPerRun != null
-              ? `Leads ${t.leadsSaved}/${t.leadsPerRun}`
-              : t.leadsSaved != null
-                ? `Saved ${t.leadsSaved}`
-                : null,
-            t.perIntentCap != null ? `~${t.perIntentCap}/line` : null,
-            t.searchIntents != null
-              ? `Intents ${t.completedIntents ?? 0}/${t.searchIntents}`
-              : null,
-            t.googlePages != null ? `Pages ${t.googlePages}` : null,
-            t.emailsFound != null ? `Emails ${t.emailsFound}` : null,
-            t.alreadyKnown ? `Known ${t.alreadyKnown}` : null,
-          ].filter(Boolean);
-          if (bits.length) setTelemetryHint(bits.join(' · '));
-        }
-      }
-
-      if (data.status === 'failed') {
-        throw new Error(data.error || 'Discovery failed');
-      }
-
-      const found: Prospect[] = Array.isArray(data.prospects) ? data.prospects : [];
-      if (found.length) onAddProspects(found);
-      if (data.agent_log) onAddLog(data.agent_log as AgentRunLog);
-      const foundCount = Number(data.foundCount ?? found.length);
-      setLastFound(foundCount);
-      const skipped = Number(data.skippedExisting || 0);
-      const sheetsNote = sheetsConnected ? ' Synced to Sheets.' : '';
-      setStatusText(
-        foundCount
-          ? `Added ${foundCount} lead${foundCount === 1 ? '' : 's'}${
-              skipped ? ` (${skipped} already in your list)` : ''
-            } — open Latest hunt on Leads to review new accounts.${sheetsNote}`
-          : skipped
-            ? `All matches were already in your list (${skipped}). Try a different hunt.`
-            : 'No accounts this round — try more specific hunt lines or another location.',
-      );
-      notifyHuntFinishedInTab(foundCount);
-      onComplete?.(foundCount);
-      void loadRecentHunts();
+      // Progress / completion handled by huntRunner subscribers (survives tab changes).
     } catch (err: unknown) {
       console.error('Discovery failed', err);
-      setStatusText(err instanceof Error ? err.message : 'Discovery failed');
-      notifyHuntFinishedInTab(0, true);
-    } finally {
       setIsRunning(false);
       setServerProgress(0);
       setServerPhase('');
       setTelemetryHint('');
+      setStatusText(err instanceof Error ? err.message : 'Discovery failed');
+      notifyHuntFinishedInTab(0, true);
     }
   };
 
