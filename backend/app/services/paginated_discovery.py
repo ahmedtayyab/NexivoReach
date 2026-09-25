@@ -1,13 +1,10 @@
 """
 Persistent paginated Google research for Find Buyers.
 
-Mental model: each hunt line is an independent search intent with its own
-page cursor. A fair scheduler walks page 1 → 2 → 3 … across all intents,
-persists every SERP hit, skips enrichment for already-processed domains,
-and saves relevant leads incrementally until each intent is exhausted or
-a safety budget is hit.
-
-Lead-count targets (20/30/50) are NOT stop conditions.
+Each hunt line is an independent search intent with a page cursor that
+persists across runs. A fair scheduler walks pages across intents, saves
+leads incrementally, and stops when the per-run lead cap is reached
+(split evenly across hunt lines). The next hunt resumes at the next page.
 """
 
 from __future__ import annotations
@@ -43,7 +40,13 @@ from app.models.schemas import (
     DiscoveryJob,
     DiscoverySearchIntent,
     DiscoverySerpHit,
+    HuntSearchCursor,
     ProspectRecord,
+)
+from app.services.app_settings import (
+    hunt_leads_per_run,
+    hunt_max_pages_per_intent,
+    leads_per_intent_share,
 )
 from app.services.enrichment import enrich_website
 from app.tools.web_search import WebSearchTool
@@ -77,11 +80,73 @@ def _fingerprint(domains: List[str]) -> str:
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
 
 
+def _query_key(query: str) -> str:
+    return re.sub(r"\s+", " ", (query or "").strip().lower())
+
+
+def _load_or_create_cursor(
+    session: Session,
+    *,
+    business_id: str,
+    search_intent: str,
+    location: str,
+    query: str,
+) -> HuntSearchCursor:
+    key = _query_key(query)
+    row = session.exec(
+        select(HuntSearchCursor).where(
+            HuntSearchCursor.business_id == business_id,
+            HuntSearchCursor.query_key == key,
+        )
+    ).first()
+    if row:
+        return row
+    row = HuntSearchCursor(
+        id=f"cur-{uuid4().hex[:12]}",
+        business_id=business_id,
+        query_key=key,
+        search_intent=search_intent,
+        location=location,
+        query=query,
+        next_page=1,
+        status="active",
+        updated_at=_now(),
+    )
+    session.add(row)
+    return row
+
+
+def _save_cursor_page(
+    *,
+    business_id: str,
+    query: str,
+    next_page: int,
+    status: str = "active",
+) -> None:
+    key = _query_key(query)
+    with Session(engine) as session:
+        row = session.exec(
+            select(HuntSearchCursor).where(
+                HuntSearchCursor.business_id == business_id,
+                HuntSearchCursor.query_key == key,
+            )
+        ).first()
+        if not row:
+            return
+        row.next_page = max(1, int(next_page or 1))
+        if status == "exhausted":
+            row.status = "exhausted"
+        elif row.status != "exhausted":
+            row.status = status
+        row.updated_at = _now()
+        session.add(row)
+        session.commit()
+
+
 @dataclass
 class HuntBudget:
-    max_pages_per_intent: int = field(
-        default_factory=lambda: int(settings.HUNT_MAX_PAGES_PER_INTENT or 10)
-    )
+    leads_per_run: int = field(default_factory=lambda: hunt_leads_per_run())
+    max_pages_per_intent: int = field(default_factory=lambda: hunt_max_pages_per_intent())
     max_total_pages: int = field(
         default_factory=lambda: int(settings.HUNT_MAX_TOTAL_PAGES or 150)
     )
@@ -141,8 +206,11 @@ def _phase_from_stats(
     current_query: str,
     intents_done: int,
     intents_total: int,
+    *,
+    leads_cap: int = 40,
 ) -> str:
     parts = [
+        f"Leads {stats.leads_saved}/{leads_cap}",
         f"Search intents: {intents_done}/{intents_total}",
     ]
     if current_query:
@@ -152,7 +220,6 @@ def _phase_from_stats(
     parts.append(f"Businesses: {stats.unique_domains}")
     parts.append(f"Inspected: {stats.websites_inspected}")
     parts.append(f"Emails: {stats.emails_found}")
-    parts.append(f"Leads saved: {stats.leads_saved}")
     if stats.already_known_skips:
         parts.append(f"Already known: {stats.already_known_skips}")
     return " · ".join(parts)
@@ -161,10 +228,9 @@ def _phase_from_stats(
 def _progress_pct(stats: HuntStats, budget: HuntBudget, intents_done: int, intents_total: int) -> int:
     if intents_total <= 0:
         return 5
+    lead_frac = min(1.0, stats.leads_saved / max(budget.leads_per_run, 1))
     intent_frac = intents_done / max(intents_total, 1)
-    page_frac = min(1.0, stats.google_pages / max(budget.max_total_pages, 1))
-    # Weighted: finishing intents matters more than raw pages
-    raw = 8 + int(70 * (0.55 * intent_frac + 0.45 * page_frac))
+    raw = 8 + int(80 * (0.7 * lead_frac + 0.3 * intent_frac))
     return max(5, min(95, raw))
 
 
@@ -237,6 +303,8 @@ async def run_paginated_discovery(
 
     intent_specs = _build_intents_from_prompt(user_prompt, place)
     stats.search_intents = len(intent_specs)
+    per_intent_cap = leads_per_intent_share(budget.leads_per_run, len(intent_specs) or 1)
+    intent_leads_this_run: Dict[str, int] = {}
 
     if not intent_specs:
         _update_job(
@@ -250,10 +318,19 @@ async def run_paginated_discovery(
         )
         return {"prospects": [], "stats": stats.__dict__}
 
-    # Persist intent cursors
+    # Persist intent cursors — resume next_page from workspace HuntSearchCursor
     intent_rows: List[DiscoverySearchIntent] = []
     with Session(engine) as session:
         for spec in intent_specs:
+            cursor = _load_or_create_cursor(
+                session,
+                business_id=business_id,
+                search_intent=spec["search_intent"],
+                location=spec["location"],
+                query=spec["query"],
+            )
+            start_page = max(1, int(cursor.next_page or 1))
+            initial_status = "exhausted" if cursor.status == "exhausted" else "active"
             row = DiscoverySearchIntent(
                 id=f"intent-{uuid4().hex[:12]}",
                 job_id=job_id,
@@ -261,20 +338,40 @@ async def run_paginated_discovery(
                 search_intent=spec["search_intent"],
                 location=spec["location"],
                 query=spec["query"],
-                current_page=1,
+                current_page=start_page,
                 pages_processed=0,
                 results_processed=0,
                 new_domains=0,
                 relevant_leads=0,
-                status="active",
+                status=initial_status,
+                stop_reason="previously_exhausted" if initial_status == "exhausted" else "",
                 created_at=_now(),
                 updated_at=_now(),
             )
             session.add(row)
             intent_rows.append(row)
+            intent_leads_this_run[row.id or ""] = 0
         session.commit()
         for row in intent_rows:
             session.refresh(row)
+            intent_leads_this_run[row.id or ""] = 0
+            if row.stop_reason == "previously_exhausted":
+                stats.stop_reasons[row.search_intent] = "previously_exhausted"
+
+    _update_job(
+        job_id,
+        phase=(
+            f"Cap {budget.leads_per_run} leads this run "
+            f"(~{per_intent_cap}/line across {len(intent_specs)} searches) · "
+            f"resuming saved Google pages"
+        ),
+        progress=6,
+        telemetry={
+            "leadsPerRun": budget.leads_per_run,
+            "perIntentCap": per_intent_cap,
+            "searchIntents": len(intent_specs),
+        },
+    )
 
     saved_ids: List[str] = []
     saved_front: List[Dict[str, Any]] = []
@@ -283,6 +380,9 @@ async def run_paginated_discovery(
 
     def _budget_hit(reason_holder: List[str]) -> bool:
         elapsed = time.time() - start
+        if stats.leads_saved >= budget.leads_per_run:
+            reason_holder.append("leads_per_run")
+            return True
         if elapsed >= budget.max_runtime_sec:
             reason_holder.append("max_runtime")
             return True
@@ -313,9 +413,14 @@ async def run_paginated_discovery(
         search_intent: str,
         discovery_queries: List[str],
         location_hint: str,
+        intent_id: str = "",
     ) -> Optional[Dict[str, Any]]:
         nonlocal stats
         async with enrich_sem:
+            if stats.leads_saved >= budget.leads_per_run:
+                return None
+            if intent_id and intent_leads_this_run.get(intent_id, 0) >= per_intent_cap:
+                return None
             if stats.enrichments >= budget.max_enrichments:
                 return None
             stats.enrichments += 1
@@ -549,8 +654,10 @@ async def run_paginated_discovery(
                 session.add(mem)
                 session.commit()
                 stats.leads_saved += 1
+                if intent_id:
+                    intent_leads_this_run[intent_id] = intent_leads_this_run.get(intent_id, 0) + 1
                 front = prospect_to_frontend(pr)
-                return {"prospect": front, "id": prospect_id, "merged": False, "changed": True}
+                return {"prospect": front, "id": prospect_id, "merged": False, "changed": True, "intent_id": intent_id}
 
     # ---- Main fair pagination loop ----
     while True:
@@ -567,8 +674,28 @@ async def run_paginated_discovery(
         if not active:
             break
 
-        # Fair round-robin: take next active intent by cursor
-        intent = active[rr_index % len(active)]
+        # Prefer intents still under their per-line share
+        under_quota = [
+            r for r in active
+            if intent_leads_this_run.get(r.id or "", 0) < per_intent_cap
+        ]
+        if not under_quota:
+            # All active intents hit their share — stop run (pages resume next time)
+            for row in active:
+                row.status = "quota"
+                row.stop_reason = "per_intent_lead_cap"
+                stats.stop_reasons[row.search_intent] = "per_intent_lead_cap"
+                _persist_intent(row)
+                _save_cursor_page(
+                    business_id=business_id,
+                    query=row.query,
+                    next_page=row.current_page,
+                    status="active",
+                )
+            break
+
+        # Fair round-robin among intents still needing leads
+        intent = under_quota[rr_index % len(under_quota)]
         rr_index += 1
 
         page = intent.current_page
@@ -577,6 +704,12 @@ async def run_paginated_discovery(
             intent.stop_reason = "max_pages_per_intent"
             stats.stop_reasons[intent.search_intent] = "max_pages_per_intent"
             _persist_intent(intent)
+            _save_cursor_page(
+                business_id=business_id,
+                query=intent.query,
+                next_page=page,
+                status="active",
+            )
             continue
 
         current_q = intent.query
@@ -584,12 +717,15 @@ async def run_paginated_discovery(
         _update_job(
             job_id,
             status="running",
-            phase=_phase_from_stats(stats, current_q, intents_done, len(intent_rows)),
+            phase=_phase_from_stats(
+                stats, current_q, intents_done, len(intent_rows),
+                leads_cap=budget.leads_per_run,
+            ),
             progress=_progress_pct(stats, budget, intents_done, len(intent_rows)),
             found_count=stats.leads_saved,
             skipped_existing=stats.already_known_skips,
             result_prospect_ids=saved_ids[-200:],
-            telemetry=_telemetry_payload(stats, intent_rows, current_q),
+            telemetry=_telemetry_payload(stats, intent_rows, current_q, budget, per_intent_cap),
         )
 
         try:
@@ -615,6 +751,12 @@ async def run_paginated_discovery(
             intent.stop_reason = "no_more_results"
             stats.stop_reasons[intent.search_intent] = "no_more_results"
             _persist_intent(intent)
+            _save_cursor_page(
+                business_id=business_id,
+                query=intent.query,
+                next_page=page,
+                status="exhausted",
+            )
             continue
 
         page_domains: List[str] = []
@@ -761,6 +903,10 @@ async def run_paginated_discovery(
                     continue
                 if stats.enrichments + len(enrich_jobs) >= budget.max_enrichments:
                     continue
+                if stats.leads_saved >= budget.leads_per_run:
+                    continue
+                if intent_leads_this_run.get(intent.id or "", 0) >= per_intent_cap:
+                    continue
                 enrich_jobs.append({
                     "domain": domain,
                     "website": url,
@@ -771,6 +917,7 @@ async def run_paginated_discovery(
                     "search_intent": intent.search_intent,
                     "discovery_queries": [intent.query],
                     "location_hint": intent.location,
+                    "intent_id": intent.id or "",
                 })
 
             intent.results_processed += len(organic)
@@ -780,10 +927,22 @@ async def run_paginated_discovery(
                 intent.status = "exhausted"
                 intent.stop_reason = "repeated_results"
                 stats.stop_reasons[intent.search_intent] = "repeated_results"
+                _save_cursor_page(
+                    business_id=business_id,
+                    query=intent.query,
+                    next_page=page,
+                    status="exhausted",
+                )
             else:
                 intent.last_page_fingerprint = fp
                 intent.current_page = page + 1
                 intent.new_domains += len(enrich_jobs)
+                _save_cursor_page(
+                    business_id=business_id,
+                    query=intent.query,
+                    next_page=intent.current_page,
+                    status="active",
+                )
             intent.updated_at = _now()
             session.add(intent)
             session.commit()
@@ -827,6 +986,27 @@ async def run_paginated_discovery(
                         session.add(it)
                         session.commit()
 
+            # Stop this intent for the run once its share is filled (resume later pages next hunt)
+            if intent_leads_this_run.get(intent.id or "", 0) >= per_intent_cap and intent.status == "active":
+                intent.status = "quota"
+                intent.stop_reason = "per_intent_lead_cap"
+                stats.stop_reasons[intent.search_intent] = "per_intent_lead_cap"
+                _persist_intent(intent)
+
+            if stats.leads_saved >= budget.leads_per_run:
+                for row in intent_rows:
+                    if row.status == "active":
+                        row.status = "quota"
+                        row.stop_reason = "leads_per_run"
+                        stats.stop_reasons[row.search_intent] = "leads_per_run"
+                        _persist_intent(row)
+                        _save_cursor_page(
+                            business_id=business_id,
+                            query=row.query,
+                            next_page=row.current_page,
+                            status="active",
+                        )
+
             _update_job(
                 job_id,
                 phase=_phase_from_stats(
@@ -834,6 +1014,7 @@ async def run_paginated_discovery(
                     current_q,
                     sum(1 for r in intent_rows if r.status != "active"),
                     len(intent_rows),
+                    leads_cap=budget.leads_per_run,
                 ),
                 progress=_progress_pct(
                     stats,
@@ -844,7 +1025,7 @@ async def run_paginated_discovery(
                 found_count=stats.leads_saved,
                 skipped_existing=stats.already_known_skips,
                 result_prospect_ids=saved_ids[-200:],
-                telemetry=_telemetry_payload(stats, intent_rows, current_q),
+                telemetry=_telemetry_payload(stats, intent_rows, current_q, budget, per_intent_cap),
             )
 
         # Mark intent completed if page cap reached after this page
@@ -854,24 +1035,35 @@ async def run_paginated_discovery(
             stats.stop_reasons[intent.search_intent] = "max_pages_per_intent"
             _persist_intent(intent)
 
-    # Finalize remaining active intents
+    # Finalize remaining active intents — keep cursors for next run
     for row in intent_rows:
         if row.status == "active":
-            row.status = "completed"
-            row.stop_reason = row.stop_reason or "hunt_finished"
+            row.status = "quota" if stats.leads_saved >= budget.leads_per_run else "completed"
+            row.stop_reason = row.stop_reason or (
+                "leads_per_run" if row.status == "quota" else "hunt_finished"
+            )
             stats.stop_reasons[row.search_intent] = row.stop_reason
             _persist_intent(row)
+            _save_cursor_page(
+                business_id=business_id,
+                query=row.query,
+                next_page=row.current_page,
+                status="active",
+            )
 
     duration_ms = int((time.time() - start) * 1000)
     decisions = [{
         "step": 1,
         "observation": (
-            f"HUNT COMPLETE — intents={stats.search_intents} pages={stats.google_pages} "
+            f"HUNT COMPLETE — leads={stats.leads_saved}/{budget.leads_per_run} "
+            f"(~{per_intent_cap}/line) intents={stats.search_intents} pages={stats.google_pages} "
             f"raw={stats.raw_results} unique={stats.unique_domains} known={stats.previously_known} "
             f"new={stats.new_domains} inspected={stats.websites_inspected} "
-            f"relevant={stats.relevant} emails={stats.emails_found} saved={stats.leads_saved}"
+            f"emails={stats.emails_found}"
         ),
-        "decision": "Paginated Google research with persistent discovery memory.",
+        "decision": (
+            "Per-run lead cap split across hunt lines; Google page cursors saved for the next hunt."
+        ),
         "toolCalled": "PaginatedDiscovery",
         "toolResultSnippet": str(stats.stop_reasons)[:500],
     }]
@@ -895,7 +1087,7 @@ async def run_paginated_discovery(
         session.add(ar)
         session.commit()
 
-    telemetry = _telemetry_payload(stats, intent_rows, "")
+    telemetry = _telemetry_payload(stats, intent_rows, "", budget, per_intent_cap)
     telemetry["durationMs"] = duration_ms
     telemetry["complete"] = True
 
@@ -903,8 +1095,9 @@ async def run_paginated_discovery(
         job_id,
         status="completed",
         phase=(
-            f"Done · {stats.leads_saved} leads · {stats.google_pages} Google pages · "
-            f"{stats.emails_found} emails"
+            f"Done · {stats.leads_saved}/{budget.leads_per_run} leads · "
+            f"{stats.google_pages} Google pages · {stats.emails_found} emails "
+            f"(next run resumes deeper pages)"
         ),
         progress=100,
         found_count=stats.leads_saved,
@@ -994,8 +1187,13 @@ def _telemetry_payload(
     stats: HuntStats,
     intent_rows: List[DiscoverySearchIntent],
     current_query: str,
+    budget: Optional[HuntBudget] = None,
+    per_intent_cap: int = 0,
 ) -> Dict[str, Any]:
+    leads_cap = budget.leads_per_run if budget else hunt_leads_per_run()
     return {
+        "leadsPerRun": leads_cap,
+        "perIntentCap": per_intent_cap,
         "searchIntents": stats.search_intents,
         "completedIntents": sum(1 for r in intent_rows if r.status != "active"),
         "currentQuery": current_query,

@@ -16,6 +16,9 @@ engine = create_engine(settings.DATABASE_URL, **_engine_kwargs)
 
 
 def init_db():
+    # Ensure model metadata is registered before create_all.
+    import app.models.schemas  # noqa: F401
+
     # SQLite-only legacy patches before create_all so renamed tables are ready.
     if _backend == "sqlite":
         _migrate_sqlite_user_table()

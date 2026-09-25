@@ -65,5 +65,13 @@ def test_hunt_budget_defaults_are_safety_not_lead_caps():
     b = HuntBudget()
     assert b.max_pages_per_intent >= 5
     assert b.max_total_pages >= 50
-    # Must NOT encode the old 20/30/50 lead targets
-    assert not hasattr(b, "preferred_leads")
+    assert b.leads_per_run >= 5
+
+
+def test_leads_split_evenly_across_hunt_lines():
+    from app.services.app_settings import leads_per_intent_share
+
+    assert leads_per_intent_share(40, 5) == 8
+    assert leads_per_intent_share(40, 15) == 3
+    assert leads_per_intent_share(30, 5) == 6
+    assert leads_per_intent_share(40, 1) == 40

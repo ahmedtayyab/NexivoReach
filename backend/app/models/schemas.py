@@ -243,6 +243,35 @@ class DiscoverySerpHit(SQLModel, table=True):
     created_at: str = ""
 
 
+class HuntSearchCursor(SQLModel, table=True):
+    """
+    Cross-run Google page cursor per workspace + query.
+    Run 1 stops at lead quota on page 3 → Run 2 resumes at page 4.
+    """
+
+    __tablename__ = "hunt_search_cursor"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    business_id: str = Field(index=True)
+    query_key: str = Field(index=True)  # normalized lowercase query
+    search_intent: str = ""
+    location: str = ""
+    query: str = ""
+    next_page: int = 1
+    status: str = "active"  # active | exhausted
+    updated_at: str = ""
+
+
+class AppSetting(SQLModel, table=True):
+    """Mutable admin-configurable app settings (key/value)."""
+
+    __tablename__ = "app_setting"
+
+    key: str = Field(primary_key=True)
+    value: str = ""
+    updated_at: str = ""
+
+
 class BusinessMember(SQLModel, table=True):
     """Team seat on a company workspace (owner is Business.user_id)."""
 

@@ -63,6 +63,11 @@ type Overview = {
   day: string;
   inviteOnly: boolean;
   defaults: UsageBucket;
+  huntSettings?: {
+    leadsPerRun: number;
+    maxPagesPerIntent: number;
+    defaults?: { leadsPerRun: number; maxPagesPerIntent: number };
+  };
   stats: {
     users: number;
     suspended: number;
@@ -269,6 +274,10 @@ export default function AdminView({ onToast }: Props) {
   const [seenTicketIds, setSeenTicketIds] = useState<Set<string>>(() => loadSeenTicketIds());
   const [replyFeedback, setReplyFeedback] = useState<'idle' | 'ok' | 'err'>('idle');
   const [replyFeedbackText, setReplyFeedbackText] = useState('');
+  const [huntLeadsPerRun, setHuntLeadsPerRun] = useState(40);
+  const [huntMaxPages, setHuntMaxPages] = useState(10);
+  const [huntSettingsBusy, setHuntSettingsBusy] = useState(false);
+  const [huntSettingsMsg, setHuntSettingsMsg] = useState('');
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) {
@@ -298,6 +307,10 @@ export default function AdminView({ onToast }: Props) {
       const allowData = await a.json();
       const ticketData = await t.json();
       setOverview(overviewData);
+      if (overviewData.huntSettings) {
+        setHuntLeadsPerRun(Number(overviewData.huntSettings.leadsPerRun) || 40);
+        setHuntMaxPages(Number(overviewData.huntSettings.maxPagesPerIntent) || 10);
+      }
       setUsers(Array.isArray(usersData.users) ? usersData.users : []);
       setInvites(Array.isArray(allowData.invites) ? allowData.invites : []);
       setInviteOnly(Boolean(allowData.inviteOnly ?? overviewData.inviteOnly));
@@ -508,6 +521,48 @@ export default function AdminView({ onToast }: Props) {
       setError(e instanceof Error ? e.message : 'Update failed');
     } finally {
       setBusyId('');
+    }
+  };
+
+  const saveHuntSettings = async (e?: FormEvent) => {
+    e?.preventDefault();
+    setHuntSettingsBusy(true);
+    setHuntSettingsMsg('');
+    try {
+      const resp = await apiFetch('/api/admin/hunt-settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          leadsPerRun: huntLeadsPerRun,
+          maxPagesPerIntent: huntMaxPages,
+        }),
+      });
+      if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Could not save hunt settings'));
+      const data = await resp.json();
+      setHuntLeadsPerRun(Number(data.leadsPerRun) || huntLeadsPerRun);
+      setHuntMaxPages(Number(data.maxPagesPerIntent) || huntMaxPages);
+      setOverview(prev =>
+        prev
+          ? {
+              ...prev,
+              huntSettings: {
+                leadsPerRun: Number(data.leadsPerRun) || 40,
+                maxPagesPerIntent: Number(data.maxPagesPerIntent) || 10,
+                defaults: data.defaults,
+              },
+            }
+          : prev,
+      );
+      setHuntSettingsMsg(
+        `Saved — ${data.leadsPerRun} leads/run, split across hunt lines; next run resumes deeper Google pages.`,
+      );
+      onToast?.('success', 'Hunt settings saved', `${data.leadsPerRun} leads per run`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Save failed';
+      setHuntSettingsMsg(msg);
+      onToast?.('error', 'Hunt settings', msg);
+    } finally {
+      setHuntSettingsBusy(false);
     }
   };
 
@@ -934,6 +989,52 @@ export default function AdminView({ onToast }: Props) {
               </span>
             </div>
           </div>
+
+          <section className="admin-panel mt-4">
+            <div className="admin-panel__head">
+              <h2>Find Buyers research</h2>
+            </div>
+            <p className="text-[13px] text-ink-muted m-0 mb-3">
+              Cap leads per hunt run to control Serper/API spend. The budget is split evenly across
+              hunt lines (e.g. 40 leads ÷ 5 lines ≈ 8 each). The next hunt on the same workspace
+              resumes from the next Google page instead of restarting at page 1.
+            </p>
+            <form className="admin-inline-form" onSubmit={saveHuntSettings}>
+              <label className="admin-filter-bar__field">
+                <span>Leads per run</span>
+                <input
+                  type="number"
+                  min={5}
+                  max={200}
+                  value={huntLeadsPerRun}
+                  onChange={e => setHuntLeadsPerRun(Number(e.target.value) || 40)}
+                />
+              </label>
+              <label className="admin-filter-bar__field">
+                <span>Max pages / search line</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={huntMaxPages}
+                  onChange={e => setHuntMaxPages(Number(e.target.value) || 10)}
+                />
+              </label>
+              <button type="submit" className="btn btn-primary" disabled={huntSettingsBusy}>
+                {huntSettingsBusy ? 'Saving…' : 'Save hunt settings'}
+              </button>
+            </form>
+            {huntSettingsMsg ? (
+              <p className="admin-panel__foot mt-2" role="status">
+                {huntSettingsMsg}
+              </p>
+            ) : (
+              <p className="admin-panel__foot">
+                Example: {huntLeadsPerRun} leads ÷ 5 hunt lines ≈{' '}
+                {Math.max(1, Math.ceil(huntLeadsPerRun / 5))} leads each this run.
+              </p>
+            )}
+          </section>
 
           <div className="admin-grid">
             <section className="admin-panel">

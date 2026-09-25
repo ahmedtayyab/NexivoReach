@@ -14,6 +14,7 @@ from app.config import settings
 from app.database.session import engine
 from app.models.schemas import Business, InviteAllowlist, ProspectRecord, SupportTicket, UsageDaily, User
 from app.services import access as access_mod
+from app.services import app_settings as app_set
 from app.services import notifications as notif_mod
 from app.api.support import (
     VALID_PRIORITY,
@@ -59,6 +60,24 @@ class InviteCreate(BaseModel):
     email: str
     note: str = ""
     sendEmail: bool = True
+
+
+class HuntSettingsPatch(BaseModel):
+    leadsPerRun: Optional[int] = None
+    maxPagesPerIntent: Optional[int] = None
+
+
+@router.get("/hunt-settings")
+def get_hunt_settings_admin(_admin: AuthUser = Depends(_require_admin)):
+    return app_set.get_hunt_settings()
+
+
+@router.patch("/hunt-settings")
+def patch_hunt_settings(payload: HuntSettingsPatch, _admin: AuthUser = Depends(_require_admin)):
+    return app_set.update_hunt_settings(
+        leads_per_run=payload.leadsPerRun,
+        max_pages_per_intent=payload.maxPagesPerIntent,
+    )
 
 
 def _invite_email_body(*, invitee: str, app_url: str, from_name: str) -> str:
@@ -166,6 +185,7 @@ def admin_overview(_admin: AuthUser = Depends(_require_admin)):
                 "prepare": settings.DAILY_PREPARE_LIMIT,
                 "send": settings.DAILY_SEND_LIMIT,
             },
+            "huntSettings": app_set.get_hunt_settings(),
             "stats": {
                 "users": len(users),
                 "suspended": suspended,

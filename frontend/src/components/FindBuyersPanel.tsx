@@ -308,6 +308,8 @@ export default function FindBuyersPanel({
           websitesInspected?: number;
           emailsFound?: number;
           leadsSaved?: number;
+          leadsPerRun?: number;
+          perIntentCap?: number;
           alreadyKnown?: number;
           currentQuery?: string;
         };
@@ -329,14 +331,17 @@ export default function FindBuyersPanel({
         const t = data.telemetry;
         if (t && typeof t === 'object') {
           const bits = [
+            t.leadsSaved != null && t.leadsPerRun != null
+              ? `Leads ${t.leadsSaved}/${t.leadsPerRun}`
+              : t.leadsSaved != null
+                ? `Saved ${t.leadsSaved}`
+                : null,
+            t.perIntentCap != null ? `~${t.perIntentCap}/line` : null,
             t.searchIntents != null
               ? `Intents ${t.completedIntents ?? 0}/${t.searchIntents}`
               : null,
             t.googlePages != null ? `Pages ${t.googlePages}` : null,
-            t.uniqueDomains != null ? `Businesses ${t.uniqueDomains}` : null,
-            t.websitesInspected != null ? `Inspected ${t.websitesInspected}` : null,
             t.emailsFound != null ? `Emails ${t.emailsFound}` : null,
-            t.leadsSaved != null ? `Saved ${t.leadsSaved}` : null,
             t.alreadyKnown ? `Known ${t.alreadyKnown}` : null,
           ].filter(Boolean);
           if (bits.length) setTelemetryHint(bits.join(' · '));
