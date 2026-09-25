@@ -4762,10 +4762,12 @@ input:focus, textarea:focus, select:focus {
   background: var(--bg);
   color: var(--text);
   font-size: 13.5px;
-  line-height: 1.45;
+  line-height: 1.55;
   padding: 0.7rem 0.8rem;
   font-family: inherit;
   box-sizing: border-box;
+  white-space: pre-wrap;
+  font-variant-ligatures: none;
 }
 .hunt-details__input:focus {
   outline: none;
@@ -4774,8 +4776,18 @@ input:focus, textarea:focus, select:focus {
 .hunt-details__input::placeholder {
   color: var(--text-muted);
   opacity: 0.85;
+  white-space: pre-wrap;
 }
 .hunt-details__hint {
+  line-height: 1.45;
+}
+.hunt-details__hint strong {
+  font-weight: 650;
+  color: var(--text-secondary, var(--text));
+}
+.hunt-details__meta {
+  letter-spacing: 0.01em;
+}
   display: block;
   margin-top: 0.3rem;
   font-size: 12px;

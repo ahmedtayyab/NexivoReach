@@ -131,6 +131,15 @@ export default function FindBuyersPanel({
     [location, details],
   );
 
+  const lineCount = useMemo(
+    () =>
+      details
+        .split(/\r?\n/)
+        .map(l => l.trim())
+        .filter(Boolean).length,
+    [details],
+  );
+
   const loadRecentHunts = async () => {
     try {
       const resp = await apiFetch('/api/discovery/jobs?limit=8');
@@ -556,9 +565,8 @@ export default function FindBuyersPanel({
       <label className="hunt-details">
         <span className="hunt-details__label">Hunt description</span>
         <p className="hunt-details__hint text-[12px] text-ink-muted m-0 mb-1.5">
-          Write each product with the buyer you want, in one box. The hunt splits that into
-          separate searches, then adds the location. Example: weightlifting straps distributors,
-          weightlifting straps wholesalers, martial arts belts distributors.
+          One search per line: <strong>product + buyer type</strong>. Location is added
+          automatically. Press Enter after each line — do not write a paragraph.
         </p>
         <textarea
           className="hunt-details__input"
@@ -567,17 +575,27 @@ export default function FindBuyersPanel({
           onFocus={() => setOpenField(null)}
           disabled={isRunning}
           rows={10}
+          spellCheck={false}
           placeholder={
-            'weightlifting straps distributors weightlifting straps wholesalers weightlifting straps importers\n' +
-            'weightlifting belts distributors weightlifting belts wholesalers\n' +
-            'martial arts belts distributors martial arts belts wholesalers'
+            'weightlifting straps distributors\n' +
+            'weightlifting straps wholesalers\n' +
+            'weightlifting straps importers\n' +
+            'weightlifting belts distributors\n' +
+            'weightlifting belts wholesalers\n' +
+            'martial arts belts distributors'
           }
         />
+        {lineCount > 0 && (
+          <p className="hunt-details__meta text-[11px] text-ink-muted m-0 mt-1.5" aria-live="polite">
+            {lineCount} search line{lineCount === 1 ? '' : 's'}
+            {location.trim() ? ` · each adds “${location.trim()}”` : ''}
+          </p>
+        )}
       </label>
 
       {!ready && (
         <p className="ui-banner ui-banner--warn hunt-ready-hint" role="status">
-          Describe the products and who should buy them, and set a location.
+          Add location, then list each product + buyer on its own line.
         </p>
       )}
 
