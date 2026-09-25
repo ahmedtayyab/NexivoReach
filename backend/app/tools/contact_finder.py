@@ -118,10 +118,28 @@ FOOTER_SELECTORS = (
     "#colophon",
 )
 
+# Bottom-of-page bands (emails often sit here even without a <footer> tag)
+BOTTOM_SELECTORS = (
+    "[class*='pre-footer']",
+    "[class*='prefooter']",
+    "[class*='site-bottom']",
+    "[class*='page-bottom']",
+    "[class*='bottom-bar']",
+    "[class*='bottom-info']",
+    "[id*='bottom']",
+    "[class*='follow-us']",
+    "[class*='followus']",
+    "[class*='social-bar']",
+    "[class*='connect-with']",
+    ".bottom",
+    "#bottom",
+)
+
 SOCIAL_HOSTS = (
     "facebook.com",
     "fb.com",
     "m.facebook.com",
+    "mbasic.facebook.com",
     "instagram.com",
     "linkedin.com",
 )
@@ -422,6 +440,62 @@ def _preferred_inbox(email: str, site_domain: str) -> bool:
     return _local_pref(addr) > 0
 
 
+def _bottom_region_nodes(soup: BeautifulSoup) -> List[Any]:
+    """Nodes that typically hold emails: footer, pre-footer, or last third of <body>."""
+    nodes: List[Any] = []
+    for sel in FOOTER_SELECTORS + BOTTOM_SELECTORS:
+        try:
+            nodes.extend(soup.select(sel))
+        except Exception:
+            continue
+    if nodes:
+        return nodes
+    body = soup.body
+    if not body:
+        return []
+    kids = [c for c in body.find_all(recursive=False) if getattr(c, "name", None)]
+    if len(kids) < 2:
+        return kids[-1:] if kids else []
+    take = max(1, len(kids) // 3)
+    return kids[-take:]
+
+
+def _facebook_fetch_urls(url: str) -> List[str]:
+    """Prefer mbasic Facebook (often exposes About email) over the JS-heavy desktop site."""
+    raw = (url or "").strip()
+    if not raw:
+        return []
+    parsed = urlparse(raw)
+    path = (parsed.path or "/").split("?")[0]
+    # Drop share/intent paths
+    low = path.lower()
+    if any(x in low for x in ("/share", "/sharer", "/intent", "dialog/")):
+        return []
+    # Normalize fb.com → facebook path
+    host = _domain(raw)
+    if "fb.com" in host and "facebook" not in host:
+        # fb.com/page → treat path as-is
+        pass
+    slug = path.rstrip("/") or "/"
+    out: List[str] = []
+    for host_name in ("mbasic.facebook.com", "m.facebook.com", "www.facebook.com"):
+        base = f"https://{host_name}{slug}"
+        out.append(base)
+        if "/about" not in slug.lower():
+            out.append(base + "/about")
+            out.append(base + "/about_contact_and_basic_info")
+    # Dedupe preserve order
+    seen: Set[str] = set()
+    uniq: List[str] = []
+    for u in out:
+        key = u.rstrip("/").lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(u)
+    return uniq[:6]
+
+
 def _extract_from_html(
     html: str,
     page_url: str,
@@ -533,23 +607,18 @@ def _extract_from_html(
                     seen_u.add(abs_url)
                     contact_urls.append(abs_url)
 
-    # Footer-first: B2B sites almost always put email in the footer
-    footer_nodes = []
-    for sel in FOOTER_SELECTORS:
-        try:
-            footer_nodes.extend(soup.select(sel))
-        except Exception:
-            continue
-    if footer_nodes:
-        footer_blob_tight = " ".join(n.get_text("", strip=True) for n in footer_nodes)
-        footer_blob_spaced = " ".join(n.get_text(" ", strip=True) for n in footer_nodes)
+    # Footer + bottom-of-page: B2B sites almost always put email here
+    bottom_nodes = _bottom_region_nodes(soup)
+    if bottom_nodes:
+        footer_blob_tight = " ".join(n.get_text("", strip=True) for n in bottom_nodes)
+        footer_blob_spaced = " ".join(n.get_text(" ", strip=True) for n in bottom_nodes)
         for match in EMAIL_RE.findall(footer_blob_tight):
             add(_clean_email(match), SRC_TEXT, max(section_bonus, PAGE_FOOTER))
         for addr in _emails_from_loose(footer_blob_spaced):
             add(addr, SRC_TEXT, max(section_bonus, PAGE_FOOTER))
         for addr in _emails_from_obfuscated(footer_blob_spaced):
             add(addr, SRC_OBFUSCATED, max(section_bonus, PAGE_FOOTER))
-        for node in footer_nodes:
+        for node in bottom_nodes:
             for a in node.find_all("a", href=True):
                 href = (a.get("href") or "").strip()
                 if href.lower().startswith("mailto:"):
@@ -558,6 +627,14 @@ def _extract_from_html(
                         SRC_MAILTO,
                         max(section_bonus, PAGE_FOOTER),
                     )
+                elif _is_social_url(urljoin(page_url, href)):
+                    abs_social = urljoin(page_url, href).split("?")[0]
+                    key = abs_social.rstrip("/").lower()
+                    if key not in seen_social and not any(
+                        x in key for x in ("/share", "/sharer", "/intent", "dialog/")
+                    ):
+                        seen_social.add(key)
+                        social_urls.append(abs_social)
 
     # Visible text: empty separator so <span>sales</span>@<span>x.com</span> stays intact
     text_tight = soup.get_text("", strip=True)
@@ -795,23 +872,29 @@ async def discover_contacts(
                     "source": "site",
                 })
 
-    # One light Facebook (or LinkedIn) pass when site still has no email
+    # Facebook / social pass when the company site still has no email
     emails_so_far = _rank_scored(all_hits, site_domain)
     if not emails_so_far and social_urls:
         fb = next(
             (
                 u for u in social_urls
-                if "facebook.com" in _domain(u) or "fb.com" in _domain(u)
+                if any(h in _domain(u) for h in ("facebook.com", "fb.com", "mbasic.facebook.com"))
             ),
-            social_urls[0],
+            None,
         )
+        candidates: List[str] = []
+        if fb:
+            candidates.extend(_facebook_fetch_urls(fb))
+        else:
+            # LinkedIn / Instagram last resort — one page only
+            candidates.append(social_urls[0])
         try:
-            async with httpx.AsyncClient(timeout=6.0, follow_redirects=True, headers=HEADERS) as client:
-                candidates = [fb]
-                if "facebook.com" in _domain(fb) and "/about" not in fb.lower():
-                    candidates.append(fb.rstrip("/") + "/about")
-                for social_url in candidates[:2]:
-                    res = await client.get(social_url)
+            async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, headers=HEADERS) as client:
+                for social_url in candidates[:4]:
+                    try:
+                        res = await client.get(social_url)
+                    except Exception:
+                        continue
                     if res.status_code != 200 or not res.text:
                         continue
                     pages_checked += 1

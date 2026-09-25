@@ -2404,6 +2404,14 @@ input:focus, textarea:focus, select:focus {
   max-width: 28rem;
   line-height: 1.45;
 }
+.find-buyers__overlay-timer {
+  margin: 0.45rem 0 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
 .find-buyers__overlay-track {
   width: min(100%, 18rem);
   height: 4px;

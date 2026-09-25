@@ -33,6 +33,57 @@ type RecentHunt = {
 
 const HUNT_PHASE_SECONDS = [0, 8, 18, 35];
 const SKIP_SHEETS_PROMPT_KEY = 'nr-hunt-skip-sheets-prompt';
+const DEFAULT_DOC_TITLE = 'NexivoReach';
+
+/** Realistic wall-clock ETA from hunt line count (~40 lead cap). */
+export function estimateHuntSeconds(lineCount: number): { low: number; high: number } {
+  const lines = Math.max(1, Math.min(40, Math.floor(lineCount || 1)));
+  // SERP + site inspect per line, then contact fill — calibrated to ~1–5 min runs
+  const low = Math.max(50, Math.round(30 + lines * 5));
+  const high = Math.max(low + 40, Math.round(55 + lines * 11));
+  return { low, high };
+}
+
+export function formatDuration(totalSec: number): string {
+  const s = Math.max(0, Math.round(totalSec));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  if (m <= 0) return `${r}s`;
+  return `${m}:${String(r).padStart(2, '0')}`;
+}
+
+export function formatEtaRange(low: number, high: number): string {
+  const loM = Math.max(1, Math.round(low / 60));
+  const hiM = Math.max(loM, Math.round(high / 60));
+  if (loM === hiM) return `~${loM} min`;
+  return `~${loM}–${hiM} min`;
+}
+
+function notifyHuntFinishedInTab(foundCount: number, failed = false) {
+  if (typeof document === 'undefined') return;
+  const title = failed
+    ? `Hunt failed · ${DEFAULT_DOC_TITLE}`
+    : foundCount > 0
+      ? `(${foundCount}) Hunt done · ${DEFAULT_DOC_TITLE}`
+      : `Hunt finished · ${DEFAULT_DOC_TITLE}`;
+  // Always flash the tab title briefly so background tabs light up in the browser bar
+  document.title = title;
+  const restore = () => {
+    if (!document.hidden) {
+      document.title = DEFAULT_DOC_TITLE;
+      document.removeEventListener('visibilitychange', restore);
+      window.removeEventListener('focus', restore);
+    }
+  };
+  document.addEventListener('visibilitychange', restore);
+  window.addEventListener('focus', restore);
+  // If already focused, clear after a short beat so the flash is noticeable
+  if (!document.hidden) {
+    window.setTimeout(() => {
+      if (!document.hidden) document.title = DEFAULT_DOC_TITLE;
+    }, 4000);
+  }
+}
 
 /** Split a past freeform hunt into category + location when possible. */
 export function splitHuntPrompt(prompt: string): { category: string; location: string } {
@@ -222,6 +273,7 @@ export default function FindBuyersPanel({
   const ready = Boolean(details.trim()) || (Boolean(location.trim()) && hasBrief);
   const canHunt = Boolean(details.trim()) || (Boolean(location.trim()) && hasBrief);
   const phases = useMemo(() => buildPhases(query, placeHint), [query, placeHint]);
+  const huntEta = useMemo(() => estimateHuntSeconds(lineCount || 8), [lineCount]);
 
   useEffect(() => {
     if (!isRunning) return;
@@ -230,6 +282,13 @@ export default function FindBuyersPanel({
     const tick = window.setInterval(() => setElapsedSec(s => s + 1), 1000);
     return () => window.clearInterval(tick);
   }, [isRunning]);
+
+  useEffect(() => {
+    if (isRunning) {
+      document.title = `Hunting… ${formatDuration(elapsedSec)} · ${DEFAULT_DOC_TITLE}`;
+      return;
+    }
+  }, [isRunning, elapsedSec]);
 
   useEffect(() => {
     if (!isRunning) return;
@@ -245,11 +304,20 @@ export default function FindBuyersPanel({
 
   const progressLabel = useMemo(() => {
     if (!isRunning) return '';
-    if (telemetryHint) return telemetryHint;
-    if (elapsedSec < 60) return `Working · ${elapsedSec}s — paging through Google searches`;
-    if (elapsedSec < 180) return `Still hunting · ${elapsedSec}s — deeper pages take longer`;
-    return `Deep research · ${elapsedSec}s — continuing until searches are exhausted`;
-  }, [isRunning, elapsedSec, telemetryHint]);
+    const etaLabel = formatEtaRange(huntEta.low, huntEta.high);
+    const remaining = Math.max(0, huntEta.high - elapsedSec);
+    const timeBit = `${formatDuration(elapsedSec)} elapsed · est. ${etaLabel}`;
+    const leftBit =
+      elapsedSec < huntEta.low
+        ? ` · ~${formatDuration(Math.max(15, huntEta.low - elapsedSec))}–${formatDuration(remaining)} left`
+        : remaining > 20
+          ? ` · ~${formatDuration(remaining)} left`
+          : ' · wrapping up';
+    if (telemetryHint) return `${telemetryHint} · ${timeBit}`;
+    if (elapsedSec < 60) return `Paging Google · ${timeBit}${leftBit}`;
+    if (elapsedSec < 180) return `Inspecting sites · ${timeBit}${leftBit}`;
+    return `Deep research · ${timeBit}${leftBit}`;
+  }, [isRunning, elapsedSec, telemetryHint, huntEta]);
 
   const progressPct = useMemo(() => {
     if (!isRunning) return 0;
@@ -421,11 +489,13 @@ export default function FindBuyersPanel({
             ? `All matches were already in your list (${skipped}). Try a different hunt.`
             : 'No accounts this round — try more specific hunt lines or another location.',
       );
+      notifyHuntFinishedInTab(foundCount);
       onComplete?.(foundCount);
       void loadRecentHunts();
     } catch (err: unknown) {
       console.error('Discovery failed', err);
       setStatusText(err instanceof Error ? err.message : 'Discovery failed');
+      notifyHuntFinishedInTab(0, true);
     } finally {
       setIsRunning(false);
       setServerProgress(0);
@@ -474,6 +544,10 @@ export default function FindBuyersPanel({
           <Loader2 className="w-5 h-5 animate-spin text-[var(--cta)]" />
           <p className="find-buyers__overlay-title">Hunting buyers</p>
           <p className="find-buyers__overlay-phase">{serverPhase || phases[phaseIndex]}</p>
+          <p className="find-buyers__overlay-timer">
+            {formatDuration(elapsedSec)} elapsed · est. {formatEtaRange(huntEta.low, huntEta.high)}
+            {lineCount > 0 ? ` · ${lineCount} search lines` : ''}
+          </p>
           <div className="find-buyers__overlay-track" aria-hidden="true">
             <div className="find-buyers__overlay-fill" style={{ width: `${progressPct}%` }} />
           </div>
@@ -697,7 +771,9 @@ export default function FindBuyersPanel({
               {statusText ||
                 (lastFound !== null
                   ? `Last run added ${lastFound} lead${lastFound === 1 ? '' : 's'}.`
-                  : 'Usually under a minute for ~20–40 leads.')}
+                  : `Usually ${formatEtaRange(huntEta.low, huntEta.high)} for ~20–40 leads${
+                      lineCount > 0 ? ` (${lineCount} search lines)` : ''
+                    }.`)}
             </p>
           )}
         </div>
