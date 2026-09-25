@@ -496,7 +496,7 @@ async def run_paginated_discovery(
                         seed_contacts=[],
                         use_hunter=True,
                     ),
-                    timeout=14.0,
+                    timeout=20.0,
                 )
             except Exception:
                 found = {"email": "", "phone": "", "contacts": [], "site_text": "", "sources": []}

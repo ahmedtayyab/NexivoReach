@@ -116,3 +116,32 @@ def test_html_entity_at_sign():
     """
     found = _extract_from_html(html, "https://brand.com/", "brand.com")
     assert "office@brand.com" in found["emails"]
+
+
+def test_footer_email_and_mailto_are_found():
+    html = """
+    <html><body>
+      <main><h1>Welcome</h1><p>We sell gear.</p></main>
+      <footer class="site-footer">
+        <p>Email: sales@sandiegogear.com</p>
+        <a href="mailto:info@sandiegogear.com">info</a>
+        <a href="https://www.facebook.com/sandiegogear">Facebook</a>
+      </footer>
+    </body></html>
+    """
+    found = _extract_from_html(html, "https://sandiegogear.com/", "sandiegogear.com")
+    assert "sales@sandiegogear.com" in found["emails"] or "info@sandiegogear.com" in found["emails"]
+    assert any("facebook.com" in u for u in found.get("social_urls") or [])
+
+
+def test_footer_personal_gmail_kept():
+    """Small distributors often list a Gmail in the footer as plain text."""
+    html = """
+    <html><body>
+      <footer>
+        <p>Contact us: orders.sd.fitness@gmail.com</p>
+      </footer>
+    </body></html>
+    """
+    found = _extract_from_html(html, "https://sdfitness.example/", "sdfitness.example")
+    assert "orders.sd.fitness@gmail.com" in found["emails"]

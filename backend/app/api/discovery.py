@@ -207,7 +207,7 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
             try:
                 await asyncio.wait_for(
                     _auto_fill_contacts_job(missing_ids[:120]),
-                    timeout=90.0,
+                    timeout=150.0,
                 )
             except asyncio.TimeoutError:
                 log.warning("Contact enrich timed out for job %s", job_id)

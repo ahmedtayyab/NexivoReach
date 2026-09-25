@@ -41,7 +41,7 @@ WAVE2_QUERY_CAP = 12
 # Site inspect + contact pages + optional Hunter — bounded per domain
 CONTACT_CONCURRENCY = 10
 CONTACT_BUDGET_SEC = 70.0
-SITE_ENRICH_TIMEOUT_SEC = 14.0
+SITE_ENRICH_TIMEOUT_SEC = 20.0
 CONTACT_ENRICH_CAP = 80
 
 

@@ -104,6 +104,27 @@ SRC_SEED = 10
 PAGE_CONTACT = 50  # bonus when found on /contact
 PAGE_HOME = 0
 PAGE_SECTION = 25  # homepage #contact / contact-looking block
+PAGE_FOOTER = 30  # footer / site-info block (where B2B emails usually live)
+
+FOOTER_SELECTORS = (
+    "footer",
+    "[role='contentinfo']",
+    "[id*='footer']",
+    "[class*='footer']",
+    "[class*='site-info']",
+    "[class*='copyright']",
+    ".site-footer",
+    "#footer",
+    "#colophon",
+)
+
+SOCIAL_HOSTS = (
+    "facebook.com",
+    "fb.com",
+    "m.facebook.com",
+    "instagram.com",
+    "linkedin.com",
+)
 
 
 def _domain(url: str) -> str:
@@ -206,11 +227,18 @@ def _score_hit(
     _, _, domain = email.partition("@")
     same = 2 if _is_same_domain(domain, site_domain) else 0
     # Off-domain emails are almost never the right contact inbox —
-    # keep only when found via explicit mailto / contact-page attributes
+    # keep only when found via explicit mailto / contact-page attributes / footer
     if same == 0:
         if page_bonus >= PAGE_CONTACT and source >= SRC_ATTR:
             return (page_bonus + source // 2, _local_pref(email), source, -len(email))
         if source >= SRC_MAILTO and page_bonus >= PAGE_SECTION:
+            return (page_bonus + source // 2, _local_pref(email), source, -len(email))
+        # Small distributors often put Gmail/Yahoo as plain text in the footer
+        if (
+            domain in PERSONAL_MAIL_DOMAINS
+            and page_bonus >= PAGE_SECTION
+            and source >= SRC_TEXT
+        ):
             return (page_bonus + source // 2, _local_pref(email), source, -len(email))
         return (0, 0, 0, 0)
     return (page_bonus + source + same * 20, _local_pref(email), source, -len(email))
@@ -367,7 +395,8 @@ def _contact_section_bonus(soup: BeautifulSoup, page_bonus: int) -> int:
     for sel in (
         "#contact", "#contact-us", "#contactus", "#get-in-touch",
         "[id*='contact']", "[class*='contact']", "section.contact",
-        "footer", "[itemtype*='ContactPoint']",
+        "footer", "[role='contentinfo']", "[itemtype*='ContactPoint']",
+        "[id*='footer']", "[class*='footer']",
     ):
         try:
             if soup.select_one(sel):
@@ -375,6 +404,22 @@ def _contact_section_bonus(soup: BeautifulSoup, page_bonus: int) -> int:
         except Exception:
             continue
     return page_bonus
+
+
+def _is_social_url(url: str) -> bool:
+    host = _domain(url)
+    return any(host == h or host.endswith("." + h) for h in SOCIAL_HOSTS)
+
+
+def _preferred_inbox(email: str, site_domain: str) -> bool:
+    """True when we already have a strong same-domain sales/info-style address."""
+    addr = _clean_email(email) or ""
+    if not addr:
+        return False
+    ed = addr.partition("@")[2]
+    if not _is_same_domain(ed, site_domain):
+        return False
+    return _local_pref(addr) > 0
 
 
 def _extract_from_html(
@@ -387,9 +432,11 @@ def _extract_from_html(
     hits: List[Dict[str, Any]] = []
     phones: List[str] = []
     contact_urls: List[str] = []
+    social_urls: List[str] = []
     seen_e: Set[str] = set()
     seen_p: Set[str] = set()
     seen_u: Set[str] = set()
+    seen_social: Set[str] = set()
 
     def add(email: Optional[str], source: int, bonus: Optional[int] = None) -> None:
         if not email or email in seen_e:
@@ -398,12 +445,20 @@ def _extract_from_html(
         use_bonus = page_bonus if bonus is None else bonus
         # Prefer same-domain; keep off-domain only from strong signals
         if not _is_same_domain(ed, site_domain) and source < SRC_ATTR:
-            return
-        # Free webmail only from explicit mailto / microdata / JSON-LD on contact-ish pages
-        if ed in PERSONAL_MAIL_DOMAINS and source < SRC_ATTR:
-            return
-        if ed in PERSONAL_MAIL_DOMAINS and use_bonus < PAGE_SECTION and source < SRC_MAILTO:
-            return
+            # Plain-text personal mail in footer/contact is still useful for small B2B
+            if not (
+                ed in PERSONAL_MAIL_DOMAINS
+                and use_bonus >= PAGE_SECTION
+                and source >= SRC_TEXT
+            ):
+                return
+        # Free webmail: mailto/attr/jsonld always; footer/contact text also OK
+        if ed in PERSONAL_MAIL_DOMAINS:
+            strong = source >= SRC_ATTR or (
+                use_bonus >= PAGE_SECTION and source >= SRC_TEXT
+            )
+            if not strong:
+                return
         seen_e.add(email)
         hits.append({"email": email, "source": source, "page_bonus": use_bonus})
 
@@ -440,7 +495,9 @@ def _extract_from_html(
         low = href.lower()
         link_text = " ".join((a.get_text(" ", strip=True) or "").lower().split())
         if low.startswith("mailto:"):
-            add(_clean_email(href.split(":", 1)[1].split("?", 1)[0]), SRC_MAILTO, section_bonus)
+            # mailto in footer gets footer bonus even if page_bonus is home
+            mailto_bonus = max(section_bonus, page_bonus)
+            add(_clean_email(href.split(":", 1)[1].split("?", 1)[0]), SRC_MAILTO, mailto_bonus)
         elif "cdn-cgi/l/email-protection#" in low:
             add(_decode_cfemail(href.split("#", 1)[-1]), SRC_CF, section_bonus)
         elif low.startswith("tel:"):
@@ -450,6 +507,15 @@ def _extract_from_html(
                 phones.append(phone)
         else:
             abs_url = urljoin(page_url, href)
+            if _is_social_url(abs_url):
+                key = abs_url.split("?")[0].rstrip("/").lower()
+                # Skip share/intent noise
+                if any(x in key for x in ("/share", "/sharer", "/intent", "dialog/")):
+                    continue
+                if key not in seen_social:
+                    seen_social.add(key)
+                    social_urls.append(abs_url.split("?")[0])
+                continue
             path = (urlparse(abs_url).path or "").lower()
             frag = (urlparse(abs_url).fragment or "").lower()
             same_site = _domain(abs_url) == site_domain or not _domain(abs_url)
@@ -467,6 +533,32 @@ def _extract_from_html(
                     seen_u.add(abs_url)
                     contact_urls.append(abs_url)
 
+    # Footer-first: B2B sites almost always put email in the footer
+    footer_nodes = []
+    for sel in FOOTER_SELECTORS:
+        try:
+            footer_nodes.extend(soup.select(sel))
+        except Exception:
+            continue
+    if footer_nodes:
+        footer_blob_tight = " ".join(n.get_text("", strip=True) for n in footer_nodes)
+        footer_blob_spaced = " ".join(n.get_text(" ", strip=True) for n in footer_nodes)
+        for match in EMAIL_RE.findall(footer_blob_tight):
+            add(_clean_email(match), SRC_TEXT, max(section_bonus, PAGE_FOOTER))
+        for addr in _emails_from_loose(footer_blob_spaced):
+            add(addr, SRC_TEXT, max(section_bonus, PAGE_FOOTER))
+        for addr in _emails_from_obfuscated(footer_blob_spaced):
+            add(addr, SRC_OBFUSCATED, max(section_bonus, PAGE_FOOTER))
+        for node in footer_nodes:
+            for a in node.find_all("a", href=True):
+                href = (a.get("href") or "").strip()
+                if href.lower().startswith("mailto:"):
+                    add(
+                        _clean_email(href.split(":", 1)[1].split("?", 1)[0]),
+                        SRC_MAILTO,
+                        max(section_bonus, PAGE_FOOTER),
+                    )
+
     # Visible text: empty separator so <span>sales</span>@<span>x.com</span> stays intact
     text_tight = soup.get_text("", strip=True)
     text_spaced = soup.get_text(" ", strip=True)
@@ -479,7 +571,7 @@ def _extract_from_html(
 
     # Also scan raw HTML attributes (href/title/content) for mailto-less emails
     for match in EMAIL_RE.findall(raw):
-        add(_clean_email(match), SRC_TEXT, page_bonus)
+        add(_clean_email(match), SRC_TEXT, max(section_bonus, page_bonus))
 
     for match in PHONE_RE.findall(text_spaced[:5000]):
         phone = _clean_phone(match)
@@ -496,6 +588,7 @@ def _extract_from_html(
         "hits": hits,
         "phones": phones[:3],
         "contact_urls": contact_urls[:8],
+        "social_urls": social_urls[:4],
     }
 
 
@@ -610,6 +703,7 @@ async def discover_contacts(
             html = ""
 
     found_urls: List[str] = []
+    social_urls: List[str] = []
     if html:
         pages_checked += 1
         extracted = _extract_from_html(html, page_url, site_domain, page_bonus=PAGE_HOME)
@@ -618,20 +712,28 @@ async def discover_contacts(
             if p not in phones:
                 phones.append(p)
         found_urls = list(extracted["contact_urls"])
+        social_urls = list(extracted.get("social_urls") or [])
 
     # Linked contact pages first, then common path guesses
     linked = [u for u in found_urls if _path_is_contact(u)]
     other_linked = [u for u in found_urls if u not in linked]
+    homepage_emails = _rank_scored(all_hits, site_domain)
+    already_strong = bool(homepage_emails and _preferred_inbox(homepage_emails[0], site_domain))
+
     guesses: List[str] = []
-    for path in DEFAULT_CONTACT_PATHS:
-        guess = urljoin(base.rstrip("/") + "/", path.lstrip("/"))
-        if guess not in linked and guess not in other_linked and guess not in guesses:
-            guesses.append(guess)
+    # If homepage/footer already has sales@ / info@ on the company domain, skip path guesses
+    # (still follow explicitly linked contact pages).
+    if not already_strong:
+        for path in DEFAULT_CONTACT_PATHS:
+            guess = urljoin(base.rstrip("/") + "/", path.lstrip("/"))
+            if guess not in linked and guess not in other_linked and guess not in guesses:
+                guesses.append(guess)
 
     ordered = linked + [g for g in guesses if _path_is_contact(g)] + other_linked
     # Dedupe while preserving order
     seen_fetch: Set[str] = set()
     extra: List[str] = []
+    max_extra = 3 if already_strong else 6
     for u in ordered:
         key = u.rstrip("/").lower()
         if key in seen_fetch:
@@ -641,7 +743,7 @@ async def discover_contacts(
             continue
         seen_fetch.add(key)
         extra.append(u)
-        if len(extra) >= 6:
+        if len(extra) >= max_extra:
             break
 
     if extra:
@@ -693,6 +795,47 @@ async def discover_contacts(
                     "source": "site",
                 })
 
+    # One light Facebook (or LinkedIn) pass when site still has no email
+    emails_so_far = _rank_scored(all_hits, site_domain)
+    if not emails_so_far and social_urls:
+        fb = next(
+            (
+                u for u in social_urls
+                if "facebook.com" in _domain(u) or "fb.com" in _domain(u)
+            ),
+            social_urls[0],
+        )
+        try:
+            async with httpx.AsyncClient(timeout=6.0, follow_redirects=True, headers=HEADERS) as client:
+                candidates = [fb]
+                if "facebook.com" in _domain(fb) and "/about" not in fb.lower():
+                    candidates.append(fb.rstrip("/") + "/about")
+                for social_url in candidates[:2]:
+                    res = await client.get(social_url)
+                    if res.status_code != 200 or not res.text:
+                        continue
+                    pages_checked += 1
+                    extracted = _extract_from_html(
+                        res.text,
+                        str(res.url),
+                        site_domain,
+                        page_bonus=PAGE_SECTION,
+                    )
+                    all_hits.extend(extracted.get("hits") or [])
+                    for p in extracted.get("phones") or []:
+                        if p not in phones:
+                            phones.append(p)
+                    if extracted.get("emails"):
+                        contacts.append({
+                            "type": "url",
+                            "value": str(res.url),
+                            "label": "Social page",
+                            "source": "social",
+                        })
+                        break
+        except Exception:
+            pass
+
     emails = _rank_scored(all_hits, site_domain)
     for e in emails[:5]:
         contacts.append({
@@ -718,6 +861,14 @@ async def discover_contacts(
                 "value": u,
                 "label": "Contact page",
                 "source": "site",
+            })
+    for u in social_urls[:2]:
+        if not any(c.get("value") == u for c in contacts):
+            contacts.append({
+                "type": "url",
+                "value": u,
+                "label": "Social",
+                "source": "social",
             })
 
     primary_email = emails[0] if emails else ""
