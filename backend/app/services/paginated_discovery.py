@@ -122,25 +122,81 @@ def _save_cursor_page(
     query: str,
     next_page: int,
     status: str = "active",
+    search_intent: str = "",
+    location: str = "",
+    session: Optional[Session] = None,
 ) -> None:
+    """Persist cross-run page cursor. Uses caller's session when provided (avoids SQLite locks)."""
     key = _query_key(query)
-    with Session(engine) as session:
-        row = session.exec(
+    next_page = max(1, int(next_page or 1))
+
+    def _apply(sess: Session) -> None:
+        row = sess.exec(
             select(HuntSearchCursor).where(
                 HuntSearchCursor.business_id == business_id,
                 HuntSearchCursor.query_key == key,
             )
         ).first()
         if not row:
+            row = HuntSearchCursor(
+                id=f"cur-{uuid4().hex[:12]}",
+                business_id=business_id,
+                query_key=key,
+                search_intent=search_intent,
+                location=location,
+                query=query,
+                next_page=next_page,
+                status="active",
+                updated_at=_now(),
+            )
+        else:
+            row.next_page = next_page
+            if status == "exhausted":
+                row.status = "exhausted"
+            elif row.status != "exhausted":
+                row.status = status
+            if search_intent and not row.search_intent:
+                row.search_intent = search_intent
+            if location and not row.location:
+                row.location = location
+            row.updated_at = _now()
+        sess.add(row)
+
+    if session is not None:
+        _apply(session)
+        return
+
+    for attempt in range(4):
+        try:
+            with Session(engine) as sess:
+                _apply(sess)
+                sess.commit()
             return
-        row.next_page = max(1, int(next_page or 1))
-        if status == "exhausted":
-            row.status = "exhausted"
-        elif row.status != "exhausted":
-            row.status = status
-        row.updated_at = _now()
-        session.add(row)
-        session.commit()
+        except Exception as exc:
+            if attempt >= 3:
+                log.warning("Cursor save failed for %s: %s", key[:80], exc)
+                return
+            time.sleep(0.15 * (attempt + 1))
+
+
+def _update_job(job_id: str, **fields: Any) -> None:
+    for attempt in range(4):
+        try:
+            with Session(engine) as session:
+                job = session.get(DiscoveryJob, job_id)
+                if not job:
+                    return
+                for k, v in fields.items():
+                    setattr(job, k, v)
+                job.updated_at = _now()
+                session.add(job)
+                session.commit()
+            return
+        except Exception as exc:
+            if attempt >= 3:
+                log.warning("Job update failed for %s: %s", job_id, exc)
+                return
+            time.sleep(0.15 * (attempt + 1))
 
 
 @dataclass
@@ -187,18 +243,6 @@ class HuntStats:
     already_known_skips: int = 0
     enrichments: int = 0
     stop_reasons: Dict[str, str] = field(default_factory=dict)
-
-
-def _update_job(job_id: str, **fields: Any) -> None:
-    with Session(engine) as session:
-        job = session.get(DiscoveryJob, job_id)
-        if not job:
-            return
-        for k, v in fields.items():
-            setattr(job, k, v)
-        job.updated_at = _now()
-        session.add(job)
-        session.commit()
 
 
 def _phase_from_stats(
@@ -281,6 +325,14 @@ async def run_paginated_discovery(
     budget: Optional[HuntBudget] = None,
 ) -> Dict[str, Any]:
     budget = budget or HuntBudget()
+    # SQLite cannot handle many concurrent writers; keep enrich workers small locally.
+    try:
+        from app.config import database_backend
+
+        if database_backend() == "sqlite" and budget.enrich_concurrency > 3:
+            budget.enrich_concurrency = 3
+    except Exception:
+        pass
     start = time.time()
     stats = HuntStats()
     web = WebSearchTool()
@@ -932,6 +984,7 @@ async def run_paginated_discovery(
                     query=intent.query,
                     next_page=page,
                     status="exhausted",
+                    session=session,
                 )
             else:
                 intent.last_page_fingerprint = fp
@@ -942,6 +995,7 @@ async def run_paginated_discovery(
                     query=intent.query,
                     next_page=intent.current_page,
                     status="active",
+                    session=session,
                 )
             intent.updated_at = _now()
             session.add(intent)
@@ -1117,21 +1171,29 @@ async def run_paginated_discovery(
 
 
 def _persist_intent(intent: DiscoverySearchIntent) -> None:
-    with Session(engine) as session:
-        row = session.get(DiscoverySearchIntent, intent.id)
-        if not row:
+    for attempt in range(4):
+        try:
+            with Session(engine) as session:
+                row = session.get(DiscoverySearchIntent, intent.id)
+                if not row:
+                    return
+                row.status = intent.status
+                row.stop_reason = intent.stop_reason
+                row.current_page = intent.current_page
+                row.pages_processed = intent.pages_processed
+                row.results_processed = intent.results_processed
+                row.new_domains = intent.new_domains
+                row.relevant_leads = intent.relevant_leads
+                row.last_page_fingerprint = intent.last_page_fingerprint
+                row.updated_at = _now()
+                session.add(row)
+                session.commit()
             return
-        row.status = intent.status
-        row.stop_reason = intent.stop_reason
-        row.current_page = intent.current_page
-        row.pages_processed = intent.pages_processed
-        row.results_processed = intent.results_processed
-        row.new_domains = intent.new_domains
-        row.relevant_leads = intent.relevant_leads
-        row.last_page_fingerprint = intent.last_page_fingerprint
-        row.updated_at = _now()
-        session.add(row)
-        session.commit()
+        except Exception as exc:
+            if attempt >= 3:
+                log.warning("Intent persist failed for %s: %s", intent.id, exc)
+                return
+            time.sleep(0.15 * (attempt + 1))
 
 
 def _touch_discovered(

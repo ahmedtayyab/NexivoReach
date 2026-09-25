@@ -3,7 +3,10 @@ from sqlalchemy import text
 from app.config import database_backend, settings
 
 _backend = database_backend()
-_connect_args = {"check_same_thread": False} if _backend == "sqlite" else {}
+_connect_args: dict = {}
+if _backend == "sqlite":
+    # Long hunts open many short sessions; wait instead of failing with "database is locked".
+    _connect_args = {"check_same_thread": False, "timeout": 60}
 _engine_kwargs = {"echo": False, "connect_args": _connect_args}
 if _backend == "postgres":
     _engine_kwargs.update({
