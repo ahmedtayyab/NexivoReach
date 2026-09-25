@@ -3486,6 +3486,7 @@ input:focus, textarea:focus, select:focus {
   color: inherit;
   font: inherit;
 }
+.admin-filter-bar__field {
   display: grid;
   gap: 0.25rem;
   min-width: 8.5rem;
@@ -4779,7 +4780,11 @@ input:focus, textarea:focus, select:focus {
   white-space: pre-wrap;
 }
 .hunt-details__hint {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 12px;
   line-height: 1.45;
+  color: var(--text-muted);
 }
 .hunt-details__hint strong {
   font-weight: 650;
@@ -4787,11 +4792,6 @@ input:focus, textarea:focus, select:focus {
 }
 .hunt-details__meta {
   letter-spacing: 0.01em;
-}
-  display: block;
-  margin-top: 0.3rem;
-  font-size: 12px;
-  color: var(--text-muted);
 }
 .hunt-buyer-types {
   margin-top: 0.85rem;
