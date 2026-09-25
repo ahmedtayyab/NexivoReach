@@ -35,12 +35,16 @@ const HUNT_PHASE_SECONDS = [0, 8, 18, 35];
 const SKIP_SHEETS_PROMPT_KEY = 'nr-hunt-skip-sheets-prompt';
 const DEFAULT_DOC_TITLE = 'NexivoReach';
 
-/** Realistic wall-clock ETA from hunt line count (~40 lead cap). */
-export function estimateHuntSeconds(lineCount: number): { low: number; high: number } {
+/** Realistic wall-clock ETA from hunt line count and per-run lead cap. */
+export function estimateHuntSeconds(
+  lineCount: number,
+  leadsPerRun = 100,
+): { low: number; high: number } {
   const lines = Math.max(1, Math.min(40, Math.floor(lineCount || 1)));
-  // SERP + site inspect per line, then contact fill — calibrated to ~1–5 min runs
-  const low = Math.max(50, Math.round(30 + lines * 5));
-  const high = Math.max(low + 40, Math.round(55 + lines * 11));
+  const leads = Math.max(20, Math.min(200, Math.floor(leadsPerRun || 100)));
+  // Scale with both search lines and lead quota (inspect/enrich dominates).
+  const low = Math.max(60, Math.round(25 + lines * 4 + leads * 0.9));
+  const high = Math.max(low + 45, Math.round(50 + lines * 8 + leads * 1.6));
   return { low, high };
 }
 
@@ -220,6 +224,7 @@ export default function FindBuyersPanel({
   const [serverProgress, setServerProgress] = useState(0);
   const [telemetryHint, setTelemetryHint] = useState('');
   const [recentHunts, setRecentHunts] = useState<RecentHunt[]>([]);
+  const [leadsPerRun, setLeadsPerRun] = useState(100);
 
   const query = useMemo(
     () => composeHuntPrompt('', location, details),
@@ -246,8 +251,21 @@ export default function FindBuyersPanel({
     }
   };
 
+  const loadHuntLimits = async () => {
+    try {
+      const resp = await apiFetch('/api/discovery/limits');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const n = Number(data?.leadsPerRun);
+      if (Number.isFinite(n) && n >= 5) setLeadsPerRun(n);
+    } catch {
+      /* ignore */
+    }
+  };
+
   useEffect(() => {
     void loadRecentHunts();
+    void loadHuntLimits();
   }, []);
 
   // Prefill location from ICP / markets when empty
@@ -273,7 +291,10 @@ export default function FindBuyersPanel({
   const ready = Boolean(details.trim()) || (Boolean(location.trim()) && hasBrief);
   const canHunt = Boolean(details.trim()) || (Boolean(location.trim()) && hasBrief);
   const phases = useMemo(() => buildPhases(query, placeHint), [query, placeHint]);
-  const huntEta = useMemo(() => estimateHuntSeconds(lineCount || 8), [lineCount]);
+  const huntEta = useMemo(
+    () => estimateHuntSeconds(lineCount || 8, leadsPerRun),
+    [lineCount, leadsPerRun],
+  );
 
   useEffect(() => {
     if (!isRunning) return;
@@ -629,6 +650,14 @@ export default function FindBuyersPanel({
       {!compact && (
         <div className="find-buyers__head">
           <h3 className="find-buyers__title">Find buyers in your market</h3>
+          <p className="find-buyers__cap" role="status">
+            Up to <strong>{leadsPerRun}</strong> leads per run
+            {lineCount > 0
+              ? ` · ~${Math.max(1, Math.ceil(leadsPerRun / lineCount))} per search line`
+              : ''}
+            {' · '}
+            est. {formatEtaRange(huntEta.low, huntEta.high)}
+          </p>
         </div>
       )}
 
@@ -771,9 +800,10 @@ export default function FindBuyersPanel({
               {statusText ||
                 (lastFound !== null
                   ? `Last run added ${lastFound} lead${lastFound === 1 ? '' : 's'}.`
-                  : `Usually ${formatEtaRange(huntEta.low, huntEta.high)} for ~20–40 leads${
-                      lineCount > 0 ? ` (${lineCount} search lines)` : ''
-                    }.`)}
+                  : `Up to ${leadsPerRun} leads per run · usually ${formatEtaRange(
+                      huntEta.low,
+                      huntEta.high,
+                    )}${lineCount > 0 ? ` (${lineCount} search lines)` : ''}.`)}
             </p>
           )}
         </div>

@@ -253,6 +253,14 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
         )
 
 
+@router.get("/limits")
+def discovery_limits(user: AuthUser = Depends(get_current_user)):
+    """Public (authenticated) hunt caps — shown in Find buyers UI."""
+    from app.services import app_settings as app_set
+
+    return app_set.get_hunt_settings()
+
+
 @router.get("/runs")
 def list_runs(request: Request, user: AuthUser = Depends(get_current_user)):
     with Session(engine) as session:

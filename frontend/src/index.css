@@ -1199,6 +1199,16 @@ input:focus, textarea:focus, select:focus {
   font-weight: 700;
   color: var(--text-primary);
 }
+.find-buyers__cap {
+  margin: 0.35rem 0 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.find-buyers__cap strong {
+  color: var(--text-primary);
+  font-weight: 650;
+}
 .find-buyers__desc {
   margin: 0.3rem 0 0;
   font-size: 13px;

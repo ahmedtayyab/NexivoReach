@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     HUNTER_API_KEY: str = ""
     # Paginated hunt safety budgets (NOT lead-count goals for total research).
     # Leads per run is the soft cap that splits across hunt lines; next run resumes pages.
-    HUNT_LEADS_PER_RUN: int = 40
+    HUNT_LEADS_PER_RUN: int = 100
     HUNT_MAX_PAGES_PER_INTENT: int = 10
     HUNT_MAX_TOTAL_PAGES: int = 150
     HUNT_MAX_GOOGLE_REQUESTS: int = 200

@@ -274,7 +274,7 @@ export default function AdminView({ onToast }: Props) {
   const [seenTicketIds, setSeenTicketIds] = useState<Set<string>>(() => loadSeenTicketIds());
   const [replyFeedback, setReplyFeedback] = useState<'idle' | 'ok' | 'err'>('idle');
   const [replyFeedbackText, setReplyFeedbackText] = useState('');
-  const [huntLeadsPerRun, setHuntLeadsPerRun] = useState(40);
+  const [huntLeadsPerRun, setHuntLeadsPerRun] = useState(100);
   const [huntMaxPages, setHuntMaxPages] = useState(10);
   const [huntSettingsBusy, setHuntSettingsBusy] = useState(false);
   const [huntSettingsMsg, setHuntSettingsMsg] = useState('');
@@ -308,7 +308,7 @@ export default function AdminView({ onToast }: Props) {
       const ticketData = await t.json();
       setOverview(overviewData);
       if (overviewData.huntSettings) {
-        setHuntLeadsPerRun(Number(overviewData.huntSettings.leadsPerRun) || 40);
+        setHuntLeadsPerRun(Number(overviewData.huntSettings.leadsPerRun) || 100);
         setHuntMaxPages(Number(overviewData.huntSettings.maxPagesPerIntent) || 10);
       }
       setUsers(Array.isArray(usersData.users) ? usersData.users : []);
@@ -546,7 +546,7 @@ export default function AdminView({ onToast }: Props) {
           ? {
               ...prev,
               huntSettings: {
-                leadsPerRun: Number(data.leadsPerRun) || 40,
+                leadsPerRun: Number(data.leadsPerRun) || 100,
                 maxPagesPerIntent: Number(data.maxPagesPerIntent) || 10,
                 defaults: data.defaults,
               },
@@ -995,9 +995,9 @@ export default function AdminView({ onToast }: Props) {
               <h2>Find Buyers research</h2>
             </div>
             <p className="text-[13px] text-ink-muted m-0 mb-3">
-              Cap leads per hunt run to control Serper/API spend. The budget is split evenly across
-              hunt lines (e.g. 40 leads ÷ 5 lines ≈ 8 each). The next hunt on the same workspace
-              resumes from the next Google page instead of restarting at page 1.
+              Cap leads per hunt run for every user (controls Serper/API spend). The budget is split
+              evenly across hunt lines (e.g. 100 leads ÷ 10 lines ≈ 10 each). Users see this cap on
+              Find buyers. The next hunt on the same workspace resumes from the next Google page.
             </p>
             <form className="admin-inline-form" onSubmit={saveHuntSettings}>
               <label className="admin-filter-bar__field">
@@ -1007,7 +1007,7 @@ export default function AdminView({ onToast }: Props) {
                   min={5}
                   max={200}
                   value={huntLeadsPerRun}
-                  onChange={e => setHuntLeadsPerRun(Number(e.target.value) || 40)}
+                  onChange={e => setHuntLeadsPerRun(Number(e.target.value) || 100)}
                 />
               </label>
               <label className="admin-filter-bar__field">
@@ -1030,8 +1030,9 @@ export default function AdminView({ onToast }: Props) {
               </p>
             ) : (
               <p className="admin-panel__foot">
-                Example: {huntLeadsPerRun} leads ÷ 5 hunt lines ≈{' '}
-                {Math.max(1, Math.ceil(huntLeadsPerRun / 5))} leads each this run.
+                Example: {huntLeadsPerRun} leads ÷ 10 hunt lines ≈{' '}
+                {Math.max(1, Math.ceil(huntLeadsPerRun / 10))} leads each this run. Default{' '}
+                {overview?.huntSettings?.defaults?.leadsPerRun ?? 100}.
               </p>
             )}
           </section>

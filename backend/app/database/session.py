@@ -38,6 +38,12 @@ def init_db():
     if _backend == "sqlite":
         _ensure_sqlite_columns()
         _migrate_multi_company()
+    try:
+        from app.services.app_settings import ensure_hunt_setting_defaults
+
+        ensure_hunt_setting_defaults()
+    except Exception:
+        pass
 
 
 def _ensure_discovery_job_telemetry_column():
