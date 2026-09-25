@@ -927,19 +927,81 @@ _CHANNEL_SERP_RE = re.compile(
 
 
 def split_product_and_role(line: str) -> tuple[str, str]:
-    """Split 'weightlifting straps distributors' → ('weightlifting straps', 'distributors')."""
+    """Split 'weightlifting straps distributors' → ('weightlifting straps', 'distributors').
+
+    Also accepts a trailing place without requiring the word \"in\":
+    'weightlifting straps distributors Dallas, United States'.
+    """
     text = re.sub(r"\s+", " ", (line or "").strip())
     if not text:
         return "", ""
     m = re.search(
         r"^(?P<product>.+?)\s+(?P<role>distributors?|wholesalers?|importers?|retailers?|"
-        r"buyers?|dealers?|gyms?|clinics?|brands?)\s*$",
+        r"buyers?|dealers?|gyms?|clinics?|brands?)"
+        r"(?:\s+(?:in\s+)?(?P<place>.+))?$",
         text,
         re.I,
     )
     if m:
         return m.group("product").strip(), m.group("role").strip().lower()
     return text, ""
+
+
+def parse_discovery_query(query: str) -> tuple[str, str, str]:
+    """
+    Recover product, buyer role, and place from a precise hunt query.
+    '"weightlifting straps" distributors in California -truck' →
+      ('weightlifting straps', 'distributors', 'California')
+    'weightlifting straps distributors Dallas, United States' →
+      ('weightlifting straps', 'distributors', 'Dallas, United States')
+    """
+    raw = re.sub(r"\s+", " ", (query or "").strip())
+    if not raw:
+        return "", "", ""
+    # Drop SERP negatives
+    raw = re.sub(r"\s+-\S+", "", raw).strip()
+    place = ""
+    m_place = re.search(r"\bin\s+(.+)$", raw, re.I)
+    if m_place:
+        place = m_place.group(1).strip().rstrip(",.")
+        raw = raw[: m_place.start()].strip()
+    m_q = re.match(r'^"([^"]+)"\s*(.*)$', raw)
+    if m_q:
+        product = m_q.group(1).strip()
+        rest = (m_q.group(2) or "").strip()
+        role = normalize_buyer_query_term(rest) or ""
+        if not role:
+            # quoted product + role + optional place
+            m_rest = re.search(
+                r"^(?P<role>distributors?|wholesalers?|importers?|retailers?|"
+                r"buyers?|dealers?|gyms?|clinics?|brands?)"
+                r"(?:\s+(?:in\s+)?(?P<place>.+))?$",
+                rest,
+                re.I,
+            )
+            if m_rest:
+                role = normalize_buyer_query_term(m_rest.group("role")) or m_rest.group("role").strip().lower()
+                if m_rest.group("place") and not place:
+                    place = m_rest.group("place").strip().rstrip(",.")
+        return product, role, place
+
+    m = re.search(
+        r"^(?P<product>.+?)\s+(?P<role>distributors?|wholesalers?|importers?|retailers?|"
+        r"buyers?|dealers?|gyms?|clinics?|brands?)"
+        r"(?:\s+(?:in\s+)?(?P<place>.+))?$",
+        raw,
+        re.I,
+    )
+    if m:
+        product = m.group("product").strip()
+        role = normalize_buyer_query_term(m.group("role")) or m.group("role").strip().lower()
+        trailing = (m.group("place") or "").strip().rstrip(",.")
+        if trailing and not place:
+            place = trailing
+        return product, role, place
+
+    product, role = split_product_and_role(raw)
+    return product, (normalize_buyer_query_term(role) or role), place
 
 
 def _singular_token(word: str) -> str:
@@ -1022,7 +1084,7 @@ def interpret_hunt_intent(
     for role in roles:
         for product in exact_products:
             if place:
-                _add(primary, f"{product} {role} in {place}")
+                _add(primary, f"{product} {role} {place}")
             else:
                 _add(primary, f"{product} {role}")
 
@@ -1033,7 +1095,7 @@ def interpret_hunt_intent(
             words = product.split()
             singular_product = " ".join(words[:-1] + [_singular_token(words[-1])]) if words else product
             if place:
-                _add(volume, f'"{product}" {role} in {place}')
+                _add(volume, f'"{product}" {role} {place}')
                 _add(volume, f'"{product}" {short_role} {place}')
                 if singular_product.lower() != product.lower() and singular_role != short_role:
                     _add(volume, f'"{singular_product}" {singular_role} {place}')
@@ -1045,7 +1107,7 @@ def interpret_hunt_intent(
         for broader in secondary_product_phrases(product):
             for role in roles[:2]:
                 if place:
-                    _add(secondary, f"{broader} {role} in {place}")
+                    _add(secondary, f"{broader} {role} {place}")
                 else:
                     _add(secondary, f"{broader} {role}")
 
@@ -1097,11 +1159,12 @@ def interpret_prompt_intent(
             bucket.append(qn)
 
         # Primary = exact Google-style queries (one per typed product×buyer line).
+        # Format matches client manual workflow: "{product} {role} {location}"
         # Volume = a few close variants of the SAME product+role — used only when
         # primaries are thin. Never expand into generic category searches here.
         for product, role in pairs:
             if place:
-                _add(primary, f"{product} {role} in {place}")
+                _add(primary, f"{product} {role} {place}")
             else:
                 _add(primary, f"{product} {role}")
         for product, role in pairs:
@@ -1121,7 +1184,7 @@ def interpret_prompt_intent(
         for product, role in pairs:
             for broader in secondary_product_phrases(product):
                 if place:
-                    _add(secondary, f"{broader} {role} in {place}")
+                    _add(secondary, f"{broader} {role} {place}")
                 else:
                     _add(secondary, f"{broader} {role}")
         return {
@@ -1168,36 +1231,11 @@ def format_precise_hunt_query(line: str, place: str = "", *, force_unquoted: boo
         parts.append(role)
     q = " ".join(parts)
     if place and place.lower() not in q.lower():
-        q = f"{q} in {place}"
+        q = f"{q} {place}"
     negs = PRODUCT_HEAD_NEGATIVES.get(head, ())
     if negs:
         q = f"{q} {' '.join(negs)}"
     return re.sub(r"\s+", " ", q).strip()
-
-
-def parse_discovery_query(query: str) -> tuple[str, str, str]:
-    """
-    Recover product, buyer role, and place from a precise hunt query.
-    '"weightlifting straps" distributors in California -truck' →
-      ('weightlifting straps', 'distributors', 'California')
-    """
-    raw = re.sub(r"\s+", " ", (query or "").strip())
-    if not raw:
-        return "", "", ""
-    # Drop SERP negatives
-    raw = re.sub(r"\s+-\S+", "", raw).strip()
-    place = ""
-    m_place = re.search(r"\bin\s+(.+)$", raw, re.I)
-    if m_place:
-        place = m_place.group(1).strip().rstrip(",.")
-        raw = raw[: m_place.start()].strip()
-    m_q = re.match(r'^"([^"]+)"\s*(.*)$', raw)
-    if m_q:
-        product = m_q.group(1).strip()
-        role = normalize_buyer_query_term(m_q.group(2) or "") or (m_q.group(2) or "").strip()
-        return product, role, place
-    product, role = split_product_and_role(raw)
-    return product, (normalize_buyer_query_term(role) or role), place
 
 
 def product_phrases_from_profile_categories(categories: List[str]) -> List[str]:

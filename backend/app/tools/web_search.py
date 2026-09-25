@@ -448,13 +448,16 @@ class WebSearchTool:
                 merged.append(row)
         return merged
 
-    def _search_sync(self, query: str) -> List[Dict[str, str]]:
+    def _search_sync(self, query: str, page: int = 1) -> List[Dict[str, str]]:
         # Prefer Serper when configured — avoid stacking 20s timeouts across providers.
         ordered = []
         if settings.SERPER_API_KEY:
-            ordered.append(self._serper)
+            ordered.append(lambda q: self._serper(q, page=page))
         for fn in (self._brave, self._tavily, self._duckduckgo):
             if fn not in ordered:
+                # Non-Serper providers: only page 1 (no reliable pagination)
+                if page > 1:
+                    continue
                 ordered.append(fn)
         for fn in ordered:
             try:
@@ -465,14 +468,38 @@ class WebSearchTool:
                 continue
         return []
 
-    def _serper(self, query: str) -> List[Dict[str, str]]:
+    async def search_organic_page(
+        self,
+        query: str,
+        *,
+        page: int = 1,
+        num: int = 10,
+    ) -> List[Dict[str, str]]:
+        """Fetch one Google organic page. Serper supports page; others return page 1 only."""
+        page = max(1, int(page or 1))
+        num = max(1, min(int(num or 10), 100))
+        return await asyncio.to_thread(self._search_sync_paged, query, page, num)
+
+    def _search_sync_paged(self, query: str, page: int, num: int) -> List[Dict[str, str]]:
+        if settings.SERPER_API_KEY:
+            try:
+                hits = self._serper(query, page=page, num=num)
+                if hits:
+                    return hits
+            except Exception:
+                pass
+        if page > 1:
+            return []
+        return self._search_sync(query, page=1)
+
+    def _serper(self, query: str, page: int = 1, num: int = 20) -> List[Dict[str, str]]:
         if not settings.SERPER_API_KEY:
             return []
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=15.0) as client:
             res = client.post(
                 "https://google.serper.dev/search",
                 headers={"X-API-KEY": settings.SERPER_API_KEY, "Content-Type": "application/json"},
-                json={"q": query, "num": 20},
+                json={"q": query, "num": max(1, min(num, 100)), "page": max(1, page)},
             )
             res.raise_for_status()
             organic = res.json().get("organic") or []

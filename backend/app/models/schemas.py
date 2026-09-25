@@ -167,9 +167,80 @@ class DiscoveryJob(SQLModel, table=True):
     request_payload: dict = Field(default={}, sa_type=JSON)
     result_prospect_ids: List[str] = Field(default=[], sa_type=JSON)
     agent_log_id: Optional[str] = Field(default=None)
+    # Live hunt telemetry for UI / debugging (pages, domains, emails, intent status)
+    telemetry: dict = Field(default={}, sa_type=JSON)
     created_at: str = ""
     updated_at: str = ""
     completed_at: Optional[str] = None
+
+
+class DiscoverySearchIntent(SQLModel, table=True):
+    """One product×buyer×location Google search job with its own pagination cursor."""
+
+    __tablename__ = "discovery_search_intent"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    job_id: str = Field(index=True)
+    business_id: str = Field(index=True)
+    search_intent: str = ""  # e.g. "weightlifting straps distributors"
+    location: str = ""
+    query: str = ""  # full Google query
+    current_page: int = 1
+    pages_processed: int = 0
+    results_processed: int = 0
+    new_domains: int = 0
+    relevant_leads: int = 0
+    status: str = "active"  # active | completed | exhausted | budget | error
+    stop_reason: str = ""
+    last_page_fingerprint: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class DiscoveredCompany(SQLModel, table=True):
+    """
+    Persistent cross-run memory for a domain within a workspace.
+    Used to skip expensive re-enrichment while still allowing pagination to continue.
+    """
+
+    __tablename__ = "discovered_company"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    business_id: str = Field(index=True)
+    domain: str = Field(index=True)
+    company_name: str = ""
+    company_name_normalized: str = Field(default="", index=True)
+    website: str = ""
+    status: str = "seen"  # seen | enriched | relevant | irrelevant | saved
+    email: str = ""
+    email_status: str = ""  # email_found | email_not_found | ""
+    processed: bool = False  # True once enrichment finished (relevant or not)
+    prospect_id: Optional[str] = Field(default=None, index=True)
+    matched_search_intents: List[str] = Field(default=[], sa_type=JSON)
+    first_seen_at: str = ""
+    last_seen_at: str = ""
+    meta: dict = Field(default={}, sa_type=JSON)
+
+
+class DiscoverySerpHit(SQLModel, table=True):
+    """Raw Google organic hit persisted before enrichment (resume / audit)."""
+
+    __tablename__ = "discovery_serp_hit"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    job_id: str = Field(index=True)
+    intent_id: str = Field(index=True)
+    business_id: str = Field(index=True)
+    search_intent: str = ""
+    query: str = ""
+    page: int = 1
+    position: int = 0
+    title: str = ""
+    url: str = ""
+    domain: str = Field(default="", index=True)
+    snippet: str = ""
+    already_known: bool = False
+    created_at: str = ""
 
 
 class BusinessMember(SQLModel, table=True):

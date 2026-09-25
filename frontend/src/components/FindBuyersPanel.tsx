@@ -123,6 +123,7 @@ export default function FindBuyersPanel({
   const [skipSheetsPrompt, setSkipSheetsPrompt] = useState(() => loadSkipSheetsPrompt());
   const [serverPhase, setServerPhase] = useState('');
   const [serverProgress, setServerProgress] = useState(0);
+  const [telemetryHint, setTelemetryHint] = useState('');
   const [recentHunts, setRecentHunts] = useState<RecentHunt[]>([]);
 
   const query = useMemo(
@@ -191,10 +192,11 @@ export default function FindBuyersPanel({
 
   const progressLabel = useMemo(() => {
     if (!isRunning) return '';
-    if (elapsedSec < 45) return `Working · ${elapsedSec}s elapsed`;
-    if (elapsedSec < 90) return `Still hunting · ${elapsedSec}s — often finishes around a minute`;
-    return `Still working · ${elapsedSec}s — large markets take longer`;
-  }, [isRunning, elapsedSec]);
+    if (telemetryHint) return telemetryHint;
+    if (elapsedSec < 60) return `Working · ${elapsedSec}s — paging through Google searches`;
+    if (elapsedSec < 180) return `Still hunting · ${elapsedSec}s — deeper pages take longer`;
+    return `Deep research · ${elapsedSec}s — continuing until searches are exhausted`;
+  }, [isRunning, elapsedSec, telemetryHint]);
 
   const progressPct = useMemo(() => {
     if (!isRunning) return 0;
@@ -257,6 +259,7 @@ export default function FindBuyersPanel({
     setStatusText(phases[0]);
     setServerPhase(phases[0]);
     setServerProgress(4);
+    setTelemetryHint('');
     setLastFound(null);
     try {
       const resp = await apiFetch('/api/discovery/run', {
@@ -297,6 +300,17 @@ export default function FindBuyersPanel({
         skippedExisting?: number;
         agent_log?: AgentRunLog;
         error?: string;
+        telemetry?: {
+          searchIntents?: number;
+          completedIntents?: number;
+          googlePages?: number;
+          uniqueDomains?: number;
+          websitesInspected?: number;
+          emailsFound?: number;
+          leadsSaved?: number;
+          alreadyKnown?: number;
+          currentQuery?: string;
+        };
       } = started;
 
       while (data.status !== 'completed' && data.status !== 'failed') {
@@ -312,6 +326,21 @@ export default function FindBuyersPanel({
           setStatusText(data.phase);
         }
         if (typeof data.progress === 'number') setServerProgress(data.progress);
+        const t = data.telemetry;
+        if (t && typeof t === 'object') {
+          const bits = [
+            t.searchIntents != null
+              ? `Intents ${t.completedIntents ?? 0}/${t.searchIntents}`
+              : null,
+            t.googlePages != null ? `Pages ${t.googlePages}` : null,
+            t.uniqueDomains != null ? `Businesses ${t.uniqueDomains}` : null,
+            t.websitesInspected != null ? `Inspected ${t.websitesInspected}` : null,
+            t.emailsFound != null ? `Emails ${t.emailsFound}` : null,
+            t.leadsSaved != null ? `Saved ${t.leadsSaved}` : null,
+            t.alreadyKnown ? `Known ${t.alreadyKnown}` : null,
+          ].filter(Boolean);
+          if (bits.length) setTelemetryHint(bits.join(' · '));
+        }
       }
 
       if (data.status === 'failed') {
@@ -343,6 +372,7 @@ export default function FindBuyersPanel({
       setIsRunning(false);
       setServerProgress(0);
       setServerPhase('');
+      setTelemetryHint('');
     }
   };
 

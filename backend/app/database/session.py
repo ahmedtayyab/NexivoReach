@@ -28,9 +28,25 @@ def init_db():
     _ensure_user_access_columns()
     _ensure_support_ticket_attachments_column()
     _ensure_user_billing_columns()
+    _ensure_discovery_job_telemetry_column()
     if _backend == "sqlite":
         _ensure_sqlite_columns()
         _migrate_multi_company()
+
+
+def _ensure_discovery_job_telemetry_column():
+    """JSON telemetry on discovery_job for paginated hunt progress."""
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE discovery_job ADD COLUMN telemetry JSON"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            try:
+                conn.execute(text("ALTER TABLE discovery_job ADD COLUMN telemetry TEXT"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
 
 
 def _ensure_user_billing_columns():

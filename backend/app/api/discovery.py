@@ -4,7 +4,6 @@ from typing import List, Dict, Any, Optional
 from uuid import uuid4
 from datetime import datetime, timezone
 from sqlmodel import Session, select
-from app.agents.prospecting_agent import ProspectingAgent
 from app.models.schemas import ProspectRecord, AgentRunRecord, Business, User, DiscoveryJob
 from app.database.session import engine
 from app.api.deps import AuthUser, get_current_user, resolve_business_id
@@ -54,6 +53,7 @@ def _job_to_dict(job: DiscoveryJob, prospects: list | None = None) -> dict:
         "completedAt": job.completed_at,
         "prospects": prospects if prospects is not None else [],
         "agentLogId": job.agent_log_id,
+        "telemetry": job.telemetry or {},
     }
 
 
@@ -157,13 +157,9 @@ async def _auto_fill_contacts_job(prospect_ids: List[str]) -> None:
 
 
 async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, req: DiscoveryRunRequest) -> None:
-    _update_job(job_id, status="running", phase="Planning searches…", progress=8)
+    _update_job(job_id, status="running", phase="Planning search intents…", progress=4)
     try:
         with Session(engine) as session:
-            existing = session.exec(
-                select(ProspectRecord).where(ProspectRecord.business_id == business_id)
-            ).all()
-            exclude = [r.website for r in existing if r.website]
             biz = session.get(Business, business_id)
             business_payload = req.business or {}
             if biz:
@@ -176,139 +172,23 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
                     **business_payload,
                 }
 
-        _update_job(job_id, phase="Searching Google…", progress=22)
-        agent = ProspectingAgent()
-        res = await agent.execute_discovery_goal(
+        from app.services.paginated_discovery import run_paginated_discovery
+
+        res = await run_paginated_discovery(
+            job_id=job_id,
+            user_id=user_id,
+            business_id=business_id,
             user_prompt=req.user_prompt,
-            products=req.products,
-            icp=req.icp,
+            products=req.products or [],
+            icp=req.icp or {},
             business=business_payload,
-            exclude_websites=exclude,
-            limit=50,
-        )
-        n_found = len(res.get("prospects") or [])
-        _update_job(
-            job_id,
-            phase=f"Saving {n_found} leads…",
-            progress=85,
         )
 
-        prospects = res.get("prospects") or []
-        agent_log = res.get("agent_log") or {}
-        saved_front: List[Dict[str, Any]] = []
-        saved_ids: List[str] = []
-        skipped_existing = 0
+        saved_front = list(res.get("prospects") or [])
+        saved_ids = [p.get("id") for p in saved_front if p.get("id")]
+        telemetry = res.get("telemetry") or {}
 
-        with Session(engine) as session:
-            existing_rows = session.exec(
-                select(ProspectRecord).where(ProspectRecord.business_id == business_id)
-            ).all()
-            known_by_domain: Dict[str, Any] = {}
-            known_by_name: Dict[str, Any] = {}
-            for r in existing_rows:
-                dom = _domain(r.website) if r.website else ""
-                if dom:
-                    known_by_domain[dom] = r
-                name_key = (r.company_name or "").strip().lower()
-                if name_key:
-                    known_by_name[name_key] = r
-
-            for prospect in prospects:
-                website = prospect.get("website") or ""
-                name = (prospect.get("companyName") or "").strip().lower()
-                dom = _domain(website)
-                existing = (dom and known_by_domain.get(dom)) or (name and known_by_name.get(name)) or None
-                if existing:
-                    skipped_existing += 1
-                    # Merge useful new info onto the existing lead
-                    changed = False
-                    new_email = (prospect.get("email") or "").strip()
-                    if new_email and not (existing.email or "").strip():
-                        existing.email = new_email
-                        changed = True
-                    new_phone = (prospect.get("phone") or "").strip()
-                    if new_phone and not (existing.phone or "").strip():
-                        existing.phone = new_phone
-                        changed = True
-                    fb = dict(existing.fit_breakdown or {})
-                    new_fb = prospect.get("fitBreakdown") or {}
-                    old_intents = list(fb.get("matchedSearchIntents") or [])
-                    for intent in new_fb.get("matchedSearchIntents") or []:
-                        if intent and intent not in old_intents:
-                            old_intents.append(intent)
-                            changed = True
-                    if old_intents:
-                        fb["matchedSearchIntents"] = old_intents[:16]
-                    if new_fb.get("relevance") and not fb.get("relevance"):
-                        fb["relevance"] = new_fb["relevance"]
-                        changed = True
-                    if new_fb.get("emailStatus"):
-                        fb["emailStatus"] = new_fb["emailStatus"]
-                        changed = True
-                    if changed:
-                        existing.fit_breakdown = fb
-                        if prospect.get("contacts"):
-                            existing.contacts = prospect.get("contacts") or existing.contacts
-                        session.add(existing)
-                        saved_front.append(prospect_to_frontend(existing))
-                        saved_ids.append(existing.id)
-                    continue
-                prospect_id = prospect.get("id") or f"prospect-{uuid4().hex[:8]}"
-                pr = ProspectRecord(
-                    id=prospect_id,
-                    company_name=prospect.get("companyName") or "",
-                    website=website,
-                    location=prospect.get("location") or "",
-                    industry=prospect.get("industry") or "",
-                    company_size=prospect.get("companySize") or "",
-                    fit_score=int(prospect.get("fitScore", 0) or 0),
-                    fit_breakdown=prospect.get("fitBreakdown") or {},
-                    why_this_prospect=prospect.get("whyThisProspect") or "",
-                    buying_signals=prospect.get("buyingSignals") or [],
-                    product_fit=prospect.get("productFit") or [],
-                    recommended_approach=prospect.get("recommendedApproach") or "",
-                    outreach_draft=prospect.get("outreachDraft"),
-                    stage=prospect.get("stage") or "To contact",
-                    discovered_at=prospect.get("discoveredAt") or "",
-                    agent_timeline=prospect.get("agentTimeline") or [],
-                    user_id=user_id,
-                    business_id=business_id,
-                    source=prospect.get("source") or "web",
-                    phone=prospect.get("phone") or "",
-                    why_now=prospect.get("whyNow") or "",
-                    email=prospect.get("email") or "",
-                    contacts=prospect.get("contacts") or [],
-                    contact_again=bool(prospect.get("contactAgain", True)),
-                    last_reply_at=prospect.get("lastReplyAt") or "",
-                    reply_summary=prospect.get("replySummary") or "",
-                    discovery_job_id=job_id,
-                )
-                session.add(pr)
-                saved_front.append(prospect_to_frontend(pr))
-                saved_ids.append(prospect_id)
-                if dom:
-                    known_by_domain[dom] = pr
-                if name:
-                    known_by_name[name] = pr
-
-            run_id = agent_log.get("id") or f"run-{uuid4().hex[:8]}"
-            ar = AgentRunRecord(
-                id=run_id,
-                timestamp=agent_log.get("timestamp") or _now(),
-                task=agent_log.get("task") or req.user_prompt or "Hunt",
-                duration_ms=int(agent_log.get("durationMs", 0) or 0),
-                tools_used=agent_log.get("toolsUsed") or [],
-                sources_count=int(agent_log.get("sourcesCount", 0) or 0),
-                status=agent_log.get("status") or "Completed",
-                decisions=agent_log.get("decisions") or [],
-                user_id=user_id,
-                business_id=business_id,
-            )
-            session.add(ar)
-            session.commit()
-
-        # Save first, then finish leftover emails while the job is still alive
-        # (asyncio.create_task dies when this BackgroundTask returns).
+        # Finish leftover emails while the job is still alive
         missing_ids = [
             p.get("id")
             for p in saved_front
@@ -319,14 +199,15 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
                 job_id,
                 status="running",
                 phase=f"Finding emails for {len(missing_ids)} leads…",
-                progress=92,
+                progress=96,
                 found_count=len(saved_front),
                 result_prospect_ids=saved_ids,
+                telemetry=telemetry,
             )
             try:
                 await asyncio.wait_for(
-                    _auto_fill_contacts_job(missing_ids[:80]),
-                    timeout=50.0,
+                    _auto_fill_contacts_job(missing_ids[:120]),
+                    timeout=90.0,
                 )
             except asyncio.TimeoutError:
                 log.warning("Contact enrich timed out for job %s", job_id)
@@ -339,17 +220,24 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
                 if refreshed:
                     saved_front = refreshed
 
-        _update_job(
-            job_id,
-            status="completed",
-            phase="Done",
-            progress=100,
-            found_count=len(saved_front),
-            skipped_existing=skipped_existing,
-            result_prospect_ids=saved_ids,
-            agent_log_id=run_id,
-            completed_at=_now(),
-        )
+        # Ensure job marked complete (paginated runner usually already did)
+        with Session(engine) as session:
+            job = session.get(DiscoveryJob, job_id)
+            if job and job.status != "completed":
+                job.status = "completed"
+                job.phase = job.phase or "Done"
+                job.progress = 100
+                job.found_count = len(saved_front)
+                job.result_prospect_ids = saved_ids
+                job.completed_at = _now()
+                job.updated_at = _now()
+                session.add(job)
+                session.commit()
+            elif job:
+                job.found_count = max(job.found_count, len(saved_front))
+                job.result_prospect_ids = saved_ids or job.result_prospect_ids
+                session.add(job)
+                session.commit()
 
         if saved_front:
             _sync_leads_job(business_id, saved_front)

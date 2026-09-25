@@ -81,6 +81,15 @@ class Settings(BaseSettings):
     DAILY_SEND_LIMIT: int = 40
     # Optional Hunter.io key for email enrichment when site scrape misses.
     HUNTER_API_KEY: str = ""
+    # Paginated hunt safety budgets (NOT lead-count goals).
+    HUNT_MAX_PAGES_PER_INTENT: int = 10
+    HUNT_MAX_TOTAL_PAGES: int = 150
+    HUNT_MAX_GOOGLE_REQUESTS: int = 200
+    HUNT_MAX_DOMAINS: int = 2000
+    HUNT_MAX_ENRICHMENTS: int = 800
+    HUNT_MAX_RUNTIME_SEC: int = 2700  # 45 minutes
+    HUNT_ENRICH_CONCURRENCY: int = 12
+    HUNT_RESULTS_PER_PAGE: int = 10
     # Stripe (optional). Without keys, Upgrade opens a support/billing message.
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""

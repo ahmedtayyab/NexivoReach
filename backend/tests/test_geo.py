@@ -117,14 +117,14 @@ def test_product_lines_cross_buyer_types_and_location():
     )
     queries = [q.query.lower() for q in plan_wave1(profile, prompt)]
     assert len(queries) >= 4
-    assert queries[0] == "weightlifting straps distributors in california"
-    assert "martial arts belts distributors in california" in queries
-    assert "weightlifting straps importers in california" in queries
-    assert "martial arts belts importers in california" in queries
+    assert queries[0] == "weightlifting straps distributors california"
+    assert "martial arts belts distributors california" in queries
+    assert "weightlifting straps importers california" in queries
+    assert "martial arts belts importers california" in queries
     # Exact phrase stays intact — never reduced to belts/straps/fitness
-    assert not any(q.strip() in {"straps distributors in california", "belts distributors in california"} for q in queries)
+    assert not any(q.strip() in {"straps distributors california", "belts distributors california"} for q in queries)
     assert not any(q.startswith("fitness ") for q in queries)
-    assert not any(q == "weightlifting straps in california" for q in queries)
+    assert not any(q == "weightlifting straps california" for q in queries)
 
 
 def test_intent_keeps_exact_product_and_defers_broader_terms():
@@ -136,11 +136,11 @@ def test_intent_keeps_exact_product_and_defers_broader_terms():
         "Los Angeles",
     )
     assert martial["primary_queries"] == [
-        "martial arts belts importers in Los Angeles",
-        "martial arts belts distributors in Los Angeles",
+        "martial arts belts importers Los Angeles",
+        "martial arts belts distributors Los Angeles",
     ]
     assert all("martial arts belts" in q for q in martial["primary_queries"])
-    assert not any(q.strip() == "belts importers in Los Angeles" for q in martial["primary_queries"] + martial["volume_queries"])
+    assert not any(q.strip() == "belts importers Los Angeles" for q in martial["primary_queries"] + martial["volume_queries"])
     assert any("martial arts equipment" in q for q in martial["secondary_queries"])
     assert not any("martial arts equipment" in q for q in martial["primary_queries"])
 
@@ -149,8 +149,8 @@ def test_intent_keeps_exact_product_and_defers_broader_terms():
         ["Importers", "Distributors"],
         "New York",
     )
-    assert "weightlifting straps importers in New York" in straps["primary_queries"]
-    assert "weightlifting straps distributors in New York" in straps["primary_queries"]
+    assert "weightlifting straps importers New York" in straps["primary_queries"]
+    assert "weightlifting straps distributors New York" in straps["primary_queries"]
     joined = " ".join(straps["primary_queries"] + straps["volume_queries"] + straps["secondary_queries"])
     assert "fitness equipment" not in joined
     assert not any(q.startswith("straps ") for q in straps["primary_queries"])
@@ -189,22 +189,22 @@ def test_runon_query_splits_pairs_and_keeps_exact_products():
     )
     intent = interpret_prompt_intent(prompt, "Los Angeles")
     queries = [q.query.lower() for q in plan_wave1(profile, prompt)]
-    assert "weightlifting straps distributors in los angeles" in queries
-    assert "weightlifting straps wholesalers in los angeles" in queries
-    assert "weightlifting straps importers in los angeles" in queries
+    assert "weightlifting straps distributors los angeles" in queries
+    assert "weightlifting straps wholesalers los angeles" in queries
+    assert "weightlifting straps importers los angeles" in queries
     # Wave 1 is exact primaries only — close variants live in volume_queries for wave 2
     assert '"weightlifting straps" wholesale los angeles' not in queries
     assert '"weightlifting straps" supplier los angeles' not in queries
     assert any('"weightlifting straps" wholesale' in q for q in intent["volume_queries"])
     assert any('"weightlifting straps" supplier' in q for q in intent["volume_queries"])
-    assert "martial arts belts distributors in los angeles" in queries
+    assert "martial arts belts distributors los angeles" in queries
     # Typed searches run before any variation
     assert queries[:3] == [
-        "weightlifting straps distributors in los angeles",
-        "weightlifting straps wholesalers in los angeles",
-        "weightlifting straps importers in los angeles",
+        "weightlifting straps distributors los angeles",
+        "weightlifting straps wholesalers los angeles",
+        "weightlifting straps importers los angeles",
     ]
-    assert "knee sleeves importers in los angeles" not in queries
+    assert "knee sleeves importers los angeles" not in queries
     assert not any(q.startswith("straps ") or q.startswith("belts ") for q in queries)
     assert not any("fitness equipment" in q for q in queries)
     assert not any("retailers" in q or q.startswith("gym ") for q in intent["primary_queries"])
@@ -632,7 +632,7 @@ def test_qualify_rejects_unrelated_wholesaler_without_product():
             "snippet": "Wholesale jewelry supplier in Los Angeles",
             "source": "web",
             "location": "319 W 6th St, Los Angeles, CA 90014",
-            "discovery_query": "weightlifting straps distributors in Los Angeles",
+            "discovery_query": "weightlifting straps distributors Los Angeles",
         },
         site_text="A&A Jewelry Supply is a wholesale distributor of findings, chains, and gemstones in downtown Los Angeles.",
         profile=profile,
