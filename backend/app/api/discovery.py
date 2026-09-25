@@ -357,7 +357,8 @@ async def run_discovery_agent(
         session.commit()
 
     if req.async_mode:
-        background_tasks.add_task(_execute_discovery_job, job_id, user.id, business_id, req)
+        # create_task keeps the hunt alive independently of the HTTP response lifecycle
+        asyncio.create_task(_execute_discovery_job(job_id, user.id, business_id, req))
         return {
             "jobId": job_id,
             "status": "queued",

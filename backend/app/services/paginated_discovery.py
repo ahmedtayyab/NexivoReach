@@ -54,6 +54,11 @@ from app.tools.web_search import WebSearchTool
 log = logging.getLogger(__name__)
 
 
+def _db() -> Session:
+    """Hunt opens many short sessions; keep attrs usable after commit (no DetachedInstanceError)."""
+    return Session(engine, expire_on_commit=False)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -168,7 +173,7 @@ def _save_cursor_page(
 
     for attempt in range(4):
         try:
-            with Session(engine) as sess:
+            with _db() as sess:
                 _apply(sess)
                 sess.commit()
             return
@@ -182,7 +187,7 @@ def _save_cursor_page(
 def _update_job(job_id: str, **fields: Any) -> None:
     for attempt in range(4):
         try:
-            with Session(engine) as session:
+            with _db() as session:
                 job = session.get(DiscoveryJob, job_id)
                 if not job:
                     return
@@ -372,7 +377,7 @@ async def run_paginated_discovery(
 
     # Persist intent cursors — resume next_page from workspace HuntSearchCursor
     intent_rows: List[DiscoverySearchIntent] = []
-    with Session(engine) as session:
+    with _db() as session:
         for spec in intent_specs:
             cursor = _load_or_create_cursor(
                 session,
@@ -537,7 +542,7 @@ async def run_paginated_discovery(
             level = graded.get("level") or "irrelevant"
             relevant = bool(graded.get("relevant")) and level != "irrelevant"
 
-            with Session(engine) as session:
+            with _db() as session:
                 mem = session.exec(
                     select(DiscoveredCompany).where(
                         DiscoveredCompany.business_id == business_id,
@@ -749,6 +754,7 @@ async def run_paginated_discovery(
         # Fair round-robin among intents still needing leads
         intent = under_quota[rr_index % len(under_quota)]
         rr_index += 1
+        intent_id = intent.id or ""
 
         page = intent.current_page
         if page > budget.max_pages_per_intent:
@@ -814,7 +820,7 @@ async def run_paginated_discovery(
         page_domains: List[str] = []
         enrich_jobs: List[Dict[str, Any]] = []
 
-        with Session(engine) as session:
+        with _db() as session:
             for pos, hit in enumerate(organic, start=1):
                 url = (hit.get("href") or "").strip()
                 title = (hit.get("title") or "").strip()
@@ -1000,15 +1006,11 @@ async def run_paginated_discovery(
             intent.updated_at = _now()
             session.add(intent)
             session.commit()
-
-        # Refresh in-memory intent row
-        with Session(engine) as session:
-            fresh = session.get(DiscoverySearchIntent, intent.id)
-            if fresh:
-                for i, r in enumerate(intent_rows):
-                    if r.id == fresh.id:
-                        intent_rows[i] = fresh
-                        break
+            # Keep a live copy on the round-robin list (same object; expire_on_commit=False).
+            for i, r in enumerate(intent_rows):
+                if r.id == intent_id:
+                    intent_rows[i] = intent
+                    break
 
         # Enrich new domains from this page (bounded concurrency) — incremental save
         if enrich_jobs:
@@ -1033,15 +1035,16 @@ async def run_paginated_discovery(
                     saved_front = [p for p in saved_front if p.get("id") != pid] + [prospect]
 
                 # bump intent relevant count
-                with Session(engine) as session:
-                    it = session.get(DiscoverySearchIntent, intent.id)
+                with _db() as session:
+                    it = session.get(DiscoverySearchIntent, intent_id)
                     if it and not res.get("merged"):
                         it.relevant_leads = int(it.relevant_leads or 0) + 1
+                        intent.relevant_leads = it.relevant_leads
                         session.add(it)
                         session.commit()
 
             # Stop this intent for the run once its share is filled (resume later pages next hunt)
-            if intent_leads_this_run.get(intent.id or "", 0) >= per_intent_cap and intent.status == "active":
+            if intent_leads_this_run.get(intent_id, 0) >= per_intent_cap and intent.status == "active":
                 intent.status = "quota"
                 intent.stop_reason = "per_intent_lead_cap"
                 stats.stop_reasons[intent.search_intent] = "per_intent_lead_cap"
@@ -1122,7 +1125,7 @@ async def run_paginated_discovery(
         "toolResultSnippet": str(stats.stop_reasons)[:500],
     }]
     run_id = f"run-{uuid4().hex[:8]}"
-    with Session(engine) as session:
+    with _db() as session:
         ar = AgentRunRecord(
             id=run_id,
             timestamp=_now(),
@@ -1173,7 +1176,7 @@ async def run_paginated_discovery(
 def _persist_intent(intent: DiscoverySearchIntent) -> None:
     for attempt in range(4):
         try:
-            with Session(engine) as session:
+            with _db() as session:
                 row = session.get(DiscoverySearchIntent, intent.id)
                 if not row:
                     return
