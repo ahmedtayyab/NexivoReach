@@ -556,7 +556,7 @@ export default function AdminView({ onToast }: Props) {
       setHuntSettingsMsg(
         `Saved — ${data.leadsPerRun} leads/run, split across hunt lines; next run resumes deeper Google pages.`,
       );
-      onToast?.('success', 'Hunt settings saved', `${data.leadsPerRun} leads per run`);
+      onToast?.('ok', 'Hunt settings saved', `${data.leadsPerRun} leads per run`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Save failed';
       setHuntSettingsMsg(msg);
