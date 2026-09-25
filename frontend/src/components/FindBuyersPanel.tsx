@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product } from '../types';
 import { Check, FileSpreadsheet, Loader2, RotateCcw, Search, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { useConfirm } from './ConfirmDialog';
 import {
   startHunt,
   subscribeHunt,
@@ -232,6 +233,8 @@ export default function FindBuyersPanel({
   const [telemetryHint, setTelemetryHint] = useState('');
   const [recentHunts, setRecentHunts] = useState<RecentHunt[]>([]);
   const [leadsPerRun, setLeadsPerRun] = useState(100);
+  const [resettingMemory, setResettingMemory] = useState(false);
+  const confirm = useConfirm();
 
   const query = useMemo(
     () => composeHuntPrompt('', location, details),
@@ -297,10 +300,10 @@ export default function FindBuyersPanel({
         setStatusText(
           r.foundCount
             ? `Added ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}${
-                r.skippedExisting ? ` (${r.skippedExisting} already in your list)` : ''
+                r.skippedExisting ? ` (${r.skippedExisting} already researched)` : ''
               } — open Latest hunt on Leads to review new accounts.${sheetsNote}`
             : r.skippedExisting
-              ? `All matches were already in your list (${r.skippedExisting}). Try a different hunt.`
+              ? `All matches were already researched (${r.skippedExisting}). Use Start over to rediscover them, or try a different hunt.`
               : 'No accounts this round — try more specific hunt lines or another location.',
         );
         notifyHuntFinishedInTab(r.foundCount);
@@ -535,6 +538,41 @@ export default function FindBuyersPanel({
     void runHunt();
   };
 
+  const handleResetHuntMemory = async () => {
+    if (isRunning || resettingMemory) return;
+    const ok = await confirm({
+      title: 'Start hunt from the beginning?',
+      body:
+        'This forgets previously seen websites and resets Google search pages to page 1 for this company. ' +
+        'Your next hunt can rediscover the same domains. Saved leads are kept. Sheets is not changed.',
+      confirmLabel: 'Start over',
+      cancelLabel: 'Cancel',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setResettingMemory(true);
+    try {
+      const resp = await apiFetch('/api/discovery/reset-memory', { method: 'POST' });
+      if (!resp.ok) {
+        const err = await resp.text();
+        setStatusText(err.slice(0, 160) || 'Could not reset hunt memory');
+        return;
+      }
+      const data = (await resp.json()) as { deletedCompanies?: number; deletedCursors?: number };
+      const n = Number(data.deletedCompanies || 0);
+      const c = Number(data.deletedCursors || 0);
+      setStatusText(
+        n || c
+          ? `Ready to start over (${n} domains forgotten, ${c} page cursors reset).`
+          : 'Ready to start over — hunt memory was already empty.',
+      );
+    } catch (err: unknown) {
+      setStatusText(err instanceof Error ? err.message : 'Could not reset hunt memory');
+    } finally {
+      setResettingMemory(false);
+    }
+  };
+
   return (
     <div className={`find-buyers${compact ? ' find-buyers--compact' : ' find-buyers--primary'}`}>
       {!compact && <PageAmbient variant="leads" tone="whisper" />}
@@ -627,7 +665,28 @@ export default function FindBuyersPanel({
 
       {!compact && (
         <div className="find-buyers__head">
-          <h3 className="find-buyers__title">Find buyers in your market</h3>
+          <div className="find-buyers__head-row">
+            <h3 className="find-buyers__title">Find buyers in your market</h3>
+            <button
+              type="button"
+              className="btn btn-danger find-buyers__reset"
+              disabled={isRunning || resettingMemory}
+              onClick={() => void handleResetHuntMemory()}
+              title="Forget seen websites and restart Google search from page 1"
+            >
+              {resettingMemory ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Starting over…
+                </>
+              ) : (
+                <>
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Start over
+                </>
+              )}
+            </button>
+          </div>
           <p className="find-buyers__cap" role="status">
             Up to <strong>{leadsPerRun}</strong> leads per run
             {lineCount > 0

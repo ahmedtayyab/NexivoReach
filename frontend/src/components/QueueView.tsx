@@ -117,7 +117,9 @@ export default function QueueView({
     if (!onClearLeads || !prospects.length || clearing) return;
     const ok = await confirm({
       title: 'Clear all leads?',
-      body: `Remove all ${prospects.length} leads for this company. This cannot be undone.`,
+      body:
+        `Remove all ${prospects.length} leads for this company. This cannot be undone. ` +
+        'Hunt memory (previously seen websites) is kept — use Find buyers → Start over if you want the next hunt to rediscover them from page 1.',
       confirmLabel: 'Clear leads',
       tone: 'danger',
     });
