@@ -38,6 +38,10 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 
+def _secure_cookies() -> bool:
+    return effective_app_url().startswith("https://")
+
+
 def _user_payload(user, usage: dict | None = None) -> dict:
     admin = False
     suspended = False
@@ -184,6 +188,8 @@ def gmail_connect(request: Request, user: AuthUser = Depends(get_current_user)):
         "access_type": "offline",
         # Force a full consent so Google returns a fresh refresh_token.
         "prompt": "consent",
+        # Keep previously granted Sheets scopes when reconnecting Gmail.
+        "include_granted_scopes": "true",
     }
     response = RedirectResponse(f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
     response.set_cookie(
@@ -206,11 +212,15 @@ def sheets_connect(request: Request, user: AuthUser = Depends(get_current_user))
     if not auth_required():
         raise HTTPException(status_code=400, detail="Connect Sheets after signing in with Google")
     state = create_oauth_state("sheets", user_id=user.id)
+    # Include previously granted Gmail scopes in the request so incremental
+    # consent returns a refresh token that still covers send + Sheets.
     params = {
         "client_id": settings.GOOGLE_CLIENT_ID,
         "redirect_uri": effective_google_redirect_uri(),
         "response_type": "code",
-        "scope": f"openid email profile {sheets_oauth_mod.SHEETS_SCOPES}",
+        "scope": (
+            f"openid email profile {gmail_mod.GMAIL_SCOPES} {sheets_oauth_mod.SHEETS_SCOPES}"
+        ),
         "state": state,
         "access_type": "offline",
         "prompt": "consent",
@@ -251,6 +261,7 @@ def sheets_oauth_status(request: Request, user: AuthUser = Depends(get_current_u
         row = session.get(User, user.id)
         if not row:
             return {"connected": False, "email": "", "connectedAt": ""}
+        row = sheets_oauth_mod.ensure_sheets_tokens_from_gmail(session, row)
         return sheets_oauth_mod.status_payload(row)
 
 
@@ -277,17 +288,38 @@ def sheets_oauth_disconnect(request: Request, user: AuthUser = Depends(get_curre
 @router.get("/google/callback")
 def google_callback(request: Request, code: str = "", state: str = "", error: str = ""):
     app_url = effective_app_url()
+    purpose_hint = ""
+    raw_state = (state or request.cookies.get("nr_oauth_state", "") or "").strip()
+    if raw_state:
+        try:
+            purpose_hint = (decode_oauth_state(raw_state).get("typ") or "").strip()
+        except Exception:
+            purpose_hint = ""
+
+    def _err_redirect(default: str = "auth") -> RedirectResponse:
+        if purpose_hint == "sheets":
+            return RedirectResponse(f"{app_url}/?sheets=error#integrations")
+        if purpose_hint == "gmail":
+            return RedirectResponse(f"{app_url}/?gmail=error#integrations")
+        if purpose_hint == "workspace":
+            return RedirectResponse(f"{app_url}/?sheets=error#integrations")
+        return RedirectResponse(f"{app_url}/?{default}=error")
+
     if error:
-        return RedirectResponse(f"{app_url}/?auth=error")
-    cookie_state = request.cookies.get("nr_oauth_state", "")
-    if not code or not state or state != cookie_state:
-        return RedirectResponse(f"{app_url}/?auth=error")
+        return _err_redirect()
+    if not code or not state:
+        return _err_redirect()
+    cookie_state = (request.cookies.get("nr_oauth_state", "") or "").strip()
+    # Prefer cookie CSRF match; if the cookie was dropped (Secure/SameSite),
+    # still accept a valid signed JWT state so Connect Sheets can finish.
+    if cookie_state and state != cookie_state:
+        return _err_redirect()
 
     try:
         state_payload = decode_oauth_state(state)
         purpose = state_payload.get("typ") or "oauth"
     except Exception:
-        return RedirectResponse(f"{app_url}/?auth=error")
+        return _err_redirect()
 
     if purpose == "gmail":
         return _gmail_callback(code, state_payload, app_url)
@@ -400,7 +432,7 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
 
 
 def _workspace_callback(code: str, state_payload: dict, app_url: str):
-    """Store one refresh token for both Gmail and Sheets after a combined consent."""
+    """Store tokens for Gmail and/or Sheets after a combined consent."""
     user_id = state_payload.get("uid") or ""
     if state_payload.get("typ") != "workspace" or not user_id:
         return RedirectResponse(f"{app_url}/?sheets=error#integrations")
@@ -422,6 +454,7 @@ def _workspace_callback(code: str, state_payload: dict, app_url: str):
         token_data = token_res.json()
         access_token = token_data.get("access_token")
         refresh_token = token_data.get("refresh_token")
+        scope_hint = token_data.get("scope") or ""
         if not access_token:
             return RedirectResponse(f"{app_url}/?sheets=error#integrations")
         info_res = client.get(
@@ -436,7 +469,6 @@ def _workspace_callback(code: str, state_payload: dict, app_url: str):
         user = session.get(User, user_id)
         if not user:
             return RedirectResponse(f"{app_url}/?sheets=error#integrations")
-        # First consent must return a refresh token; later re-auths may omit it.
         if not refresh_token and not (
             (user.gmail_refresh_token or "").strip() or (user.sheets_refresh_token or "").strip()
         ):
@@ -444,6 +476,13 @@ def _workspace_callback(code: str, state_payload: dict, app_url: str):
         expires_in = int(token_data.get("expires_in") or 3600)
         email = account_email or user.email
         can_gmail = gmail_mod.has_send_scope(access_token)
+        can_sheets = sheets_oauth_mod.token_has_sheets_scopes(access_token, scope_hint)
+        shared_refresh = (
+            refresh_token
+            or (user.sheets_refresh_token or "").strip()
+            or (user.gmail_refresh_token or "").strip()
+            or None
+        )
         if can_gmail:
             gmail_mod.store_tokens(
                 session,
@@ -453,31 +492,30 @@ def _workspace_callback(code: str, state_payload: dict, app_url: str):
                 expires_in=expires_in,
                 email=email,
             )
-            # Re-load after gmail store (session refreshed tokens on same row).
             user = session.get(User, user_id) or user
-        sheets_oauth_mod.store_tokens(
-            session,
-            user,
-            access_token=access_token,
-            refresh_token=refresh_token
-            or user.sheets_refresh_token
-            or user.gmail_refresh_token,
-            expires_in=expires_in,
-            email=email,
-        )
-        # Guarantee Sheets fields are populated even if refresh was only stored on Gmail first.
-        user = session.get(User, user_id) or user
-        if not (user.sheets_refresh_token or "").strip() and (user.gmail_refresh_token or "").strip():
-            user.sheets_refresh_token = user.gmail_refresh_token
-            session.add(user)
-            session.commit()
+        if can_sheets:
+            sheets_oauth_mod.store_tokens(
+                session,
+                user,
+                access_token=access_token,
+                refresh_token=shared_refresh,
+                expires_in=expires_in,
+                email=email,
+            )
+            user = session.get(User, user_id) or user
+            if not (user.sheets_refresh_token or "").strip() and (user.gmail_refresh_token or "").strip():
+                user.sheets_refresh_token = user.gmail_refresh_token
+                session.add(user)
+                session.commit()
 
-    if can_gmail:
+    if can_sheets and can_gmail:
         redirect_qs = "sheets=connected&gmail=connected"
-    else:
-        # Sheets may still be ok; Gmail needs a consent that includes gmail.send
-        # (enable Gmail API + scopes on the Google Cloud OAuth consent screen).
+    elif can_sheets:
         redirect_qs = "sheets=connected&gmail=needs_scope"
+    elif can_gmail:
+        redirect_qs = "sheets=needs_scope&gmail=connected"
+    else:
+        redirect_qs = "sheets=error"
     response = HTMLResponse(
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>"
         f"<body><script>window.location.replace('/?{redirect_qs}#integrations');</script></body></html>"
@@ -508,6 +546,7 @@ def _gmail_callback(code: str, state_payload: dict, app_url: str):
         token_data = token_res.json()
         access_token = token_data.get("access_token")
         refresh_token = token_data.get("refresh_token")
+        scope_hint = token_data.get("scope") or ""
         if not access_token:
             return RedirectResponse(f"{app_url}/?gmail=error#integrations")
         info_res = client.get(
@@ -522,15 +561,9 @@ def _gmail_callback(code: str, state_payload: dict, app_url: str):
         user = session.get(User, user_id)
         if not user:
             return RedirectResponse(f"{app_url}/?gmail=error#integrations")
-        # Refresh token only returned on first consent; keep existing if missing
+        old_sheets_rt = (user.sheets_refresh_token or "").strip()
         if not refresh_token and not (user.gmail_refresh_token or "").strip():
             return RedirectResponse(f"{app_url}/?gmail=error#integrations")
-        if not gmail_mod.has_send_scope(access_token):
-            return RedirectResponse(f"{app_url}/?gmail=needs_scope#integrations")
-        # Prefer a brand-new refresh token. Reusing a stale one after re-consent
-        # is a common cause of "token refresh failed (400)".
-        if not refresh_token:
-            log.warning("Gmail OAuth returned no refresh_token for user %s", user_id)
         gmail_mod.store_tokens(
             session,
             user,
@@ -539,6 +572,23 @@ def _gmail_callback(code: str, state_payload: dict, app_url: str):
             expires_in=int(token_data.get("expires_in") or 3600),
             email=gmail_email or user.email,
         )
+        user = session.get(User, user_id) or user
+        if sheets_oauth_mod.token_has_sheets_scopes(access_token, scope_hint):
+            sheets_oauth_mod.store_tokens(
+                session,
+                user,
+                access_token=access_token,
+                refresh_token=refresh_token or old_sheets_rt or None,
+                expires_in=int(token_data.get("expires_in") or 3600),
+                email=gmail_email or user.email,
+            )
+        elif (
+            refresh_token
+            and old_sheets_rt
+            and refresh_token != old_sheets_rt
+        ):
+            # New Gmail-only refresh may have replaced a shared workspace token.
+            sheets_oauth_mod.clear_tokens(session, user)
 
     response = HTMLResponse(
         """<!DOCTYPE html><html><head><meta charset="utf-8"></head>"""
@@ -566,10 +616,16 @@ def _sheets_callback(code: str, state_payload: dict, app_url: str):
             headers={"Accept": "application/json"},
         )
         if token_res.status_code >= 400:
+            log.warning(
+                "Sheets token exchange failed: %s %s",
+                token_res.status_code,
+                (token_res.text or "")[:200],
+            )
             return RedirectResponse(f"{app_url}/?sheets=error#integrations")
         token_data = token_res.json()
         access_token = token_data.get("access_token")
         refresh_token = token_data.get("refresh_token")
+        scope_hint = token_data.get("scope") or ""
         if not access_token:
             return RedirectResponse(f"{app_url}/?sheets=error#integrations")
         info_res = client.get(
@@ -584,16 +640,43 @@ def _sheets_callback(code: str, state_payload: dict, app_url: str):
         user = session.get(User, user_id)
         if not user:
             return RedirectResponse(f"{app_url}/?sheets=error#integrations")
-        if not refresh_token and not (user.sheets_refresh_token or "").strip():
+        existing_rt = (
+            (user.sheets_refresh_token or "").strip()
+            or (user.gmail_refresh_token or "").strip()
+        )
+        if not refresh_token and not existing_rt:
+            log.warning("Sheets OAuth returned no refresh_token and none stored for user %s", user_id)
             return RedirectResponse(f"{app_url}/?sheets=error#integrations")
+        if not sheets_oauth_mod.token_has_sheets_scopes(access_token, scope_hint):
+            log.warning(
+                "Sheets OAuth missing spreadsheets scope for user %s (hint=%r)",
+                user_id,
+                (scope_hint or "")[:120],
+            )
+            return RedirectResponse(f"{app_url}/?sheets=needs_scope#integrations")
+        expires_in = int(token_data.get("expires_in") or 3600)
+        email = sheets_email or user.email
+        shared_rt = refresh_token or existing_rt
         sheets_oauth_mod.store_tokens(
             session,
             user,
             access_token=access_token,
-            refresh_token=refresh_token,
-            expires_in=int(token_data.get("expires_in") or 3600),
-            email=sheets_email or user.email,
+            refresh_token=shared_rt,
+            expires_in=expires_in,
+            email=email,
         )
+        # New refresh tokens supersede older ones for the same Google client —
+        # keep Gmail usable when this consent also includes send scope.
+        user = session.get(User, user_id) or user
+        if refresh_token and gmail_mod.has_send_scope(access_token):
+            gmail_mod.store_tokens(
+                session,
+                user,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                expires_in=expires_in,
+                email=email,
+            )
 
     response = HTMLResponse(
         """<!DOCTYPE html><html><head><meta charset="utf-8"></head>"""
@@ -601,14 +684,3 @@ def _sheets_callback(code: str, state_payload: dict, app_url: str):
     )
     response.delete_cookie("nr_oauth_state", path="/")
     return response
-
-
-@router.post("/logout")
-def logout():
-    response = JSONResponse({"ok": True})
-    response.delete_cookie(SESSION_COOKIE, path="/")
-    return response
-
-
-def _secure_cookies() -> bool:
-    return effective_app_url().startswith("https://")

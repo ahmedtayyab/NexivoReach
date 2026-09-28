@@ -1006,8 +1006,16 @@ function IntegrationsSection({
       setConnectMsg('Gmail connected — you can send from Outreach.');
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
       void load();
+    } else if (sheets === 'needs_scope') {
+      setConnectMsg(
+        "Sheets permission wasn't granted. Click Connect Sheets and allow Google Sheets / Drive when Google asks.",
+      );
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+      void load();
     } else if (sheets === 'error' || gmail === 'error') {
-      setConnectMsg('Google connect failed. Try again and allow the requested access.');
+      setConnectMsg(
+        'Google Sheets connect failed. Click Connect Sheets, allow Sheets/Drive access, and try again.',
+      );
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
     }
   }, []);
@@ -1162,21 +1170,30 @@ function IntegrationsSection({
                     : 'Not connected'}
                 </p>
               </div>
-            {!userOauth ? (
-                <a href="/api/auth/workspace" className="btn btn-primary shrink-0">
-                  Connect Google
+              {!userOauth ? (
+                <a
+                  href={gmailReady ? '/api/auth/sheets' : '/api/auth/workspace'}
+                  className="btn btn-primary shrink-0"
+                >
+                  {gmailReady ? 'Connect Sheets' : 'Connect Google'}
                 </a>
               ) : (
-                <a href="/api/auth/workspace" className="btn btn-secondary shrink-0">
+                <a href="/api/auth/sheets" className="btn btn-secondary shrink-0">
                   Reconnect Sheets
                 </a>
               )}
             </div>
 
             {gmailReady && !userOauth && (
-              <p className="text-[12.5px] m-0 rounded-md px-3 py-2" style={{ background: 'color-mix(in srgb, var(--warning) 12%, var(--mix-base))', color: 'var(--ink)' }}>
+              <p
+                className="text-[12.5px] m-0 rounded-md px-3 py-2"
+                style={{
+                  background: 'color-mix(in srgb, var(--warning) 12%, var(--mix-base))',
+                  color: 'var(--ink)',
+                }}
+              >
                 Gmail is connected for sending, but <strong>Sheets is still separate</strong>.
-                Click <strong>Connect Google</strong> above and allow Sheets/Drive access,
+                Click <strong>Connect Sheets</strong> and allow Google Sheets / Drive access,
                 then create or link a spreadsheet.
               </p>
             )}

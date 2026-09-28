@@ -261,14 +261,38 @@ export default function App() {
         if (data.user && !data.user.isSuspended) {
           const initialRoute = resolveRouteFromLocation();
           setActiveRoute(initialRoute);
-          window.history.replaceState({ route: initialRoute }, '', `#${initialRoute}`);
+          // Keep ?sheets= / ?gmail= query so IntegrationsSection can show connect result.
+          const qs = window.location.search || '';
+          window.history.replaceState({ route: initialRoute }, '', `${qs}#${initialRoute}`);
         }
-        // Refresh Gmail status after OAuth return
+        // Refresh Gmail / Sheets status after OAuth return
         if (params.get('gmail') === 'connected' || params.get('gmail') === 'needs_scope') {
           const st = await apiFetch('/api/auth/gmail/status');
           if (st.ok) {
             const gmail = await st.json();
             setUser(prev => (prev ? { ...prev, gmail } : prev));
+          }
+        }
+        if (
+          params.get('sheets') === 'connected' ||
+          params.get('sheets') === 'needs_scope' ||
+          params.get('sheets') === 'error'
+        ) {
+          const st = await apiFetch('/api/sheets/status');
+          if (st.ok) {
+            const sheets = await st.json();
+            setUser(prev =>
+              prev
+                ? {
+                    ...prev,
+                    sheets: sheets?.oauth ?? {
+                      connected: Boolean(sheets?.userOauthConnected),
+                      email: '',
+                      connectedAt: '',
+                    },
+                  }
+                : prev,
+            );
           }
         }
       } catch {
