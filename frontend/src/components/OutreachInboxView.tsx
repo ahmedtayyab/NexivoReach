@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { OutreachMode, OutreachTemplate, Prospect } from '../types';
-import { ChevronDown, ChevronLeft, ChevronUp, Loader2, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronUp, ExternalLink, Loader2, X } from 'lucide-react';
 import { recipientEmail } from '../lib/leadTone';
 import { isDueFollowUp } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
@@ -37,7 +37,7 @@ interface Props {
   onApplyTemplate?: (prospectId: string, templateId: string) => void | Promise<void>;
 }
 
-type Filter = 'best_fit' | 'needs_review' | 'with_email' | 'no_email' | 'follow_up' | 'sent' | 'all';
+type Filter = 'to_send' | 'best_fit' | 'with_email' | 'no_email' | 'follow_up' | 'sent' | 'all';
 
 function isBestFit(p: Prospect): boolean {
   const summary = (p.fitBreakdown?.fitSummary || '').toLowerCase();
@@ -48,6 +48,29 @@ function isBestFit(p: Prospect): boolean {
   if ((p.fitScore || 0) >= 75) return true;
   if ((p.fitScore || 0) >= 65 && (intent === 'high' || intent === 'low')) return true;
   return false;
+}
+
+function isUnsentDraft(p: Prospect): boolean {
+  const st = p.outreachDraft?.status;
+  return st === 'Draft' || st === 'Approved';
+}
+
+function isSentDraft(p: Prospect): boolean {
+  const st = p.outreachDraft?.status;
+  return st === 'Sent' || st === 'Replied';
+}
+
+function websiteHref(raw: string | undefined): string {
+  const w = (raw || '').trim();
+  if (!w) return '';
+  if (/^https?:\/\//i.test(w)) return w;
+  return `https://${w}`;
+}
+
+function websiteLabel(raw: string | undefined): string {
+  const w = (raw || '').trim();
+  if (!w) return '';
+  return w.replace(/^https?:\/\//i, '').replace(/\/$/, '');
 }
 
 function rankProspect(p: Prospect): number {
@@ -85,23 +108,22 @@ export default function OutreachInboxView({
     () => prospects.filter(p => p.outreachDraft),
     [prospects],
   );
-  const [filter, setFilter] = useState<Filter>('best_fit');
+  const [filter, setFilter] = useState<Filter>('to_send');
   const [syncingReplies, setSyncingReplies] = useState(false);
   const filtered = useMemo(() => {
     const rows = withDrafts.filter(p => {
-      const st = p.outreachDraft?.status;
+      if (filter === 'to_send') return isUnsentDraft(p);
       if (filter === 'best_fit') {
-        return (st === 'Draft' || st === 'Approved') && isBestFit(p);
+        return isUnsentDraft(p) && isBestFit(p);
       }
-      if (filter === 'needs_review') return st === 'Draft' || st === 'Approved';
       if (filter === 'with_email') {
-        return (st === 'Draft' || st === 'Approved') && Boolean(recipientEmail(p));
+        return isUnsentDraft(p) && Boolean(recipientEmail(p));
       }
       if (filter === 'no_email') {
-        return (st === 'Draft' || st === 'Approved') && !recipientEmail(p);
+        return isUnsentDraft(p) && !recipientEmail(p);
       }
       if (filter === 'follow_up') return isDueFollowUp(p);
-      if (filter === 'sent') return st === 'Sent' || st === 'Replied';
+      if (filter === 'sent') return isSentDraft(p);
       return true;
     });
     return [...rows].sort((a, b) => {
@@ -153,7 +175,7 @@ export default function OutreachInboxView({
 
   const visibleIds = useMemo(() => filtered.map(p => p.id), [filtered]);
   const withEmailIds = useMemo(
-    () => filtered.filter(p => Boolean(recipientEmail(p))).map(p => p.id),
+    () => filtered.filter(p => isUnsentDraft(p) && Boolean(recipientEmail(p))).map(p => p.id),
     [filtered],
   );
   const allVisibleSelected =
@@ -170,19 +192,19 @@ export default function OutreachInboxView({
   const clearSelection = () => setSelectedIds([]);
 
   const withEmailCount = useMemo(
-    () =>
-      withDrafts.filter(p => {
-        const st = p.outreachDraft?.status;
-        return (st === 'Draft' || st === 'Approved') && Boolean(recipientEmail(p));
-      }).length,
+    () => withDrafts.filter(p => isUnsentDraft(p) && Boolean(recipientEmail(p))).length,
     [withDrafts],
   );
   const noEmailCount = useMemo(
-    () =>
-      withDrafts.filter(p => {
-        const st = p.outreachDraft?.status;
-        return (st === 'Draft' || st === 'Approved') && !recipientEmail(p);
-      }).length,
+    () => withDrafts.filter(p => isUnsentDraft(p) && !recipientEmail(p)).length,
+    [withDrafts],
+  );
+  const toSendCount = useMemo(
+    () => withDrafts.filter(isUnsentDraft).length,
+    [withDrafts],
+  );
+  const sentCount = useMemo(
+    () => withDrafts.filter(isSentDraft).length,
     [withDrafts],
   );
 
@@ -306,7 +328,9 @@ export default function OutreachInboxView({
       <div className="page-header nr-enter">
         <h1 className="page-header__title">Outreach</h1>
         <p className="page-header__desc">
-          {bestFitCount} best-fit ready · Sorted by Fit + Intent ·{' '}
+          {toSendCount} left to send
+          {sentCount > 0 ? ` · ${sentCount} already sent` : ''}
+          {' · '}
           {gmailConnected
             ? 'Send to any To: address via Gmail'
             : 'Gmail is not connected — open Workspace → Connect to send'}
@@ -450,12 +474,12 @@ export default function OutreachInboxView({
         >
           {(
             [
+              ['to_send', toSendCount > 0 ? `To send (${toSendCount})` : 'To send'],
               ['best_fit', 'Best fit'],
-              ['needs_review', 'All drafts'],
               ['with_email', withEmailCount > 0 ? `With email (${withEmailCount})` : 'With email'],
               ['no_email', noEmailCount > 0 ? `No email (${noEmailCount})` : 'No email'],
               ['follow_up', followUpCount > 0 ? `Follow-up (${followUpCount})` : 'Follow-up'],
-              ['sent', 'Sent'],
+              ['sent', sentCount > 0 ? `Sent (${sentCount})` : 'Sent'],
               ['all', 'All'],
             ] as [Filter, string][]
           ).map(([id, label]) => (
@@ -465,12 +489,12 @@ export default function OutreachInboxView({
         <div className="seg" role="group" aria-label="Outreach filter">
           {(
             [
+              ['to_send', toSendCount > 0 ? `To send (${toSendCount})` : 'To send'],
               ['best_fit', 'Best fit'],
-              ['needs_review', 'All drafts'],
               ['with_email', withEmailCount > 0 ? `With email (${withEmailCount})` : 'With email'],
               ['no_email', noEmailCount > 0 ? `No email (${noEmailCount})` : 'No email'],
               ['follow_up', followUpCount > 0 ? `Follow-up (${followUpCount})` : 'Follow-up'],
-              ['sent', 'Sent'],
+              ['sent', sentCount > 0 ? `Sent (${sentCount})` : 'Sent'],
               ['all', 'All'],
             ] as [Filter, string][]
           ).map(([id, label]) => (
@@ -490,24 +514,36 @@ export default function OutreachInboxView({
         <div className="outreach-list">
           {filtered.length === 0 ? (
             <p className="p-4 text-[13px] text-ink-muted">
-              {filter === 'best_fit'
-                ? 'No best-fit drafts yet. Prepare outreach on high-fit Leads, or switch to All drafts.'
-                : filter === 'with_email'
-                  ? 'No drafts with a recipient email yet.'
-                  : 'Nothing in this filter.'}
+              {filter === 'to_send'
+                ? 'Nothing left to send — switch to Sent to review what went out.'
+                : filter === 'best_fit'
+                  ? 'No best-fit drafts yet. Prepare outreach on high-fit Leads, or switch to To send.'
+                  : filter === 'with_email'
+                    ? 'No drafts with a recipient email yet.'
+                    : filter === 'sent'
+                      ? 'No sent emails yet.'
+                      : 'Nothing in this filter.'}
             </p>
           ) : (
             <div key={filter} className="nr-stagger">
               {filtered.map((p, i) => {
                 const active = i === index;
                 const st = p.outreachDraft?.status || 'Draft';
+                const sent = isSentDraft(p);
                 const intent = p.intent || p.fitBreakdown?.intent || 'none';
+                const site = websiteLabel(p.website);
+                const siteUrl = websiteHref(p.website);
                 return (
                   <div
                     key={p.id}
-                    className={`outreach-lead${active ? ' is-active' : ''}${selectedIds.includes(p.id) ? ' is-checked' : ''}`}
+                    className={[
+                      'outreach-lead',
+                      active ? 'is-active' : '',
+                      selectedIds.includes(p.id) ? 'is-checked' : '',
+                      sent ? 'is-sent' : '',
+                    ].filter(Boolean).join(' ')}
                   >
-                    {onSendSelected && (
+                    {onSendSelected && !sent && (
                       <input
                         type="checkbox"
                         checked={selectedIds.includes(p.id)}
@@ -526,15 +562,36 @@ export default function OutreachInboxView({
                     >
                       <div className="outreach-lead__top">
                         <p className="outreach-lead__name">{p.companyName}</p>
-                        <FitScoreBadge score={p.fitScore} />
+                        <div className="outreach-lead__badges">
+                          {sent ? (
+                            <span className={`outreach-status-pill is-${st.toLowerCase()}`}>
+                              {st === 'Replied' ? 'Replied' : 'Sent'}
+                            </span>
+                          ) : (
+                            <FitScoreBadge score={p.fitScore} />
+                          )}
+                        </div>
                       </div>
                       <p className="outreach-lead__meta">
-                        Intent {intent} · {st}
+                        Intent {intent}
+                        {!sent ? ` · ${st}` : ''}
                       </p>
                       <p className="outreach-lead__email">
                         {recipientEmail(p) || 'Will resolve from site contacts'}
                       </p>
                     </button>
+                    {site && siteUrl ? (
+                      <a
+                        href={siteUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="outreach-lead__site"
+                        title={siteUrl}
+                      >
+                        <ExternalLink className="w-3 h-3 shrink-0" aria-hidden />
+                        <span className="outreach-lead__site-text">{site}</span>
+                      </a>
+                    ) : null}
                     {onRemoveProspect && (
                       <button
                         type="button"
@@ -573,7 +630,19 @@ export default function OutreachInboxView({
                       ? ` · Intent ${current.intent || current.fitBreakdown?.intent}`
                       : ''}
                     {isBestFit(current) ? ' · Best fit' : ''}
+                    {isSentDraft(current) ? ` · ${draft.status}` : ''}
                   </p>
+                  {websiteHref(current.website) ? (
+                    <a
+                      href={websiteHref(current.website)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="outreach-editor__site"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                      <span>{websiteLabel(current.website) || current.website}</span>
+                    </a>
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button
