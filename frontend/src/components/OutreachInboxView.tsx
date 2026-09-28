@@ -250,9 +250,6 @@ export default function OutreachInboxView({
     return (st === 'Draft' || st === 'Approved') && to.includes('@') && isBestFit(p);
   }).length;
 
-  const bestFitCount = withDrafts.filter(
-    p => (p.outreachDraft?.status === 'Draft' || p.outreachDraft?.status === 'Approved') && isBestFit(p),
-  ).length;
   const followUpCount = withDrafts.filter(isDueFollowUp).length;
 
   const handleSyncReplies = async () => {
