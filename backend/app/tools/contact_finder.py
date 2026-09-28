@@ -949,7 +949,7 @@ async def discover_contacts(
             fetch_rendered = None  # type: ignore
         if browser_available() and fetch_rendered:
             # Prefer render when page looks JS-heavy; still try once on any miss.
-            rendered = await fetch_rendered(page_url or base, timeout_ms=10000)
+            rendered = await fetch_rendered(page_url or base, timeout_ms=8000)
             if rendered.get("ok") and rendered.get("html"):
                 pages_checked += 1
                 extracted = _extract_from_html(
@@ -976,7 +976,7 @@ async def discover_contacts(
                         render_target = u
                         break
                 if render_target:
-                    rendered = await fetch_rendered(render_target, timeout_ms=9000)
+                    rendered = await fetch_rendered(render_target, timeout_ms=8000)
                     if rendered.get("ok") and rendered.get("html"):
                         pages_checked += 1
                         extracted = _extract_from_html(

@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     HUNT_ENRICH_CONCURRENCY: int = 12
     HUNT_RESULTS_PER_PAGE: int = 10
     CONTACT_BROWSER_ENABLED: bool = True
+    # Keep Chromium peak RAM low on small hosts (Render free ~512MB).
+    CONTACT_BROWSER_MAX_CONCURRENT: int = 1
+    CONTACT_BROWSER_EPHEMERAL: bool = True
+    CONTACT_BROWSER_IDLE_CLOSE_SEC: float = 8.0
     # Stripe (optional). Without keys, Upgrade opens a support/billing message.
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""

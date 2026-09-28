@@ -50,10 +50,14 @@ services:
         value: "5"
       - key: DAILY_EXTRACT_LIMIT
         value: "10"
-      # Free-tier RAM: no Chromium; keep enrichment concurrency low.
+      # Free-tier RAM: keep browser email fallback, but ephemeral + serial + low enrich.
       - key: CONTACT_BROWSER_ENABLED
-        value: "false"
+        value: "true"
+      - key: CONTACT_BROWSER_EPHEMERAL
+        value: "true"
+      - key: CONTACT_BROWSER_MAX_CONCURRENT
+        value: "1"
       - key: HUNT_ENRICH_CONCURRENCY
-        value: "3"
+        value: "2"
       - key: GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON
         sync: false
