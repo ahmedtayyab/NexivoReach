@@ -461,10 +461,16 @@ def _workspace_callback(code: str, state_payload: dict, app_url: str):
             access_token=access_token,
             refresh_token=refresh_token
             or user.sheets_refresh_token
-            or (user.gmail_refresh_token if can_gmail else None),
+            or user.gmail_refresh_token,
             expires_in=expires_in,
             email=email,
         )
+        # Guarantee Sheets fields are populated even if refresh was only stored on Gmail first.
+        user = session.get(User, user_id) or user
+        if not (user.sheets_refresh_token or "").strip() and (user.gmail_refresh_token or "").strip():
+            user.sheets_refresh_token = user.gmail_refresh_token
+            session.add(user)
+            session.commit()
 
     if can_gmail:
         redirect_qs = "sheets=connected&gmail=connected"

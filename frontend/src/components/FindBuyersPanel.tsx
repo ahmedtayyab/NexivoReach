@@ -234,7 +234,40 @@ export default function FindBuyersPanel({
   const [recentHunts, setRecentHunts] = useState<RecentHunt[]>([]);
   const [leadsPerRun, setLeadsPerRun] = useState(100);
   const [resettingMemory, setResettingMemory] = useState(false);
+  const [sheetsOauthReady, setSheetsOauthReady] = useState(false);
+  const [sheetsWorkbookLinked, setSheetsWorkbookLinked] = useState(false);
   const confirm = useConfirm();
+
+  // Live Sheets status — Gmail Ready ≠ Sheets connected
+  const sheetsReady = sheetsConnected || sheetsOauthReady || sheetsWorkbookLinked;
+
+  const refreshSheetsStatus = async () => {
+    try {
+      const resp = await apiFetch('/api/sheets/status');
+      if (!resp.ok) return;
+      const data = (await resp.json()) as {
+        connected?: boolean;
+        userOauthConnected?: boolean;
+        oauth?: { connected?: boolean };
+      };
+      setSheetsOauthReady(Boolean(data.userOauthConnected || data.oauth?.connected));
+      setSheetsWorkbookLinked(Boolean(data.connected));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  useEffect(() => {
+    void refreshSheetsStatus();
+  }, [sheetsConnected, businessInfo.id]);
+
+  useEffect(() => {
+    const onFocus = () => {
+      void refreshSheetsStatus();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, []);
 
   const query = useMemo(
     () => composeHuntPrompt('', location, details),
@@ -296,7 +329,7 @@ export default function FindBuyersPanel({
         setServerPhase('');
         setTelemetryHint('');
         setLastFound(r.foundCount);
-        const sheetsNote = sheetsConnected ? ' Synced to Sheets.' : '';
+        const sheetsNote = sheetsWorkbookLinked ? ' Synced to Sheets.' : '';
         setStatusText(
           r.foundCount
             ? `Added ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}${
@@ -331,7 +364,7 @@ export default function FindBuyersPanel({
     }
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sheetsConnected]);
+  }, [sheetsConnected, sheetsWorkbookLinked]);
 
   useEffect(() => {
     if (!isRunning) return;
@@ -508,11 +541,29 @@ export default function FindBuyersPanel({
 
   const handleRunClick = () => {
     if (!canHunt || isRunning) return;
-    if (!sheetsConnected && !skipSheetsPrompt) {
-      setShowSheetsPrompt(true);
-      return;
-    }
-    void runHunt();
+    void (async () => {
+      await refreshSheetsStatus();
+      // Re-read would be stale in closure — use API result for gate
+      let ready = sheetsReady;
+      try {
+        const resp = await apiFetch('/api/sheets/status');
+        if (resp.ok) {
+          const data = await resp.json();
+          const oauth = Boolean(data?.userOauthConnected || data?.oauth?.connected);
+          const linked = Boolean(data?.connected);
+          setSheetsOauthReady(oauth);
+          setSheetsWorkbookLinked(linked);
+          ready = oauth || linked || sheetsConnected;
+        }
+      } catch {
+        /* keep ready from state */
+      }
+      if (!ready && !skipSheetsPrompt) {
+        setShowSheetsPrompt(true);
+        return;
+      }
+      void runHunt();
+    })();
   };
 
   const rerunHunt = (hunt: RecentHunt) => {
@@ -520,11 +571,27 @@ export default function FindBuyersPanel({
     const prompt = (hunt.requestPayload?.user_prompt || hunt.userPrompt || '').trim();
     if (!prompt && !hasBrief) return;
     applyPrompt(prompt);
-    if (!sheetsConnected && !skipSheetsPrompt) {
-      setShowSheetsPrompt(true);
-      return;
-    }
-    void runHunt(prompt);
+    void (async () => {
+      let ready = sheetsReady;
+      try {
+        const resp = await apiFetch('/api/sheets/status');
+        if (resp.ok) {
+          const data = await resp.json();
+          const oauth = Boolean(data?.userOauthConnected || data?.oauth?.connected);
+          const linked = Boolean(data?.connected);
+          setSheetsOauthReady(oauth);
+          setSheetsWorkbookLinked(linked);
+          ready = oauth || linked || sheetsConnected;
+        }
+      } catch {
+        /* keep */
+      }
+      if (!ready && !skipSheetsPrompt) {
+        setShowSheetsPrompt(true);
+        return;
+      }
+      void runHunt(prompt);
+    })();
   };
 
   const continueWithoutSheets = () => {
@@ -592,7 +659,7 @@ export default function FindBuyersPanel({
         </div>
       )}
 
-      {showSheetsPrompt && !sheetsConnected && (
+      {showSheetsPrompt && !sheetsReady && (
         <div
           className="sheets-prompt-backdrop"
           role="presentation"
@@ -617,10 +684,11 @@ export default function FindBuyersPanel({
               <FileSpreadsheet className="w-5 h-5" strokeWidth={1.75} />
             </div>
             <h2 id="sheets-prompt-title" className="sheets-prompt__title">
-              Recommended: connect Google Sheets
+              Connect Google Sheets (optional)
             </h2>
             <p className="sheets-prompt__lede">
-              You can hunt now — leads always save in NexivoReach. Sheets makes the experience better.
+              Gmail Ready only covers sending. Sheets is a separate Google connection for
+              spreadsheet backup. You can hunt without it — leads still save in NexivoReach.
             </p>
             <ul className="sheets-prompt__perks">
               <li>
@@ -698,18 +766,34 @@ export default function FindBuyersPanel({
         </div>
       )}
 
-      {!sheetsConnected && (
+      {!sheetsReady && (
         <div className="sheets-recommend" role="status">
           <div className="sheets-recommend__head">
             <FileSpreadsheet className="w-4 h-4 shrink-0" strokeWidth={1.75} aria-hidden />
-            <p className="sheets-recommend__title">Sheets recommended</p>
+            <p className="sheets-recommend__title">Sheets recommended (separate from Gmail)</p>
           </div>
           <p className="sheets-recommend__body">
-            Leads save in the app either way. Connect Google Sheets for a spreadsheet backup.
+            Gmail Ready means you can send. Connect Google Sheets only if you want a spreadsheet backup.
           </p>
           {onGoConnect && (
             <button type="button" className="linkish sheets-recommend__link" onClick={onGoConnect}>
               Connect Google Sheets
+            </button>
+          )}
+        </div>
+      )}
+      {sheetsReady && !sheetsWorkbookLinked && (
+        <div className="sheets-recommend" role="status">
+          <div className="sheets-recommend__head">
+            <FileSpreadsheet className="w-4 h-4 shrink-0" strokeWidth={1.75} aria-hidden />
+            <p className="sheets-recommend__title">Sheets account ready</p>
+          </div>
+          <p className="sheets-recommend__body">
+            Create or link a spreadsheet under Connect Google so hunts can sync there.
+          </p>
+          {onGoConnect && (
+            <button type="button" className="linkish sheets-recommend__link" onClick={onGoConnect}>
+              Link spreadsheet
             </button>
           )}
         </div>

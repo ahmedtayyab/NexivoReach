@@ -99,7 +99,9 @@ export default function SettingsView({
         let sheetsOk = false;
         if (sheetsResp.ok) {
           const data = await sheetsResp.json();
-          sheetsOk = Boolean(data?.userOauthConnected || data?.oauth?.connected);
+          sheetsOk = Boolean(
+            data?.connected || data?.userOauthConnected || data?.oauth?.connected,
+          );
         }
         if (!cancelled) {
           setSheetsConnected(sheetsOk);
@@ -193,7 +195,9 @@ export default function SettingsView({
           />
           <p className="ws-find__secondary">
             <button type="button" className="linkish" onClick={() => onSectionChange('integrations')}>
-              {sheetsConnected ? 'Google connected' : 'Connect Google Sheets (recommended)'}
+              {sheetsConnected
+                ? 'Sheets account ready'
+                : 'Connect Google Sheets (recommended)'}
             </button>
             <span aria-hidden="true"> · </span>
             <button type="button" className="linkish" onClick={() => onSectionChange('catalog')}>
@@ -924,7 +928,9 @@ function IntegrationsSection({
   const [syncingLeads, setSyncingLeads] = useState(false);
   const [syncLeadsMsg, setSyncLeadsMsg] = useState('');
 
-  const sheetsReady = Boolean(status?.userOauthConnected || status?.oauth?.connected);
+  const sheetsReady = Boolean(
+    status?.connected || status?.userOauthConnected || status?.oauth?.connected,
+  );
   const gmailReady =
     Boolean(gmailStatus?.connected) &&
     !gmailStatus?.needsReconnect &&
@@ -1156,7 +1162,7 @@ function IntegrationsSection({
                     : 'Not connected'}
                 </p>
               </div>
-              {!userOauth ? (
+            {!userOauth ? (
                 <a href="/api/auth/workspace" className="btn btn-primary shrink-0">
                   Connect Google
                 </a>
@@ -1166,6 +1172,14 @@ function IntegrationsSection({
                 </a>
               )}
             </div>
+
+            {gmailReady && !userOauth && (
+              <p className="text-[12.5px] m-0 rounded-md px-3 py-2" style={{ background: 'color-mix(in srgb, var(--warning) 12%, var(--mix-base))', color: 'var(--ink)' }}>
+                Gmail is connected for sending, but <strong>Sheets is still separate</strong>.
+                Click <strong>Connect Google</strong> above and allow Sheets/Drive access,
+                then create or link a spreadsheet.
+              </p>
+            )}
 
             {/* Gmail row */}
             <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-border-subtle">

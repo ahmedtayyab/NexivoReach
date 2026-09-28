@@ -83,6 +83,9 @@ def _require_sheets_oauth(db_user: User) -> None:
 def get_status(request: Request, user: AuthUser = Depends(get_current_user)) -> Dict[str, Any]:
     with Session(engine) as session:
         db_user = session.get(User, user.id)
+        if db_user is not None:
+            # Heal: Workspace connect may have left Sheets tokens only on Gmail fields.
+            db_user = sheets_oauth_mod.ensure_sheets_tokens_from_gmail(session, db_user)
         try:
             biz = _active_business(session, request, user)
             just_inherited = _inherit_sibling_spreadsheet(session, biz, user.id)
