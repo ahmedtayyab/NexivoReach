@@ -92,6 +92,7 @@ class Settings(BaseSettings):
     HUNT_MAX_RUNTIME_SEC: int = 2700  # 45 minutes
     HUNT_ENRICH_CONCURRENCY: int = 12
     HUNT_RESULTS_PER_PAGE: int = 10
+    CONTACT_BROWSER_ENABLED: bool = True
     # Stripe (optional). Without keys, Upgrade opens a support/billing message.
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""

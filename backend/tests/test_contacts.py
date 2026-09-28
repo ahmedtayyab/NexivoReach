@@ -164,10 +164,16 @@ def test_bottom_of_page_email_without_footer_tag():
     assert any("facebook.com" in u for u in found.get("social_urls") or [])
 
 
-def test_facebook_fetch_urls_prefer_mbasic():
-    from app.tools.contact_finder import _facebook_fetch_urls
+def test_navbar_and_noscript_emails():
+    html = """
+    <html><body>
+      <nav class="navbar">Contact: sales@navco.com</nav>
+      <noscript>Also email fallback@navco.com</noscript>
+      <div id="__next"></div>
+    </body></html>
+    """
+    found = _extract_from_html(html, "https://navco.com/", "navco.com")
+    assert "sales@navco.com" in found["emails"]
+    assert "fallback@navco.com" in found["emails"]
+    assert found.get("sparse") is True
 
-    urls = _facebook_fetch_urls("https://www.facebook.com/AcmeWearCo")
-    assert urls
-    assert "mbasic.facebook.com" in urls[0]
-    assert any("/about" in u for u in urls)

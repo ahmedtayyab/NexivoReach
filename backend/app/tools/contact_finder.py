@@ -118,6 +118,18 @@ FOOTER_SELECTORS = (
     "#colophon",
 )
 
+NAV_SELECTORS = (
+    "nav",
+    "header",
+    "[role='navigation']",
+    "[class*='navbar']",
+    "[class*='nav-']",
+    "[id*='nav']",
+    "[class*='menu']",
+    ".site-header",
+    "#header",
+)
+
 # Bottom-of-page bands (emails often sit here even without a <footer> tag)
 BOTTOM_SELECTORS = (
     "[class*='pre-footer']",
@@ -158,6 +170,21 @@ def _is_same_domain(email_domain: str, site_domain: str) -> bool:
     ed = email_domain.lower()
     sd = site_domain.lower()
     return ed == sd or ed.endswith("." + sd)
+
+
+def _looks_sparse_html(html: str, text: str = "") -> bool:
+    """SPA / thin shell — emails often appear only after JS runs."""
+    raw = html or ""
+    visible = (text or "").strip()
+    if len(visible) < 200 and len(raw) > 600:
+        return True
+    markers = (
+        'id="__next"', "id='__next'", "data-reactroot", "__NUXT__",
+        "ng-version=", 'id="root"', "webpackJsonp",
+    )
+    if any(m in raw for m in markers) and len(visible) < 900:
+        return True
+    return False
 
 
 def _path_is_contact(url: str) -> bool:
@@ -526,11 +553,11 @@ def _extract_from_html(
                 and source >= SRC_TEXT
             ):
                 return
-        # Free webmail: mailto/attr/jsonld always; footer/contact text also OK
+        # Free webmail: mailto/attr/jsonld always; footer/contact/about text also OK
         if ed in PERSONAL_MAIL_DOMAINS:
             strong = source >= SRC_ATTR or (
                 use_bonus >= PAGE_SECTION and source >= SRC_TEXT
-            )
+            ) or use_bonus >= PAGE_CONTACT
             if not strong:
                 return
         seen_e.add(email)
@@ -545,7 +572,23 @@ def _extract_from_html(
 
     section_bonus = _contact_section_bonus(soup, page_bonus)
 
-    for tag in soup(["style", "noscript", "svg", "template"]):
+    # noscript often holds the only crawlable email (and some real contact text)
+    for tag in soup.find_all("noscript"):
+        ns = tag.get_text(" ", strip=True) or ""
+        if not ns:
+            continue
+        for match in EMAIL_RE.findall(ns.replace(" ", "")):
+            add(_clean_email(match), SRC_TEXT, max(section_bonus, PAGE_SECTION))
+        for addr in _emails_from_loose(ns):
+            add(addr, SRC_TEXT, max(section_bonus, PAGE_SECTION))
+        for addr in _emails_from_obfuscated(ns):
+            add(addr, SRC_OBFUSCATED, max(section_bonus, PAGE_SECTION))
+        for m in re.finditer(r"mailto:([^\s\"'?<>]+)", ns, re.I):
+            add(_clean_email(m.group(1)), SRC_MAILTO, max(section_bonus, PAGE_SECTION))
+
+    for tag in soup(["style", "svg", "template"]):
+        tag.decompose()
+    for tag in soup.find_all("noscript"):
         tag.decompose()
     for comment in soup.find_all(string=lambda t: isinstance(t, Comment)):
         comment.extract()
@@ -598,6 +641,7 @@ def _extract_from_html(
                 or any(h in frag for h in ("contact", "enquiry", "inquiry", "get-in-touch"))
                 or link_text in CONTACT_LINK_TEXT
                 or any(link_text.startswith(t) for t in CONTACT_LINK_TEXT)
+                or any(t in link_text for t in ("contact us", "get in touch", "email us", "about us"))
             )
             if same_site and looks_contact:
                 # Skip pure same-page anchors — email is on this page already
@@ -606,6 +650,22 @@ def _extract_from_html(
                 if abs_url not in seen_u and abs_url.rstrip("/") != (page_url or "").rstrip("/"):
                     seen_u.add(abs_url)
                     contact_urls.append(abs_url)
+
+    # Navbar / header — humans often see Contact + email here
+    nav_nodes: List[Any] = []
+    for sel in NAV_SELECTORS:
+        try:
+            nav_nodes.extend(soup.select(sel))
+        except Exception:
+            continue
+    if nav_nodes:
+        nav_blob = " ".join(n.get_text(" ", strip=True) for n in nav_nodes[:14])
+        for match in EMAIL_RE.findall(nav_blob.replace(" ", "")):
+            add(_clean_email(match), SRC_TEXT, max(section_bonus, PAGE_SECTION))
+        for addr in _emails_from_loose(nav_blob):
+            add(addr, SRC_TEXT, max(section_bonus, PAGE_SECTION))
+        for addr in _emails_from_obfuscated(nav_blob):
+            add(addr, SRC_OBFUSCATED, max(section_bonus, PAGE_SECTION))
 
     # Footer + bottom-of-page: B2B sites almost always put email here
     bottom_nodes = _bottom_region_nodes(soup)
@@ -664,8 +724,10 @@ def _extract_from_html(
         "emails": emails[:8],
         "hits": hits,
         "phones": phones[:3],
-        "contact_urls": contact_urls[:8],
+        "contact_urls": contact_urls[:12],
         "social_urls": social_urls[:4],
+        "text": text_spaced[:8000],
+        "sparse": _looks_sparse_html(html, text_spaced),
     }
 
 
@@ -730,11 +792,12 @@ async def discover_contacts(
     homepage_url: str = "",
     seed_phone: str = "",
     seed_emails: Optional[List[str]] = None,
+    *,
+    use_browser: bool = True,
 ) -> Dict[str, Any]:
     """
     Return public contacts found on the site.
-    Always opens /contact (when linked or guessed) so contact-page emails win
-    over homepage footer / widget addresses.
+    Static HTML first; if no email, optionally render homepage (+ one contact page).
     """
     base = (website or "").strip()
     if not base:
@@ -749,6 +812,7 @@ async def discover_contacts(
     phones: List[str] = []
     pages_checked = 0
     contact_page_urls: List[str] = []
+    homepage_sparse = False
 
     for raw in seed_emails or []:
         addr = _clean_email(raw)
@@ -763,6 +827,8 @@ async def discover_contacts(
                 all_hits.append({"email": addr, "source": SRC_TEXT, "page_bonus": PAGE_HOME})
         for addr in _emails_from_loose(blob):
             all_hits.append({"email": addr, "source": SRC_TEXT, "page_bonus": PAGE_HOME})
+        for addr in _emails_from_obfuscated(blob):
+            all_hits.append({"email": addr, "source": SRC_OBFUSCATED, "page_bonus": PAGE_HOME})
         for match in PHONE_RE.findall(blob[:5000]):
             phone = _clean_phone(match)
             if phone and phone not in phones:
@@ -771,7 +837,7 @@ async def discover_contacts(
     html = homepage_html or ""
     if not html:
         try:
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=HEADERS) as client:
+            async with httpx.AsyncClient(timeout=12.0, follow_redirects=True, headers=HEADERS) as client:
                 res = await client.get(base)
                 if res.status_code == 200 and res.text:
                     html = res.text
@@ -790,6 +856,7 @@ async def discover_contacts(
                 phones.append(p)
         found_urls = list(extracted["contact_urls"])
         social_urls = list(extracted.get("social_urls") or [])
+        homepage_sparse = bool(extracted.get("sparse"))
 
     # Linked contact pages first, then common path guesses
     linked = [u for u in found_urls if _path_is_contact(u)]
@@ -810,7 +877,7 @@ async def discover_contacts(
     # Dedupe while preserving order
     seen_fetch: Set[str] = set()
     extra: List[str] = []
-    max_extra = 3 if already_strong else 6
+    max_extra = 2 if already_strong else (4 if linked else 5)
     for u in ordered:
         key = u.rstrip("/").lower()
         if key in seen_fetch:
@@ -871,6 +938,57 @@ async def discover_contacts(
                     "label": "Contact page",
                     "source": "site",
                 })
+
+    # Rendered fallback only when static scan found nothing (max 2 pages).
+    emails_so_far = _rank_scored(all_hits, site_domain)
+    if use_browser and not emails_so_far:
+        try:
+            from app.tools.browser_fetch import browser_available, fetch_rendered
+        except Exception:
+            browser_available = lambda: False  # type: ignore
+            fetch_rendered = None  # type: ignore
+        if browser_available() and fetch_rendered:
+            # Prefer render when page looks JS-heavy; still try once on any miss.
+            rendered = await fetch_rendered(page_url or base, timeout_ms=10000)
+            if rendered.get("ok") and rendered.get("html"):
+                pages_checked += 1
+                extracted = _extract_from_html(
+                    rendered["html"],
+                    rendered.get("url") or page_url,
+                    site_domain,
+                    page_bonus=PAGE_SECTION,
+                )
+                all_hits.extend(extracted.get("hits") or [])
+                for p in extracted.get("phones") or []:
+                    if p not in phones:
+                        phones.append(p)
+                for u in extracted.get("contact_urls") or []:
+                    if u not in found_urls:
+                        found_urls.append(u)
+                emails_so_far = _rank_scored(all_hits, site_domain)
+            if not emails_so_far:
+                render_target = ""
+                for u in (contact_page_urls + linked + found_urls):
+                    key = u.rstrip("/").lower()
+                    if key in {(page_url or "").rstrip("/").lower(), base.rstrip("/").lower()}:
+                        continue
+                    if _path_is_contact(u):
+                        render_target = u
+                        break
+                if render_target:
+                    rendered = await fetch_rendered(render_target, timeout_ms=9000)
+                    if rendered.get("ok") and rendered.get("html"):
+                        pages_checked += 1
+                        extracted = _extract_from_html(
+                            rendered["html"],
+                            rendered.get("url") or render_target,
+                            site_domain,
+                            page_bonus=PAGE_CONTACT,
+                        )
+                        all_hits.extend(extracted.get("hits") or [])
+                        for p in extracted.get("phones") or []:
+                            if p not in phones:
+                                phones.append(p)
 
     # Facebook / social pass when the company site still has no email
     emails_so_far = _rank_scored(all_hits, site_domain)
