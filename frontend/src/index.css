@@ -1599,6 +1599,31 @@ input:focus, textarea:focus, select:focus {
   color: var(--text-secondary);
   font-weight: 650;
 }
+.outreach-mode-bar__picker {
+  display: grid;
+  gap: 0.35rem;
+  max-width: 28rem;
+}
+.outreach-mode-bar__picker-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-label);
+}
+.outreach-mode-bar__select {
+  width: 100%;
+  min-height: 2.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--bg-surface);
+  color: var(--text);
+  font-size: 13px;
+  padding: 0.45rem 0.7rem;
+}
+.outreach-mode-bar__select:disabled {
+  opacity: 0.6;
+}
 .outreach-templates--page {
   margin-top: 0;
 }

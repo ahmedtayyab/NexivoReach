@@ -67,13 +67,50 @@ def is_connected(user: User | None) -> bool:
     return False
 
 
+def sanitize_sheets_tokens(session: Session, user: User) -> User:
+    """
+    Drop Sheets tokens that cannot actually call Sheets (e.g. Gmail-only access
+    accidentally stored on sheets_* fields). Returns the refreshed user row.
+    """
+    access = (getattr(user, "sheets_access_token", None) or "").strip()
+    refresh = (getattr(user, "sheets_refresh_token", None) or "").strip()
+    if not access and not refresh:
+        return user
+
+    if access and token_has_sheets_scopes(access):
+        return user
+
+    # Access is missing or Gmail-only — try refresh candidates before giving up.
+    gmail_refresh = (getattr(user, "gmail_refresh_token", None) or "").strip()
+    candidates = [rt for rt in (refresh, gmail_refresh) if rt]
+    if candidates:
+        try:
+            get_valid_access_token(session, user)
+            session.refresh(user)
+            access2 = (getattr(user, "sheets_access_token", None) or "").strip()
+            if access2 and token_has_sheets_scopes(access2):
+                return user
+        except Exception as exc:
+            log.info("sheets sanitize refresh failed: %r", exc)
+
+    # Still unusable — clear so UI shows Connect Sheets again.
+    log.warning("Clearing unusable Sheets tokens for user %s", getattr(user, "id", "?"))
+    return clear_tokens(session, user)
+
+
 def ensure_sheets_tokens_from_gmail(session: Session, user: User) -> User:
     """
     If Sheets looks disconnected but Gmail's refresh/access already has Sheets scopes
     (typical after Workspace → Connect Google), copy those tokens onto the Sheets fields.
     """
+    user = sanitize_sheets_tokens(session, user) if is_connected(user) else user
     if is_connected(user):
-        return user
+        access = (getattr(user, "sheets_access_token", None) or "").strip()
+        if access and token_has_sheets_scopes(access):
+            return user
+        if (getattr(user, "sheets_refresh_token", None) or "").strip():
+            return user
+
     gmail_refresh = (getattr(user, "gmail_refresh_token", None) or "").strip()
     gmail_access = (getattr(user, "gmail_access_token", None) or "").strip()
     if not gmail_refresh and not gmail_access:
@@ -140,6 +177,12 @@ def ensure_sheets_tokens_from_gmail(session: Session, user: User) -> User:
 
 def status_payload(user: User | None) -> Dict[str, Any]:
     connected = is_connected(user)
+    # Treat Gmail-only poison access as disconnected for UI.
+    if connected and user:
+        access = (getattr(user, "sheets_access_token", None) or "").strip()
+        refresh = (getattr(user, "sheets_refresh_token", None) or "").strip()
+        if access and not token_has_sheets_scopes(access) and not refresh:
+            connected = False
     return {
         "connected": connected,
         "email": (getattr(user, "sheets_email", None) or "") if connected and user else "",

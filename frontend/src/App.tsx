@@ -548,6 +548,24 @@ export default function App() {
     }
   };
 
+  const handleApplyTemplate = async (prospectId: string, templateId: string) => {
+    try {
+      const resp = await apiFetch(`/api/prospects/${prospectId}/apply-template`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templateId }),
+      });
+      if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Could not apply template'));
+      const row = (await resp.json()) as Prospect;
+      setProspects(prev => prev.map(p => (p.id === row.id ? row : p)));
+      const name = row.outreachDraft?.templateName || 'Template';
+      pushToast('ok', 'Template applied', name);
+    } catch (err) {
+      console.error(err);
+      pushToast('error', 'Template switch failed', err instanceof Error ? err.message : 'Could not apply template');
+    }
+  };
+
   const handleSendAllReady = async (mode: 'batch' | 'ready' = 'batch') => {
     // Live preflight — sidebar can lag behind token state.
     let live = user;
@@ -1092,6 +1110,7 @@ export default function App() {
                   : 'Prepare will write a fresh AI email per lead.',
               );
             }}
+            onApplyTemplate={handleApplyTemplate}
           />
         )}
         {activeRoute === 'templates' && (

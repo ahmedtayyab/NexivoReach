@@ -235,6 +235,7 @@ async def _prepare_one(
     *,
     force: bool = False,
     scrape_contacts: bool = False,
+    template_id: str | None = None,
 ) -> ProspectRecord:
     # Fast path: use stored email only. Contact scrape is optional (slow).
     email = _recipient_email(row)
@@ -242,7 +243,7 @@ async def _prepare_one(
         email = await _ensure_recipient(session, row)
     phone = (row.phone or "").strip()
 
-    if row.outreach_draft and not force:
+    if row.outreach_draft and not force and not template_id:
         # Patch empty To: on existing drafts so one-click send works
         draft = dict(row.outreach_draft)
         if email and not (draft.get("toEmail") or "").strip():
@@ -262,7 +263,8 @@ async def _prepare_one(
 
     biz = session.get(Business, row.business_id) if row.business_id else None
     mode = (getattr(biz, "outreach_mode", None) or "ai").strip().lower()
-    if mode == "templates" and row.business_id:
+    want_template = bool(template_id) or (mode == "templates" and row.business_id)
+    if want_template and row.business_id:
         tpl_rows = session.exec(
             select(OutreachTemplate).where(OutreachTemplate.business_id == row.business_id)
         ).all()
@@ -285,7 +287,21 @@ async def _prepare_one(
         # selector expects specialize_lines key internally via specializeLines from frontend shape
         for t in templates:
             t["specialize_lines"] = t.get("specializeLines") or []
-        picked = select_outreach_template(templates, signals)
+
+        picked = None
+        forced_id = (template_id or "").strip()
+        if forced_id:
+            for t in templates:
+                if str(t.get("id") or "") == forced_id:
+                    picked = dict(t)
+                    picked["_matchReason"] = "manually selected"
+                    picked["_matchScore"] = 100
+                    break
+            if not picked:
+                raise HTTPException(status_code=404, detail="Template not found")
+        else:
+            picked = select_outreach_template(templates, signals)
+
         if picked:
             top_product = (signals.get("topProducts") or [""])[0] or ""
             if not top_product and (row.product_fit or []):
@@ -335,6 +351,8 @@ async def _prepare_one(
             }
 
     if draft_source != "template":
+        if template_id:
+            raise HTTPException(status_code=400, detail="Could not apply that template")
         provider = get_ai_provider()
         draft = await provider.generate_personalized_outreach(
             company_name=row.company_name or "there",
@@ -931,6 +949,7 @@ async def prepare_outreach(
     request: Request,
     user: AuthUser = Depends(get_current_user),
     force: bool = False,
+    templateId: str = "",
 ):
     with Session(engine) as session:
         business_id = resolve_business_id(request, user, session)
@@ -939,7 +958,39 @@ async def prepare_outreach(
         db_user = session.get(User, user.id)
         if db_user:
             access_mod.consume_usage(session, db_user, "prepare")
-        row = await _prepare_one(session, row, seller, force=force or not row.outreach_draft)
+        forced = (templateId or "").strip() or None
+        row = await _prepare_one(
+            session,
+            row,
+            seller,
+            force=force or bool(forced) or not row.outreach_draft,
+            template_id=forced,
+        )
+        return prospect_to_frontend(row)
+
+
+@router.post("/{prospect_id}/apply-template")
+async def apply_template(
+    prospect_id: str,
+    payload: Dict[str, Any],
+    request: Request,
+    user: AuthUser = Depends(get_current_user),
+):
+    """Re-fill the current draft from a specific saved template."""
+    template_id = str(payload.get("templateId") or "").strip()
+    if not template_id:
+        raise HTTPException(status_code=400, detail="templateId is required")
+    with Session(engine) as session:
+        business_id = resolve_business_id(request, user, session)
+        row = _get_owned(session, prospect_id, business_id)
+        seller = _seller_name(session, business_id)
+        row = await _prepare_one(
+            session,
+            row,
+            seller,
+            force=True,
+            template_id=template_id,
+        )
         return prospect_to_frontend(row)
 
 

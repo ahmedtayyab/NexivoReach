@@ -1136,6 +1136,8 @@ function IntegrationsSection({
   const gmailPermissionMissing = Boolean(
     gmailStatus?.missingSendPermission || gmailStatus?.needsReconnect,
   );
+  // Sheets OAuth is separate from Gmail — always offer Connect Sheets until OAuth is real.
+  const sheetsConnectHref = '/api/auth/sheets';
 
   return (
     <div className="space-y-5 max-w-xl">
@@ -1155,36 +1157,43 @@ function IntegrationsSection({
         {!loading && platformReady && (
           <div className="space-y-3">
             {/* Sheets row */}
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-[13px] font-medium text-ink m-0">Sheets</p>
-                <p className="text-[12px] text-ink-secondary m-0 mt-0.5">
-                  {userOauth
-                    ? sheetLinked
-                      ? oauthEmail
-                        ? `Linked · ${oauthEmail}`
-                        : 'Linked'
-                      : oauthEmail
-                        ? `Ready · ${oauthEmail}`
-                        : 'Ready — create a spreadsheet below'
-                    : 'Not connected'}
-                </p>
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-medium text-ink m-0">Google Sheets</p>
+                  <p className="text-[12px] text-ink-secondary m-0 mt-0.5">
+                    {userOauth
+                      ? sheetLinked
+                        ? oauthEmail
+                          ? `Linked · ${oauthEmail}`
+                          : 'Linked'
+                        : oauthEmail
+                          ? `Ready · ${oauthEmail}`
+                          : 'Ready — create a spreadsheet below'
+                      : 'Not connected — required for spreadsheet sync'}
+                  </p>
+                </div>
               </div>
               {!userOauth ? (
                 <a
-                  href={gmailReady ? '/api/auth/sheets' : '/api/auth/workspace'}
-                  className="btn btn-primary shrink-0"
+                  href={sheetsConnectHref}
+                  className="btn btn-primary"
+                  style={{ display: 'inline-flex', width: '100%', justifyContent: 'center' }}
                 >
-                  {gmailReady ? 'Connect Sheets' : 'Connect Google'}
+                  Connect Google Sheets
                 </a>
               ) : (
-                <a href="/api/auth/sheets" className="btn btn-secondary shrink-0">
+                <a
+                  href={sheetsConnectHref}
+                  className="btn btn-secondary"
+                  style={{ display: 'inline-flex' }}
+                >
                   Reconnect Sheets
                 </a>
               )}
             </div>
 
-            {gmailReady && !userOauth && (
+            {(gmailReady || gmailStatus?.connected) && !userOauth && (
               <p
                 className="text-[12.5px] m-0 rounded-md px-3 py-2"
                 style={{
@@ -1193,7 +1202,7 @@ function IntegrationsSection({
                 }}
               >
                 Gmail is connected for sending, but <strong>Sheets is still separate</strong>.
-                Click <strong>Connect Sheets</strong> and allow Google Sheets / Drive access,
+                Click <strong>Connect Google Sheets</strong> and allow Sheets / Drive access,
                 then create or link a spreadsheet.
               </p>
             )}
@@ -1237,9 +1246,21 @@ function IntegrationsSection({
         )}
 
         {!platformReady && !loading && (
-          <p className="text-[12.5px] text-ink-secondary m-0">
-            Google sign-in is not configured on the server.
-          </p>
+          <div className="space-y-2">
+            <p className="text-[12.5px] text-ink-secondary m-0">
+              Google OAuth may still work for Gmail. Try Connect Sheets if Google sign-in is configured.
+            </p>
+            <a
+              href={sheetsConnectHref}
+              className="btn btn-primary"
+              style={{ display: 'inline-flex', width: '100%', justifyContent: 'center' }}
+            >
+              Connect Google Sheets
+            </a>
+            <a href="/api/auth/gmail" className="btn btn-secondary" style={{ display: 'inline-flex' }}>
+              Connect Gmail
+            </a>
+          </div>
         )}
 
         {userOauth && !sheetLinked && !loading && (

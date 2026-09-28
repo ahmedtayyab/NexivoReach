@@ -34,6 +34,7 @@ interface Props {
   outreachMode?: OutreachMode;
   onOutreachModeChange?: (mode: OutreachMode) => void | Promise<void>;
   templates?: OutreachTemplate[];
+  onApplyTemplate?: (prospectId: string, templateId: string) => void | Promise<void>;
 }
 
 type Filter = 'best_fit' | 'needs_review' | 'with_email' | 'no_email' | 'follow_up' | 'sent' | 'all';
@@ -76,8 +77,10 @@ export default function OutreachInboxView({
   outreachMode = 'ai',
   onOutreachModeChange,
   templates = [],
+  onApplyTemplate,
 }: Props) {
   const confirm = useConfirm();
+  const [templateBusy, setTemplateBusy] = useState(false);
   const withDrafts = useMemo(
     () => prospects.filter(p => p.outreachDraft),
     [prospects],
@@ -318,10 +321,28 @@ export default function OutreachInboxView({
           onModeChange={onOutreachModeChange}
           onGoTemplates={onGoTemplates}
           templates={templates}
+          activeDraftTemplateId={
+            draft?.templateId
+            || draft?.outreachRationale?.template_id
+            || ''
+          }
           activeDraftTemplateName={
             draft?.templateName
             || draft?.outreachRationale?.template_name
             || ''
+          }
+          templateSelectBusy={templateBusy}
+          onSelectTemplate={
+            current && onApplyTemplate
+              ? async (templateId) => {
+                  setTemplateBusy(true);
+                  try {
+                    await onApplyTemplate(current.id, templateId);
+                  } finally {
+                    setTemplateBusy(false);
+                  }
+                }
+              : undefined
           }
         />
       )}
