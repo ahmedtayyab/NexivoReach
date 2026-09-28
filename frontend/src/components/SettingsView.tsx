@@ -927,9 +927,14 @@ function IntegrationsSection({
   const [restoreMsg, setRestoreMsg] = useState('');
   const [syncingLeads, setSyncingLeads] = useState(false);
   const [syncLeadsMsg, setSyncLeadsMsg] = useState('');
+  /** After OAuth return, force-show spreadsheet setup even if status lags. */
+  const [oauthJustConnected, setOauthJustConnected] = useState(false);
 
   const sheetsReady = Boolean(
-    status?.connected || status?.userOauthConnected || status?.oauth?.connected,
+    status?.connected
+    || status?.userOauthConnected
+    || status?.oauth?.connected
+    || oauthJustConnected,
   );
   const gmailReady =
     Boolean(gmailStatus?.connected) &&
@@ -955,7 +960,11 @@ function IntegrationsSection({
       if (r.ok) {
         const data = await r.json();
         setStatus(data);
+        if (data?.userOauthConnected || data?.oauth?.connected) {
+          setOauthJustConnected(true);
+        }
         if (data.connected) {
+          setOauthJustConnected(false);
           const opts = await apiFetch('/api/sheets/restore-options');
           if (opts.ok) {
             const body = await opts.json();
@@ -983,10 +992,12 @@ function IntegrationsSection({
     const sheets = params.get('sheets');
     const gmail = params.get('gmail');
     if (sheets === 'connected' && gmail === 'connected') {
+      setOauthJustConnected(true);
       setConnectMsg('Google connected — create or link a spreadsheet for this company.');
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
       void load();
     } else if (sheets === 'connected' && gmail === 'needs_scope') {
+      setOauthJustConnected(true);
       setConnectMsg(
         "Sheets is connected, but send permission wasn't granted. Reconnect Gmail and allow access when Google asks.",
       );
@@ -999,24 +1010,28 @@ function IntegrationsSection({
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
       void load();
     } else if (sheets === 'connected') {
-      setConnectMsg('Google Sheets connected — create or link a spreadsheet for this company.');
+      setOauthJustConnected(true);
+      setConnectMsg('Google Sheets connected — create or link a spreadsheet for this company below.');
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
       void load();
     } else if (gmail === 'connected') {
-      setConnectMsg('Gmail connected — you can send from Outreach.');
+      setConnectMsg('Gmail connected — you can send from Outreach. Sheets still needs Connect Google Sheets.');
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
       void load();
     } else if (sheets === 'needs_scope') {
+      setOauthJustConnected(false);
       setConnectMsg(
-        "Sheets permission wasn't granted. Click Connect Sheets and allow Google Sheets / Drive when Google asks.",
+        "Sheets permission wasn't granted. Click Connect Google Sheets and allow Google Sheets / Drive when Google asks.",
       );
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
       void load();
     } else if (sheets === 'error' || gmail === 'error') {
+      setOauthJustConnected(false);
       setConnectMsg(
-        'Google Sheets connect failed. Click Connect Sheets, allow Sheets/Drive access, and try again.',
+        'Google Sheets connect failed. Click Connect Google Sheets, allow Sheets/Drive access, and try again.',
       );
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+      void load();
     }
   }, []);
 
@@ -1130,7 +1145,9 @@ function IntegrationsSection({
   };
 
   const platformReady = Boolean(status?.platformReady);
-  const userOauth = Boolean(status?.userOauthConnected ?? status?.oauth?.connected);
+  const userOauth = Boolean(
+    status?.userOauthConnected ?? status?.oauth?.connected ?? oauthJustConnected,
+  );
   const oauthEmail = status?.oauth?.email || gmailStatus?.email || '';
   const sheetLinked = Boolean(status?.connected);
   const gmailPermissionMissing = Boolean(
@@ -1138,6 +1155,7 @@ function IntegrationsSection({
   );
   // Sheets OAuth is separate from Gmail — always offer Connect Sheets until OAuth is real.
   const sheetsConnectHref = '/api/auth/sheets';
+  const showSpreadsheetSetup = (userOauth || oauthJustConnected) && !sheetLinked && !loading;
 
   return (
     <div className="space-y-5 max-w-xl">
@@ -1263,10 +1281,10 @@ function IntegrationsSection({
           </div>
         )}
 
-        {userOauth && !sheetLinked && !loading && (
+        {showSpreadsheetSetup && (
           <div className="space-y-2 pt-1 border-t border-border-subtle">
             <p className="text-[12.5px] text-ink-secondary m-0">
-              Create a spreadsheet for product and lead sync.
+              Sheets account is ready. Create a spreadsheet for product and lead sync.
             </p>
             <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
               <button

@@ -26,11 +26,17 @@ def _scopes_include_sheets(scope_blob: str | Set[str] | None) -> bool:
     if isinstance(scope_blob, set):
         granted = scope_blob
     else:
-        granted = {s for s in str(scope_blob or "").split() if s}
-    return SHEETS_SCOPE in granted
+        # Google may return space- or comma-separated scopes.
+        raw = str(scope_blob or "").replace(",", " ")
+        granted = {s for s in raw.split() if s}
+    return SHEETS_SCOPE in granted or any(s.rstrip("/").endswith("/auth/spreadsheets") for s in granted)
 
 
-def access_token_scopes(access_token: str) -> Set[str]:
+def access_token_scopes(access_token: str) -> Optional[Set[str]]:
+    """
+    Return granted scopes, or None when tokeninfo could not be checked
+    (network/error). Empty set means tokeninfo succeeded with no scopes.
+    """
     token = (access_token or "").strip()
     if not token:
         return set()
@@ -38,19 +44,39 @@ def access_token_scopes(access_token: str) -> Set[str]:
         with httpx.Client(timeout=8.0) as client:
             res = client.get(TOKENINFO_URL, params={"access_token": token})
             if res.status_code >= 400:
-                return set()
+                log.warning("sheets tokeninfo HTTP %s", res.status_code)
+                return None
             scope = (res.json() or {}).get("scope") or ""
-            return {s for s in scope.split() if s}
+            raw = str(scope).replace(",", " ")
+            return {s for s in raw.split() if s}
     except Exception as exc:
         log.warning("sheets tokeninfo failed: %r", exc)
-        return set()
+        return None
 
 
 def token_has_sheets_scopes(access_token: str, scope_hint: str = "") -> bool:
-    """True when tokeninfo or an OAuth scope hint includes spreadsheets."""
+    """True when tokeninfo or an OAuth scope hint includes spreadsheets.
+
+    If tokeninfo is unreachable and no hint is given, returns True when an
+    access token exists — do not treat unknown as "missing Sheets".
+    """
     if _scopes_include_sheets(scope_hint):
         return True
-    return _scopes_include_sheets(access_token_scopes(access_token))
+    scopes = access_token_scopes(access_token)
+    if scopes is None:
+        # Unknown — prefer not blocking Connect completion.
+        return bool((access_token or "").strip())
+    return _scopes_include_sheets(scopes)
+
+
+def token_definitely_lacks_sheets(access_token: str, scope_hint: str = "") -> bool:
+    """True only when we positively know spreadsheets scope is missing."""
+    if _scopes_include_sheets(scope_hint):
+        return False
+    scopes = access_token_scopes(access_token)
+    if scopes is None:
+        return False
+    return not _scopes_include_sheets(scopes)
 
 
 # Back-compat alias used by auth callbacks
@@ -69,18 +95,19 @@ def is_connected(user: User | None) -> bool:
 
 def sanitize_sheets_tokens(session: Session, user: User) -> User:
     """
-    Drop Sheets tokens that cannot actually call Sheets (e.g. Gmail-only access
-    accidentally stored on sheets_* fields). Returns the refreshed user row.
+    Only clear Sheets tokens when we *know* they lack spreadsheets scope.
+    Never wipe on tokeninfo/network failure — that was wiping good Connects.
     """
     access = (getattr(user, "sheets_access_token", None) or "").strip()
     refresh = (getattr(user, "sheets_refresh_token", None) or "").strip()
     if not access and not refresh:
         return user
 
-    if access and token_has_sheets_scopes(access):
+    # Fresh access with unknown/confirmed Sheets scopes → keep.
+    if access and not token_definitely_lacks_sheets(access):
         return user
 
-    # Access is missing or Gmail-only — try refresh candidates before giving up.
+    # Access is confirmed Gmail-only (or empty). Try refresh before clearing.
     gmail_refresh = (getattr(user, "gmail_refresh_token", None) or "").strip()
     candidates = [rt for rt in (refresh, gmail_refresh) if rt]
     if candidates:
@@ -88,14 +115,19 @@ def sanitize_sheets_tokens(session: Session, user: User) -> User:
             get_valid_access_token(session, user)
             session.refresh(user)
             access2 = (getattr(user, "sheets_access_token", None) or "").strip()
-            if access2 and token_has_sheets_scopes(access2):
+            if access2 and not token_definitely_lacks_sheets(access2):
                 return user
         except Exception as exc:
             log.info("sheets sanitize refresh failed: %r", exc)
+            # Keep existing refresh token — user can retry / reconnect.
+            if refresh:
+                return user
 
-    # Still unusable — clear so UI shows Connect Sheets again.
-    log.warning("Clearing unusable Sheets tokens for user %s", getattr(user, "id", "?"))
-    return clear_tokens(session, user)
+    # Confirmed unusable access-only poison with no usable refresh.
+    if access and token_definitely_lacks_sheets(access) and not refresh:
+        log.warning("Clearing Gmail-only Sheets access token for user %s", getattr(user, "id", "?"))
+        return clear_tokens(session, user)
+    return user
 
 
 def ensure_sheets_tokens_from_gmail(session: Session, user: User) -> User:
@@ -103,13 +135,9 @@ def ensure_sheets_tokens_from_gmail(session: Session, user: User) -> User:
     If Sheets looks disconnected but Gmail's refresh/access already has Sheets scopes
     (typical after Workspace → Connect Google), copy those tokens onto the Sheets fields.
     """
-    user = sanitize_sheets_tokens(session, user) if is_connected(user) else user
     if is_connected(user):
-        access = (getattr(user, "sheets_access_token", None) or "").strip()
-        if access and token_has_sheets_scopes(access):
-            return user
-        if (getattr(user, "sheets_refresh_token", None) or "").strip():
-            return user
+        # Soft sanitize — never clears on network blips.
+        return sanitize_sheets_tokens(session, user)
 
     gmail_refresh = (getattr(user, "gmail_refresh_token", None) or "").strip()
     gmail_access = (getattr(user, "gmail_access_token", None) or "").strip()
@@ -123,15 +151,17 @@ def ensure_sheets_tokens_from_gmail(session: Session, user: User) -> User:
         or ""
     )
 
-    if gmail_access and token_has_sheets_scopes(gmail_access):
-        return store_tokens(
-            session,
-            user,
-            access_token=gmail_access,
-            refresh_token=gmail_refresh or None,
-            expires_in=3600,
-            email=email,
-        )
+    if gmail_access:
+        scopes = access_token_scopes(gmail_access)
+        if scopes is not None and _scopes_include_sheets(scopes):
+            return store_tokens(
+                session,
+                user,
+                access_token=gmail_access,
+                refresh_token=gmail_refresh or None,
+                expires_in=3600,
+                email=email,
+            )
 
     if not gmail_refresh:
         return user
@@ -159,9 +189,14 @@ def ensure_sheets_tokens_from_gmail(session: Session, user: User) -> User:
             scope_hint = data.get("scope") or ""
             if not cand:
                 return user
-            if not token_has_sheets_scopes(cand, scope_hint):
+            if token_definitely_lacks_sheets(cand, scope_hint):
                 log.info("gmail refresh lacks Sheets scopes — user must Connect Sheets")
                 return user
+            # Only copy when Sheets is confirmed (hint or tokeninfo).
+            if not _scopes_include_sheets(scope_hint):
+                scopes = access_token_scopes(cand)
+                if scopes is None or not _scopes_include_sheets(scopes):
+                    return user
             return store_tokens(
                 session,
                 user,
@@ -177,12 +212,6 @@ def ensure_sheets_tokens_from_gmail(session: Session, user: User) -> User:
 
 def status_payload(user: User | None) -> Dict[str, Any]:
     connected = is_connected(user)
-    # Treat Gmail-only poison access as disconnected for UI.
-    if connected and user:
-        access = (getattr(user, "sheets_access_token", None) or "").strip()
-        refresh = (getattr(user, "sheets_refresh_token", None) or "").strip()
-        if access and not token_has_sheets_scopes(access) and not refresh:
-            connected = False
     return {
         "connected": connected,
         "email": (getattr(user, "sheets_email", None) or "") if connected and user else "",
@@ -275,8 +304,8 @@ def get_valid_access_token(session: Session, user: User) -> str:
                     last_detail = "empty access_token"
                     continue
                 scope_hint = data.get("scope") or ""
-                # Never store a Gmail-only token onto Sheets fields.
-                if not token_has_sheets_scopes(access, scope_hint):
+                # Skip only when we know this refresh cannot mint Sheets.
+                if token_definitely_lacks_sheets(access, scope_hint):
                     last_detail = "refresh token missing spreadsheets scope"
                     log.warning("Skipping Sheets refresh candidate without Sheets scopes")
                     continue

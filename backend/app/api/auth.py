@@ -212,15 +212,12 @@ def sheets_connect(request: Request, user: AuthUser = Depends(get_current_user))
     if not auth_required():
         raise HTTPException(status_code=400, detail="Connect Sheets after signing in with Google")
     state = create_oauth_state("sheets", user_id=user.id)
-    # Include previously granted Gmail scopes in the request so incremental
-    # consent returns a refresh token that still covers send + Sheets.
+    # Sheets + Drive only — include_granted_scopes keeps existing Gmail grants on the token.
     params = {
         "client_id": settings.GOOGLE_CLIENT_ID,
         "redirect_uri": effective_google_redirect_uri(),
         "response_type": "code",
-        "scope": (
-            f"openid email profile {gmail_mod.GMAIL_SCOPES} {sheets_oauth_mod.SHEETS_SCOPES}"
-        ),
+        "scope": f"openid email profile {sheets_oauth_mod.SHEETS_SCOPES}",
         "state": state,
         "access_type": "offline",
         "prompt": "consent",
@@ -619,13 +616,19 @@ def _sheets_callback(code: str, state_payload: dict, app_url: str):
             log.warning(
                 "Sheets token exchange failed: %s %s",
                 token_res.status_code,
-                (token_res.text or "")[:200],
+                (token_res.text or "")[:300],
             )
             return RedirectResponse(f"{app_url}/?sheets=error#integrations")
         token_data = token_res.json()
         access_token = token_data.get("access_token")
         refresh_token = token_data.get("refresh_token")
         scope_hint = token_data.get("scope") or ""
+        log.info(
+            "Sheets OAuth token ok user=%s has_refresh=%s scope_hint=%r",
+            user_id,
+            bool(refresh_token),
+            (scope_hint or "")[:200],
+        )
         if not access_token:
             return RedirectResponse(f"{app_url}/?sheets=error#integrations")
         info_res = client.get(
@@ -647,7 +650,8 @@ def _sheets_callback(code: str, state_payload: dict, app_url: str):
         if not refresh_token and not existing_rt:
             log.warning("Sheets OAuth returned no refresh_token and none stored for user %s", user_id)
             return RedirectResponse(f"{app_url}/?sheets=error#integrations")
-        if not sheets_oauth_mod.token_has_sheets_scopes(access_token, scope_hint):
+        # Reject only when scopes are positively missing.
+        if sheets_oauth_mod.token_definitely_lacks_sheets(access_token, scope_hint):
             log.warning(
                 "Sheets OAuth missing spreadsheets scope for user %s (hint=%r)",
                 user_id,
@@ -665,6 +669,11 @@ def _sheets_callback(code: str, state_payload: dict, app_url: str):
             expires_in=expires_in,
             email=email,
         )
+        log.info(
+            "Sheets tokens stored for user %s email=%s",
+            user_id,
+            email,
+        )
         # New refresh tokens supersede older ones for the same Google client —
         # keep Gmail usable when this consent also includes send scope.
         user = session.get(User, user_id) or user
@@ -679,8 +688,8 @@ def _sheets_callback(code: str, state_payload: dict, app_url: str):
             )
 
     response = HTMLResponse(
-        """<!DOCTYPE html><html><head><meta charset="utf-8"></head>"""
-        """<body><script>window.location.replace('/?sheets=connected#integrations');</script></body></html>"""
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>"
+        f"<body><script>window.location.replace('{app_url}/?sheets=connected#integrations');</script></body></html>"
     )
     response.delete_cookie("nr_oauth_state", path="/")
     return response
