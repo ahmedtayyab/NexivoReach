@@ -1,4 +1,5 @@
-# Render / production: frontend build + FastAPI on one port
+# Render / production: frontend build + FastAPI on one port.
+# Intentionally NO Playwright Chromium — free/small instances OOM with a browser.
 FROM node:20-alpine AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
@@ -9,13 +10,13 @@ RUN npm run build
 FROM python:3.11-slim
 WORKDIR /app
 COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt \
-    && playwright install --with-deps chromium
+RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./
 COPY --from=frontend-build /app/frontend/dist ./static
 ENV PYTHONPATH=/app
 ENV STATIC_DIR=/app/static
-ENV CONTACT_BROWSER_ENABLED=true
+ENV CONTACT_BROWSER_ENABLED=false
+ENV HUNT_ENRICH_CONCURRENCY=3
 RUN test -f /app/static/index.html
 EXPOSE 10000
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
