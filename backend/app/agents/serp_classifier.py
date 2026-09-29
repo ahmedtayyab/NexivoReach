@@ -56,18 +56,6 @@ WHOLESALE_SIGNAL_RE = re.compile(
     r"\b(distributor|distributors|wholesale|wholesaler|importer|importers|dealer|b2b|bulk orders?|trade only)\b",
     re.I,
 )
-# Clear peer-factory language (not mere "OEM products" / "manufacturing quality").
-FACTORY_SELF_RE = re.compile(
-    r"\b("
-    r"we (are|'re) (a |an )?(leading |oem )?(manufacturer|factory)|"
-    r"our (own )?factory|our manufacturing|"
-    r"oem (manufacturer|factory)|"
-    r"factory (in|based|located)|"
-    r"(leading|premier|established)\s+(manufacturer|factory)\b|"
-    r"manufacturer and (factory|exporter|exporterer|supplier)( of)?"
-    r")\b",
-    re.I,
-)
 
 
 def _host(url: str) -> str:
@@ -120,8 +108,8 @@ def classify_serp_row(
     elif _endswith_any(host, NEWS_HOSTS) or re.search(r"/(news|press|article)/", url.lower()):
         reject, entity, reason = True, "news", "News article — not the company"
 
-    elif hunting_buyers and FACTORY_SELF_RE.search(blob) and not BUYER_RE.search(blob) and not WHOLESALE_SIGNAL_RE.search(blob):
-        # Only hard-drop clear peer factories on channel hunts — not vague "OEM" marketing.
+    elif hunting_buyers and MFR_RE.search(blob) and not BUYER_RE.search(blob):
+        # Channel hunts (distributors/wholesalers/importers) should not keep peer factories.
         dq = (row.get("discovery_query") or "").lower()
         channel_hunt = bool(
             re.search(r"\b(distributor|wholesaler|importer|dealer)s?\b", dq)
@@ -166,14 +154,15 @@ def classify_serp_row(
     if target_places and not reject:
         from app.agents.geo import location_conflicts_with_targets
 
-        # Keep foreign ccTLDs (.pk) and explicit wrong addresses out of place hunts.
-        # Do NOT reject US .com sites just because marketing copy mentions China/Pakistan.
         if location.strip() and location_conflicts_with_targets(location, target_places):
             reject, entity, reason = True, "wrong_geo", "Address is outside the requested location"
+        elif geo_ok is False and _foreign_geo_conflict(geo_source, target_places):
+            reject, entity, reason = True, "wrong_geo", "Geography conflicts with target markets"
+        elif strict_geo and _foreign_geo_conflict(geo_source, target_places):
+            # Even without an explicit geo_ok=False, foreign country / TLD vs hunt place → drop.
+            reject, entity, reason = True, "wrong_geo", "Geography conflicts with target markets"
         elif strict_geo and _foreign_tld_conflict(url, target_places):
             reject, entity, reason = True, "wrong_geo", "Website TLD conflicts with target markets"
-        elif geo_ok is False and location.strip() and _foreign_geo_conflict(location, target_places):
-            reject, entity, reason = True, "wrong_geo", "Geography conflicts with target markets"
 
     # Manufacturers already handled above for channel hunts
     competitor_seed = False

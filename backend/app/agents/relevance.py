@@ -320,7 +320,9 @@ def qualify_from_fast_decision(
     )
     from app.agents.serp_classifier import (
         BUYER_RE,
+        MFR_RE,
         WHOLESALE_SIGNAL_RE,
+        _foreign_geo_conflict,
         _foreign_tld_conflict,
     )
 
@@ -343,9 +345,7 @@ def qualify_from_fast_decision(
 
     # Peer manufacturers are not channel buyers (distributors/wholesalers/importers).
     if profile.hunting_buyers and channel_role:
-        from app.agents.serp_classifier import FACTORY_SELF_RE
-
-        mfr_hit = bool(MFR_SELF.search(site_blob) or FACTORY_SELF_RE.search(site_blob))
+        mfr_hit = bool(MFR_SELF.search(site_blob) or MFR_RE.search(site_blob))
         # Ignore negated channel language ("no wholesale…") when deciding if they buy.
         channel_blob = re.sub(
             r"\b(no|not|without|never|don'?t)\s+(a\s+|an\s+|any\s+)?"
@@ -391,12 +391,11 @@ def qualify_from_fast_decision(
                 "industry": _industry_label(site_blob, profile),
             }
 
-    # Strict place hunts: reject foreign ccTLDs / resolved addresses that conflict.
-    # Do not reject a US .com just because copy mentions overseas sourcing.
+    # Strict place hunts: reject when site/URL clearly points elsewhere (e.g. Pakistan vs NY).
     if getattr(profile, "strict_geo", False) and profile.places:
-        if _foreign_tld_conflict(url, list(profile.places)) or (
-            location
-            and location_conflicts_with_targets(location, list(profile.places))
+        geo_blob = f"{location}\n{site_blob}\n{url}"
+        if _foreign_tld_conflict(url, list(profile.places)) or _foreign_geo_conflict(
+            geo_blob, list(profile.places)
         ):
             return {
                 "icpFit": "low",
@@ -640,19 +639,19 @@ async def ask_relevance(
 
 
 def _geo_contradicts(location: str, places: List[str], site_text: str, row: Dict[str, Any]) -> bool:
-    """Reject when resolved address or foreign ccTLD conflicts with the hunt place.
-
-    Marketing copy that names overseas sourcing (China/Pakistan) must not kill a US lead.
-    """
+    """Reject when resolved address or site copy conflicts with the hunt place."""
     if not places:
         return False
     loc = (location or row.get("location") or "").strip()
     if loc and location_conflicts_with_targets(loc, places):
         return True
-    from app.agents.serp_classifier import _foreign_tld_conflict
+    from app.agents.serp_classifier import _foreign_geo_conflict, _foreign_tld_conflict
 
+    blob = f"{loc}\n{site_text or ''}\n{row.get('snippet') or ''}\n{row.get('title') or ''}"
     url = (row.get("website") or "").strip()
     if _foreign_tld_conflict(url, places):
+        return True
+    if _foreign_geo_conflict(blob, places):
         return True
     return False
 

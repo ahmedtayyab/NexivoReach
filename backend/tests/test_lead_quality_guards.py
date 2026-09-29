@@ -37,7 +37,7 @@ def test_channel_hunt_rejects_manufacturer_serp():
         {
             "company_name": "Sialkot Strap Factory",
             "website": "https://sialkotstraps.example/",
-            "snippet": "We are a leading manufacturer. Our factory of weightlifting straps",
+            "snippet": "OEM manufacturer and factory of weightlifting straps",
             "discovery_query": "weightlifting straps distributors New York, United States",
         },
         hunting_buyers=True,
@@ -46,23 +46,6 @@ def test_channel_hunt_rejects_manufacturer_serp():
     )
     assert row["reject"] is True
     assert row["entity_type"] == "manufacturer"
-
-
-def test_channel_hunt_keeps_vague_oem_marketing():
-    """Vague OEM/manufacturing marketing alone must not wipe channel SERP hits."""
-    profile = _channel_profile()
-    row = classify_serp_row(
-        {
-            "company_name": "Metro Fitness Supply",
-            "website": "https://metrofitnesssupply.com/",
-            "snippet": "Wholesale gym gear with OEM manufacturing quality straps and belts",
-            "discovery_query": "weightlifting straps wholesalers New York, United States",
-        },
-        hunting_buyers=True,
-        target_places=profile.places,
-        strict_geo=True,
-    )
-    assert row["reject"] is False
 
 
 def test_channel_hunt_rejects_pakistan_tld_for_ny():
