@@ -4982,3 +4982,68 @@ input:focus, textarea:focus, select:focus {
   .hunt-search-bar__cta { width: 100%; }
 }
 
+/* Admin → user message popup (additive) */
+.admin-msg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: color-mix(in srgb, var(--navy, #172033) 42%, transparent);
+  backdrop-filter: blur(4px);
+}
+.admin-msg-dialog {
+  width: min(100%, 26rem);
+  background: var(--bg-panel, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  padding: 1.35rem 1.35rem 1.2rem;
+  box-shadow: 0 18px 40px rgba(23, 32, 51, 0.18);
+}
+.admin-msg-dialog--warn {
+  border-color: color-mix(in srgb, #d97706 45%, var(--border, #e5e7eb));
+}
+.admin-msg-dialog--action_required {
+  border-color: color-mix(in srgb, #dc2626 40%, var(--border, #e5e7eb));
+}
+.admin-msg-dialog__eyebrow {
+  margin: 0 0 0.35rem;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #6b7280);
+}
+.admin-msg-dialog__title {
+  margin: 0 0 0.65rem;
+  font-size: 1.15rem;
+  font-weight: 650;
+  color: var(--text-primary, #111);
+  line-height: 1.3;
+}
+.admin-msg-dialog__body {
+  margin: 0 0 1rem;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-secondary, #374151);
+  white-space: pre-wrap;
+}
+.admin-msg-dialog__reply {
+  width: 100%;
+  margin: 0 0 1rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13.5px;
+  resize: vertical;
+  background: var(--bg-page, #fff);
+  color: var(--text-primary, #111);
+}
+.admin-msg-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+

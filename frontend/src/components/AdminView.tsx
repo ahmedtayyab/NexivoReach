@@ -250,11 +250,31 @@ function WeekChart({ series }: { series: Overview['series'] }) {
 }
 
 export default function AdminView({ onToast }: Props) {
-  const [tab, setTab] = useState<'ops' | 'support'>('ops');
+  const [tab, setTab] = useState<'ops' | 'support' | 'messages'>('ops');
   const [overview, setOverview] = useState<Overview | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [invites, setInvites] = useState<Invite[]>([]);
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [adminMessages, setAdminMessages] = useState<
+    {
+      id: string;
+      title: string;
+      body: string;
+      severity: string;
+      audience: string;
+      targetUserId?: string | null;
+      createdAt: string;
+      deliveryCount: number;
+      pendingPopupCount: number;
+    }[]
+  >([]);
+  const [msgTitle, setMsgTitle] = useState('');
+  const [msgBody, setMsgBody] = useState('');
+  const [msgSeverity, setMsgSeverity] = useState<'info' | 'warn' | 'action_required'>('info');
+  const [msgAudience, setMsgAudience] = useState<'all' | 'user'>('all');
+  const [msgTargetUserId, setMsgTargetUserId] = useState('');
+  const [msgBusy, setMsgBusy] = useState(false);
+  const [msgFeedback, setMsgFeedback] = useState('');
   const [openTicketCount, setOpenTicketCount] = useState(0);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [ticketReply, setTicketReply] = useState('');
@@ -285,11 +305,12 @@ export default function AdminView({ onToast }: Props) {
       setError('');
     }
     try {
-      const [o, u, a, t] = await Promise.all([
+      const [o, u, a, t, m] = await Promise.all([
         apiFetch('/api/admin/overview'),
         apiFetch('/api/admin/users'),
         apiFetch('/api/admin/allowlist'),
         apiFetch('/api/admin/tickets'),
+        apiFetch('/api/admin/messages'),
       ]);
       if (!o.ok) {
         if (o.status === 403) {
@@ -316,6 +337,10 @@ export default function AdminView({ onToast }: Props) {
       setInviteOnly(Boolean(allowData.inviteOnly ?? overviewData.inviteOnly));
       setTickets(Array.isArray(ticketData.tickets) ? ticketData.tickets : []);
       setOpenTicketCount(Number(ticketData.openCount) || 0);
+      if (m.ok) {
+        const msgData = await m.json();
+        setAdminMessages(Array.isArray(msgData.messages) ? msgData.messages : []);
+      }
     } catch (e) {
       if (!opts?.silent) setError(e instanceof Error ? e.message : 'Failed to load admin');
     } finally {
@@ -524,6 +549,63 @@ export default function AdminView({ onToast }: Props) {
     }
   };
 
+  const sendAdminMessage = async (e?: FormEvent) => {
+    e?.preventDefault();
+    const title = msgTitle.trim();
+    const body = msgBody.trim();
+    if (title.length < 2 || body.length < 2) {
+      setMsgFeedback('Title and body are required.');
+      return;
+    }
+    if (msgAudience === 'user' && !msgTargetUserId) {
+      setMsgFeedback('Pick a user for a direct message.');
+      return;
+    }
+    setMsgBusy(true);
+    setMsgFeedback('');
+    try {
+      const resp = await apiFetch('/api/admin/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          body,
+          severity: msgSeverity,
+          audience: msgAudience,
+          targetUserId: msgAudience === 'user' ? msgTargetUserId : null,
+        }),
+      });
+      if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Send failed'));
+      const created = await resp.json();
+      setAdminMessages(prev => [
+        {
+          id: created.id,
+          title: created.title,
+          body: created.body,
+          severity: created.severity,
+          audience: created.audience,
+          targetUserId: created.targetUserId,
+          createdAt: created.createdAt,
+          deliveryCount: created.deliveryCount || 0,
+          pendingPopupCount: created.pendingPopupCount || 0,
+        },
+        ...prev,
+      ]);
+      setMsgTitle('');
+      setMsgBody('');
+      setMsgFeedback(
+        `Sent to ${created.deliveryCount || 0} user${(created.deliveryCount || 0) === 1 ? '' : 's'} — popup on next open.`,
+      );
+      onToast?.('ok', 'Message sent', `Delivered to ${created.deliveryCount || 0}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Send failed';
+      setMsgFeedback(message);
+      onToast?.('error', 'Could not send message', message);
+    } finally {
+      setMsgBusy(false);
+    }
+  };
+
   const saveHuntSettings = async (e?: FormEvent) => {
     e?.preventDefault();
     setHuntSettingsBusy(true);
@@ -701,7 +783,127 @@ export default function AdminView({ onToast }: Props) {
             </span>
           )}
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'messages'}
+          className={`admin-tabs__btn ${tab === 'messages' ? 'is-active' : ''}`}
+          onClick={() => setTab('messages')}
+        >
+          Messages
+        </button>
       </div>
+
+      {tab === 'messages' && (
+        <div className="admin-grid admin-grid--users mb-4">
+          <section className="admin-panel admin-panel--stretch">
+            <div className="admin-panel__head">
+              <h2>Send message</h2>
+            </div>
+            <p className="text-[13px] text-ink-muted m-0 mb-3">
+              Shows as a one-time popup. After acknowledge, reply, or dismiss it stays in Notifications.
+              Reply opens a Support ticket.
+            </p>
+            <form className="flex flex-col gap-3 max-w-xl" onSubmit={e => void sendAdminMessage(e)}>
+              <label className="admin-filter-bar__field">
+                <span>Title</span>
+                <input
+                  type="text"
+                  value={msgTitle}
+                  onChange={e => setMsgTitle(e.target.value)}
+                  placeholder="e.g. Maintenance tonight"
+                  maxLength={200}
+                />
+              </label>
+              <label className="admin-filter-bar__field">
+                <span>Message</span>
+                <textarea
+                  value={msgBody}
+                  onChange={e => setMsgBody(e.target.value)}
+                  rows={5}
+                  placeholder="What should the user know?"
+                  maxLength={4000}
+                />
+              </label>
+              <div className="flex flex-wrap gap-3">
+                <label className="admin-filter-bar__field">
+                  <span>Severity</span>
+                  <select
+                    value={msgSeverity}
+                    onChange={e =>
+                      setMsgSeverity(e.target.value as 'info' | 'warn' | 'action_required')
+                    }
+                  >
+                    <option value="info">Info</option>
+                    <option value="warn">Warning</option>
+                    <option value="action_required">Action required</option>
+                  </select>
+                </label>
+                <label className="admin-filter-bar__field">
+                  <span>Audience</span>
+                  <select
+                    value={msgAudience}
+                    onChange={e => setMsgAudience(e.target.value as 'all' | 'user')}
+                  >
+                    <option value="all">All users</option>
+                    <option value="user">One user</option>
+                  </select>
+                </label>
+                {msgAudience === 'user' && (
+                  <label className="admin-filter-bar__field" style={{ minWidth: '14rem' }}>
+                    <span>User</span>
+                    <select
+                      value={msgTargetUserId}
+                      onChange={e => setMsgTargetUserId(e.target.value)}
+                    >
+                      <option value="">Select…</option>
+                      {users.map(u => (
+                        <option key={u.id} value={u.id}>
+                          {u.name || u.email} ({u.email})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+              <button type="submit" className="btn btn-primary self-start" disabled={msgBusy}>
+                {msgBusy ? 'Sending…' : 'Send message'}
+              </button>
+              {msgFeedback && (
+                <p className="admin-panel__foot m-0" role="status">
+                  {msgFeedback}
+                </p>
+              )}
+            </form>
+          </section>
+
+          <section className="admin-panel">
+            <div className="admin-panel__head">
+              <h2>Recent messages</h2>
+              <span className="text-[12px] text-ink-muted">{adminMessages.length}</span>
+            </div>
+            {adminMessages.length === 0 ? (
+              <p className="text-[13px] text-ink-muted m-0">No messages sent yet.</p>
+            ) : (
+              <ul className="admin-top">
+                {adminMessages.map(m => (
+                  <li key={m.id}>
+                    <div className="flex flex-col gap-0.5 py-2 px-1">
+                      <span className="admin-top__name">{m.title}</span>
+                      <span className="admin-top__meta">
+                        {m.severity} · {m.audience === 'user' ? 'direct' : 'all'} ·{' '}
+                        {m.deliveryCount} delivered · {m.pendingPopupCount} pending popup
+                        {m.createdAt ? ` · ${m.createdAt.slice(0, 10)}` : ''}
+                      </span>
+                      <span className="text-[12.5px] text-ink-muted line-clamp-2">{m.body}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      )}
 
       {tab === 'support' && (
         <div className="admin-grid admin-grid--users mb-4">

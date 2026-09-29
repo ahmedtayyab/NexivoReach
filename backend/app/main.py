@@ -22,6 +22,7 @@ from app.api import (
     notifications,
     support,
     billing,
+    messages,
 )
 import app.models.schemas  # ensure SQLModel models are imported so metadata is registered
 from app.database.session import init_db
@@ -69,6 +70,7 @@ app.include_router(admin.router)
 app.include_router(notifications.router)
 app.include_router(support.router)
 app.include_router(billing.router)
+app.include_router(messages.router)
 
 
 @app.on_event("startup")

@@ -320,13 +320,46 @@ class Notification(SQLModel, table=True):
 
     id: Optional[str] = Field(default=None, primary_key=True)
     user_id: str = Field(index=True)
-    kind: str = "info"  # info | warn | usage | system | ticket
+    kind: str = "info"  # info | warn | usage | system | ticket | admin_message
     title: str = ""
     body: str = ""
     href: Optional[str] = None
     read_at: Optional[str] = None
     created_at: str = ""
     meta: dict = Field(default={}, sa_type=JSON)
+
+
+class AdminMessage(SQLModel, table=True):
+    """Admin-authored broadcast or direct message to users."""
+
+    __tablename__ = "admin_message"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    from_admin_id: str = Field(index=True)
+    title: str = ""
+    body: str = ""
+    severity: str = "info"  # info | warn | action_required
+    # "all" or a single user id
+    audience: str = "all"
+    target_user_id: Optional[str] = Field(default=None, index=True)
+    created_at: str = ""
+    expires_at: Optional[str] = None
+
+
+class AdminMessageDelivery(SQLModel, table=True):
+    """Per-user delivery state for an admin message (popup → notification)."""
+
+    __tablename__ = "admin_message_delivery"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    message_id: str = Field(index=True)
+    user_id: str = Field(index=True)
+    notification_id: Optional[str] = None
+    # pending_popup | acknowledged | dismissed | replied
+    status: str = "pending_popup"
+    ticket_id: Optional[str] = None
+    created_at: str = ""
+    resolved_at: Optional[str] = None
 
 
 class SupportTicket(SQLModel, table=True):

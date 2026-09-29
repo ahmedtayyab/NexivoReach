@@ -31,6 +31,7 @@ import ReviewDrawer from './components/prospects/ReviewDrawer';
 import ActivityView from './components/ActivityView';
 import AdminView from './components/AdminView';
 import SupportView from './components/SupportView';
+import AdminMessagePopup from './components/AdminMessagePopup';
 import NotificationsRail, {
   NotificationHeaderButton,
   useNotificationUnread,
@@ -1174,6 +1175,15 @@ export default function App() {
       />
 
       <ToastHost toasts={toasts} onDismiss={dismissToast} />
+
+      {user && !user.isSuspended && (
+        <AdminMessagePopup
+          userId={user.id}
+          onToast={pushToast}
+          onOpenSupport={() => navigate('support')}
+          onRefreshNotifications={() => setNotifSheetOpen(false)}
+        />
+      )}
 
       <MobileNav
         activeTab={sidebarTabForRoute(activeRoute)}

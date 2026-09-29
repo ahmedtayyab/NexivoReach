@@ -540,3 +540,53 @@ def patch_ticket(ticket_id: str, payload: TicketPatch, _admin: AuthUser = Depend
 
         email, name = _user_label(session, row.user_id)
         return serialize_ticket(row, email=email, name=name)
+
+
+class AdminMessageCreate(BaseModel):
+    title: str
+    body: str
+    severity: str = "info"  # info | warn | action_required
+    audience: str = "all"  # all | user
+    targetUserId: Optional[str] = None
+
+
+@router.get("/messages")
+def list_admin_messages(_admin: AuthUser = Depends(_require_admin), limit: int = 40):
+    from app.services import admin_messages as msg_mod
+
+    with Session(engine) as session:
+        return {"messages": msg_mod.list_messages(session, limit=limit)}
+
+
+@router.post("/messages")
+def create_admin_message(payload: AdminMessageCreate, admin: AuthUser = Depends(_require_admin)):
+    from app.models.schemas import AdminMessageDelivery
+    from app.services import admin_messages as msg_mod
+
+    title = (payload.title or "").strip()
+    body = (payload.body or "").strip()
+    if len(title) < 2:
+        raise HTTPException(status_code=400, detail="Title is required")
+    if len(body) < 2:
+        raise HTTPException(status_code=400, detail="Message body is required")
+    audience = (payload.audience or "all").strip().lower()
+    if audience == "user" and not (payload.targetUserId or "").strip():
+        raise HTTPException(status_code=400, detail="Pick a user for a direct message")
+
+    with Session(engine) as session:
+        msg = msg_mod.create_and_deliver(
+            session,
+            admin_id=admin.id,
+            title=title,
+            body=body,
+            severity=payload.severity or "info",
+            audience=audience,
+            target_user_id=payload.targetUserId,
+        )
+        deliveries = session.exec(
+            select(AdminMessageDelivery).where(AdminMessageDelivery.message_id == msg.id)
+        ).all()
+        return {
+            **msg_mod.serialize_message(msg, delivery_count=len(deliveries), pending=len(deliveries)),
+            "ok": True,
+        }
