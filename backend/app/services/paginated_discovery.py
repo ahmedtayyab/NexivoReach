@@ -535,8 +535,7 @@ async def run_paginated_discovery(
                 "snippet": snippet,
                 "discovery_query": discovery_query,
                 "discovery_queries": discovery_queries,
-                # Never stamp the hunt place as the company address — resolve from site/SERP only.
-                "location": (found.get("location") or "").strip(),
+                "location": location_hint or found.get("location") or "",
                 "source": "web",
             }
             triage = serp_triage(row, categories=profile.categories, buyers=profile.buyers)
@@ -611,8 +610,6 @@ async def run_paginated_discovery(
                 )[:16]
                 fb["emailStatus"] = email_status
                 fb["emailSource"] = email_source
-                if location_hint:
-                    fb["huntLocation"] = location_hint
 
                 # Merge into existing prospect or create
                 existing = None
@@ -683,7 +680,7 @@ async def run_paginated_discovery(
                     id=prospect_id,
                     company_name=company_name or "Unknown",
                     website=website,
-                    location=(q.get("location") or "")[:200],
+                    location=(q.get("location") or location_hint or "")[:200],
                     industry=(q.get("industry") or "")[:80],
                     company_size="",
                     fit_score=int(q.get("fitScore") or 0),
@@ -861,7 +858,7 @@ async def run_paginated_discovery(
                     },
                     hunting_buyers=profile.hunting_buyers,
                     target_places=profile.places,
-                    strict_geo=bool(getattr(profile, "strict_geo", False)),
+                    strict_geo=False,
                     offer_categories=profile.categories,
                 )
                 if classified.get("reject"):

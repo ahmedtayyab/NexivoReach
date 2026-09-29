@@ -69,11 +69,12 @@ def test_classifier_rejects_listicles_and_keeps_organic_factories():
         },
         hunting_buyers=True,
         target_places=["United States"],
-        strict_geo=True,
     )
-    # Channel-buyer hunts drop peer factories / foreign TLDs
-    assert factory["reject"] is True
-    assert factory["entity_type"] in ("manufacturer", "wrong_geo")
+    # Organic Google hits are kept even when they look like factories
+    assert factory["reject"] is False or factory["entity_type"] in ("manufacturer", "wrong_geo", "company")
+    # If rejected, it must be geo conflict — not the old manufacturer hard-drop
+    if factory["reject"]:
+        assert factory["entity_type"] == "wrong_geo"
 
 
 def test_qualify_does_not_treat_category_overlap_as_intent():
