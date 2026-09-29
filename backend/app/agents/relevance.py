@@ -308,6 +308,7 @@ def qualify_from_fast_decision(
 ) -> Dict[str, Any]:
     """Build a qualify-shaped result from SERP triage (or a quick homepage heuristic)."""
     from app.agents.qualify import (
+        MFR_SELF,
         _approach,
         _fit_score_only,
         _hunt_buyer_label,
@@ -316,6 +317,13 @@ def qualify_from_fast_decision(
         _industry_label,
         _resolve_location,
         offer_ev_as_matches,
+    )
+    from app.agents.serp_classifier import (
+        BUYER_RE,
+        MFR_RE,
+        WHOLESALE_SIGNAL_RE,
+        _foreign_geo_conflict,
+        _foreign_tld_conflict,
     )
 
     name = row.get("company_name") or "This company"
@@ -329,6 +337,98 @@ def qualify_from_fast_decision(
         product = (profile.categories[0] if profile.categories else "") or ""
     if not role:
         role = (profile.buyers[0] if profile.buyers else "distributors") or "distributors"
+
+    channel_role = bool(
+        re.search(r"\b(distributor|wholesaler|importer|dealer)s?\b", (role or dq or "").lower())
+    )
+    site_blob = f"{name}\n{title}\n{snippet}\n{site_text or ''}"
+
+    # Peer manufacturers are not channel buyers (distributors/wholesalers/importers).
+    if profile.hunting_buyers and channel_role:
+        mfr_hit = bool(MFR_SELF.search(site_blob) or MFR_RE.search(site_blob))
+        # Ignore negated channel language ("no wholesale…") when deciding if they buy.
+        channel_blob = re.sub(
+            r"\b(no|not|without|never|don'?t)\s+(a\s+|an\s+|any\s+)?"
+            r"(wholesale|wholesaler|distributor|importer|dealer|b2b)\b[^.!?\n]*",
+            " ",
+            site_blob,
+            flags=re.I,
+        )
+        buyer_hit = bool(
+            WHOLESALE_SIGNAL_RE.search(channel_blob) or BUYER_RE.search(channel_blob)
+        )
+        if mfr_hit and not buyer_hit:
+            return {
+                "icpFit": "low",
+                "offerFit": "low",
+                "motionFit": "low",
+                "fitSummary": "low",
+                "intent": "none",
+                "confidence": 0.85,
+                "priority": "reject",
+                "evidence": [],
+                "whyThisProspect": (
+                    f"{name}: skipped — looks like a manufacturer/factory, not a "
+                    f"{role or 'channel buyer'}."
+                ),
+                "whyNow": "No timing evidence.",
+                "fitScore": 15,
+                "fitBreakdown": {
+                    "aiRelevant": False,
+                    "aiReason": "Peer manufacturer on a channel-buyer hunt.",
+                    "discoveryQuery": dq,
+                    "huntProduct": product,
+                    "huntBuyerType": role,
+                    "huntMatches": _hunt_matches(row),
+                    "triage": triage.get("verdict"),
+                    "entityType": "manufacturer",
+                },
+                "buyingSignals": [],
+                "productFit": [],
+                "shouldPersist": False,
+                "recommendedApproach": "Do not contact — peer manufacturer, not a buyer.",
+                "location": location,
+                "industry": _industry_label(site_blob, profile),
+            }
+
+    # Strict place hunts: reject when site/URL clearly points elsewhere (e.g. Pakistan vs NY).
+    if getattr(profile, "strict_geo", False) and profile.places:
+        geo_blob = f"{location}\n{site_blob}\n{url}"
+        if _foreign_tld_conflict(url, list(profile.places)) or _foreign_geo_conflict(
+            geo_blob, list(profile.places)
+        ):
+            return {
+                "icpFit": "low",
+                "offerFit": "low",
+                "motionFit": "unknown",
+                "fitSummary": "low",
+                "intent": "none",
+                "confidence": 0.85,
+                "priority": "reject",
+                "evidence": [],
+                "whyThisProspect": (
+                    f"{name}: skipped — company geography conflicts with "
+                    f"{', '.join(profile.places[:2])}."
+                ),
+                "whyNow": "No timing evidence.",
+                "fitScore": 18,
+                "fitBreakdown": {
+                    "aiRelevant": False,
+                    "aiReason": "Off-geo for strict location hunt.",
+                    "discoveryQuery": dq,
+                    "huntProduct": product,
+                    "huntBuyerType": role,
+                    "huntMatches": _hunt_matches(row),
+                    "triage": triage.get("verdict"),
+                    "resolvedLocation": location,
+                },
+                "buyingSignals": [],
+                "productFit": [],
+                "shouldPersist": False,
+                "recommendedApproach": "Do not contact — wrong geography.",
+                "location": location,
+                "industry": _industry_label(site_blob, profile),
+            }
 
     if _geo_contradicts(location, list(profile.places or []), site_text or "", row):
         return {
@@ -539,11 +639,19 @@ async def ask_relevance(
 
 
 def _geo_contradicts(location: str, places: List[str], site_text: str, row: Dict[str, Any]) -> bool:
-    """Reject only when we have an explicit address that conflicts with the hunt place."""
+    """Reject when resolved address or site copy conflicts with the hunt place."""
     if not places:
         return False
     loc = (location or row.get("location") or "").strip()
     if loc and location_conflicts_with_targets(loc, places):
+        return True
+    from app.agents.serp_classifier import _foreign_geo_conflict, _foreign_tld_conflict
+
+    blob = f"{loc}\n{site_text or ''}\n{row.get('snippet') or ''}\n{row.get('title') or ''}"
+    url = (row.get("website") or "").strip()
+    if _foreign_tld_conflict(url, places):
+        return True
+    if _foreign_geo_conflict(blob, places):
         return True
     return False
 

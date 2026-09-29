@@ -109,8 +109,19 @@ def classify_serp_row(
         reject, entity, reason = True, "news", "News article — not the company"
 
     elif hunting_buyers and MFR_RE.search(blob) and not BUYER_RE.search(blob):
-        # Tag only — do not drop organic Google companies that look like factories
-        entity, reason = "manufacturer", "Manufacturer language — kept as organic Google hit"
+        # Channel hunts (distributors/wholesalers/importers) should not keep peer factories.
+        dq = (row.get("discovery_query") or "").lower()
+        channel_hunt = bool(
+            re.search(r"\b(distributor|wholesaler|importer|dealer)s?\b", dq)
+        )
+        if channel_hunt:
+            reject, entity, reason = (
+                True,
+                "manufacturer",
+                "Looks like a manufacturer/factory — not a channel buyer",
+            )
+        else:
+            entity, reason = "manufacturer", "Manufacturer language — kept as organic Google hit"
 
     elif hunting_buyers and MFR_RE.search(blob):
         entity, reason = "manufacturer", "Manufacturer language present"
@@ -147,8 +158,13 @@ def classify_serp_row(
             reject, entity, reason = True, "wrong_geo", "Address is outside the requested location"
         elif geo_ok is False and _foreign_geo_conflict(geo_source, target_places):
             reject, entity, reason = True, "wrong_geo", "Geography conflicts with target markets"
+        elif strict_geo and _foreign_geo_conflict(geo_source, target_places):
+            # Even without an explicit geo_ok=False, foreign country / TLD vs hunt place → drop.
+            reject, entity, reason = True, "wrong_geo", "Geography conflicts with target markets"
+        elif strict_geo and _foreign_tld_conflict(url, target_places):
+            reject, entity, reason = True, "wrong_geo", "Website TLD conflicts with target markets"
 
-    # Do not treat manufacturers as auto-rejects — organic Google hits stay
+    # Manufacturers already handled above for channel hunts
     competitor_seed = False
 
 
@@ -161,6 +177,82 @@ def classify_serp_row(
         "geo_mentioned": geo_ok,
         "title": title,
     }
+
+
+def _foreign_tld_conflict(url: str, places: List[str]) -> bool:
+    """True when host TLD strongly implies a country outside the hunt places."""
+    host = _host(url)
+    if not host or not places:
+        return False
+    # Country-code TLDs that are not generic (.com/.net/.org/.io/.co/.ai)
+    m = re.search(r"\.([a-z]{2})$", host)
+    if not m:
+        return False
+    cc = m.group(1)
+    if cc in {"uk", "gb", "us", "eu"}:
+        # Ambiguous / regional — only reject .uk when hunt has no UK/GB/England
+        targets = " ".join(places).lower()
+        if cc in {"uk", "gb"} and not any(
+            x in targets for x in ("uk", "united kingdom", "england", "britain", "scotland", "wales")
+        ):
+            return True
+        return False
+    # Map common ccTLDs → country name token
+    cc_to_country = {
+        "pk": "pakistan",
+        "in": "india",
+        "cn": "china",
+        "bd": "bangladesh",
+        "vn": "vietnam",
+        "tr": "turkey",
+        "de": "germany",
+        "fr": "france",
+        "it": "italy",
+        "es": "spain",
+        "ca": "canada",
+        "au": "australia",
+        "mx": "mexico",
+        "br": "brazil",
+        "jp": "japan",
+        "kr": "korea",
+        "ng": "nigeria",
+        "ke": "kenya",
+        "ae": "uae",
+        "sa": "saudi",
+        "sg": "singapore",
+        "my": "malaysia",
+        "id": "indonesia",
+        "th": "thailand",
+        "ph": "philippines",
+        "nz": "zealand",
+        "za": "africa",
+        "pl": "poland",
+        "nl": "netherlands",
+        "be": "belgium",
+        "ch": "switzerland",
+        "at": "austria",
+        "se": "sweden",
+        "no": "norway",
+        "dk": "denmark",
+        "fi": "finland",
+        "ie": "ireland",
+        "pt": "portugal",
+        "cz": "czech",
+        "ro": "romania",
+        "hu": "hungary",
+        "gr": "greece",
+        "il": "israel",
+        "eg": "egypt",
+        "ma": "morocco",
+    }
+    country = cc_to_country.get(cc)
+    if not country:
+        return False
+    targets = " ".join(places).lower()
+    if country in targets or cc in targets:
+        return False
+    # US hunt + .pk/.in/.cn etc.
+    return True
 
 
 def _foreign_geo_conflict(blob: str, places: List[str]) -> bool:

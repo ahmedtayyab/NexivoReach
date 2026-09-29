@@ -540,12 +540,13 @@ def _geo_ok(blob: str, places: List[str]) -> Optional[bool]:
 
 
 def _resolve_location(row: Dict[str, Any], site_text: str, profile: SellerProfile) -> str:
-    """Prefer Maps/SERP location; else homepage, social windows, and phone dial codes."""
+    """Prefer Maps/SERP/site location — never treat the hunt place as the company address."""
     from app.agents.geo import (
         format_location_display,
         location_conflicts_with_targets,
         enrich_geo_blob,
         countries_from_phone_text,
+        places_mentioned,
     )
 
     phones = []
@@ -554,21 +555,59 @@ def _resolve_location(row: Dict[str, Any], site_text: str, profile: SellerProfil
     if row.get("phones"):
         phones.extend(str(p) for p in (row.get("phones") or []) if p)
 
+    hunt_places = [str(p).strip().lower() for p in (profile.places or []) if str(p).strip()]
+
+    def _is_hunt_place_stamp(value: str) -> bool:
+        """True when value looks like the hunt place copied onto the lead (not a real address)."""
+        v = (value or "").strip().lower()
+        if not v or not hunt_places:
+            return False
+        joined = ", ".join(hunt_places)
+        if v == joined and len(hunt_places) >= 2:
+            return True
+        # "New York, United States" when hunting New York — no street/number
+        first = v.split(",")[0].strip()
+        if (
+            first in hunt_places
+            and "," in v
+            and not re.search(r"\d", v)
+            and len(v) < 80
+        ):
+            return True
+        if len(hunt_places) >= 2 and all(hp in v for hp in hunt_places) and len(v) <= len(joined) + 6:
+            return True
+        return False
+
     existing = (row.get("location") or "").strip()
+    if existing and _is_hunt_place_stamp(existing):
+        existing = ""
+
+    site_loc = format_location_display(
+        enrich_geo_blob(
+            site_text=site_text or "",
+            phones=phones,
+            title=str(row.get("title") or ""),
+            snippet=str(row.get("snippet") or ""),
+        ),
+        prefer_places=profile.places,
+    )
+
     if existing and len(existing) >= 3:
         if getattr(profile, "strict_geo", False) and profile.places:
             if location_conflicts_with_targets(existing, profile.places):
+                # Prefer site-derived location when SERP address conflicts with hunt
+                if site_loc:
+                    return site_loc[:80]
                 return existing[:80]
-        site_loc = format_location_display(
-            enrich_geo_blob(site_text=site_text or "", phones=phones, title=existing),
-            prefer_places=profile.places,
-        )
         if site_loc and len(site_loc) > len(existing):
             if getattr(profile, "strict_geo", False) and profile.places:
                 if location_conflicts_with_targets(site_loc, profile.places):
                     return existing[:80]
             return site_loc[:80]
         return existing[:80]
+
+    if site_loc:
+        return site_loc[:80]
 
     blob = enrich_geo_blob(
         site_text=site_text or "",
@@ -579,12 +618,9 @@ def _resolve_location(row: Dict[str, Any], site_text: str, profile: SellerProfil
     resolved = format_location_display(blob, prefer_places=profile.places)
     if resolved:
         return resolved[:80]
-    # Last resort: dial-code country if it aligns with hunt places
     for country in countries_from_phone_text(blob):
         if not profile.places:
             return country[:80]
-        from app.agents.geo import places_mentioned
-
         if places_mentioned(country, profile.places) is True:
             return country[:80]
     return ""
