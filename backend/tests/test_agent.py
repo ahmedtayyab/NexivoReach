@@ -135,9 +135,12 @@ def test_qualify_detects_real_intent():
             "website": "https://summit.example/",
             "snippet": "brand",
             "entity_type": "company",
-            "location": "United States",
+            "location": "Austin, Texas",
         },
-        site_text="Summit Wear is a US brand. We are seeking a manufacturer for our 2026 private label program. Sportswear wholesale.",
+        site_text=(
+            "Summit Wear is an American apparel brand based in Austin, Texas. "
+            "We are seeking a manufacturer for our 2026 private label program. Sportswear wholesale."
+        ),
         profile=profile,
         products=[{"name": "Hoodies", "category": "Sportswear"}],
         page_url="https://summit.example/",

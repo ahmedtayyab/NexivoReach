@@ -225,21 +225,38 @@ def qualify_account(
         if not why_this:
             why_this = f"{name} is a local Maps listing matching the ICP buyer type; website evidence is still thin."
 
-    # Strict geo: only reject when address CONTRADICTS the hunt place.
-    # Missing Chicago on the homepage is not a reject — Google already geo-scoped the query.
+    # Strict geo: reject when verified business address conflicts with hunt place.
     if getattr(profile, "strict_geo", False) and profile.places:
-        from app.agents.geo import location_conflicts_with_targets
+        from app.agents.location_verify import apply_location_verification, verify_business_location
 
-        loc = (location or "").strip()
-        if loc and location_conflicts_with_targets(loc, profile.places):
+        phones = []
+        if row.get("phone"):
+            phones.append(str(row.get("phone")))
+        if row.get("phones"):
+            phones.extend(str(p) for p in (row.get("phones") or []) if p)
+        verification = verify_business_location(
+            requested_places=list(profile.places or []),
+            site_text=site_text or "",
+            title=str(row.get("title") or ""),
+            snippet=snippet,
+            row_location=str(row.get("location") or ""),
+            phones=phones,
+            website=url,
+        )
+        location = (verification.get("business_location") or location or "").strip()
+        if verification.get("should_reject"):
             persist = False
             priority = "reject"
             why_this = (
-                f"{name}: skipped — address is outside "
+                f"{name}: skipped — business location does not match "
                 f"{', '.join(profile.places[:2])}."
             )
+        # Attach verification onto the return payload below via apply
+        _loc_verification = verification
+    else:
+        _loc_verification = None
 
-    return {
+    result = {
         "icpFit": icp,
         "offerFit": offer,
         "motionFit": motion,
@@ -284,6 +301,11 @@ def qualify_account(
         "location": location,
         "industry": _industry_label(text, profile),
     }
+    if _loc_verification is not None:
+        from app.agents.location_verify import apply_location_verification
+
+        return apply_location_verification(result, _loc_verification, company_name=name)
+    return result
 
 
 def _icp_fit(
@@ -540,13 +562,13 @@ def _geo_ok(blob: str, places: List[str]) -> Optional[bool]:
 
 
 def _resolve_location(row: Dict[str, Any], site_text: str, profile: SellerProfile) -> str:
-    """Prefer Maps/SERP location; else homepage, social windows, and phone dial codes."""
+    """Resolve business location from Maps/site/phones — never copy the hunt place."""
     from app.agents.geo import (
         format_location_display,
-        location_conflicts_with_targets,
         enrich_geo_blob,
         countries_from_phone_text,
     )
+    from app.agents.location_verify import is_hunt_place_stamp, strip_service_area_language, verify_business_location
 
     phones = []
     if row.get("phone"):
@@ -554,39 +576,39 @@ def _resolve_location(row: Dict[str, Any], site_text: str, profile: SellerProfil
     if row.get("phones"):
         phones.extend(str(p) for p in (row.get("phones") or []) if p)
 
+    places = list(profile.places or [])
     existing = (row.get("location") or "").strip()
-    if existing and len(existing) >= 3:
-        if getattr(profile, "strict_geo", False) and profile.places:
-            if location_conflicts_with_targets(existing, profile.places):
-                return existing[:80]
-        site_loc = format_location_display(
-            enrich_geo_blob(site_text=site_text or "", phones=phones, title=existing),
-            prefer_places=profile.places,
-        )
-        if site_loc and len(site_loc) > len(existing):
-            if getattr(profile, "strict_geo", False) and profile.places:
-                if location_conflicts_with_targets(site_loc, profile.places):
-                    return existing[:80]
-            return site_loc[:80]
-        return existing[:80]
+    if existing and is_hunt_place_stamp(existing, places):
+        existing = ""
 
-    blob = enrich_geo_blob(
-        site_text=site_text or "",
-        title=str(row.get("title") or ""),
-        snippet=str(row.get("snippet") or ""),
-        phones=phones,
+    # Prefer structured verification when we have places or site text
+    if places or (site_text or "").strip() or existing:
+        v = verify_business_location(
+            requested_places=places,
+            site_text=site_text or "",
+            title=str(row.get("title") or ""),
+            snippet=str(row.get("snippet") or ""),
+            row_location=existing,
+            phones=phones,
+            website=str(row.get("website") or ""),
+        )
+        if v.get("business_location"):
+            return str(v["business_location"])[:80]
+
+    blob = strip_service_area_language(
+        enrich_geo_blob(
+            site_text=site_text or "",
+            title=str(row.get("title") or ""),
+            snippet=str(row.get("snippet") or ""),
+            phones=phones,
+        )
     )
-    resolved = format_location_display(blob, prefer_places=profile.places)
+    # No prefer_places — that biased empty extracts toward the hunt city.
+    resolved = format_location_display(blob, prefer_places=None)
     if resolved:
         return resolved[:80]
-    # Last resort: dial-code country if it aligns with hunt places
     for country in countries_from_phone_text(blob):
-        if not profile.places:
-            return country[:80]
-        from app.agents.geo import places_mentioned
-
-        if places_mentioned(country, profile.places) is True:
-            return country[:80]
+        return country[:80]
     return ""
 
 

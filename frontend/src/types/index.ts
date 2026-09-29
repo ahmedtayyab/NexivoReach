@@ -104,6 +104,14 @@ export interface Prospect {
     huntBuyerType?: string;
     /** Every product + buyer search that surfaced this company (deduplicated lead). */
     huntMatches?: { product: string; buyer: string }[];
+    /** Hunt search place — not the company's address. */
+    requestedLocation?: string;
+    /** Verified business location from site / Maps / phones. */
+    businessLocation?: string;
+    locationMatch?: boolean | null;
+    locationConfidence?: string;
+    locationEvidence?: string[];
+    locationRejectReason?: string;
     whyNow?: string;
     evidence?: ProspectEvidence[];
     contactEnrich?: {

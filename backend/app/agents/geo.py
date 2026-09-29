@@ -259,8 +259,8 @@ def countries_from_phone_text(text: str) -> List[str]:
         return []
     found: List[str] = []
     seen = set()
-    # +971 50… / +1-702-… / 00 44 …
-    for match in re.finditer(r"(?:\+|00)\s*(\d{1,3})[\s\-.]?\d", blob):
+    # Require dial marker at a non-digit boundary so "300" does not match as "00…"
+    for match in re.finditer(r"(?<!\d)(?:\+|00)\s*(\d{1,3})(?:[\s./-]?\d)", blob):
         digits = re.sub(r"\D", "", match.group(1) or "")
         if not digits:
             continue

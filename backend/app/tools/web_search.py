@@ -174,7 +174,6 @@ def _company_name_from_title(title: str, url: str) -> str:
 
 
 def results_to_companies(results: List[Dict[str, str]], target_location: str = "") -> List[Dict[str, Any]]:
-    prefer = [target_location] if target_location else None
     companies: List[Dict[str, Any]] = []
     seen = set()
     for item in results:
@@ -191,10 +190,11 @@ def results_to_companies(results: List[Dict[str, str]], target_location: str = "
         path = urlparse(url).path.rstrip("/")
         homepage_bonus = 1 if path in ("", "/en", "/de", "/fr", "/about", "/about-us") else 0
         article_penalty = 1 if _looks_like_article(title, url) else 0
+        # Do not prefer hunt place — that stamped search location onto SERP leads.
         companies.append({
             "company_name": name[:120],
             "website": url,
-            "location": _location_from_text(f"{title} {snippet}", "", prefer_places=prefer),
+            "location": _location_from_text(f"{title} {snippet}", "", prefer_places=None),
             "industry": "",
             "snippet": snippet[:500],
             "title": title,

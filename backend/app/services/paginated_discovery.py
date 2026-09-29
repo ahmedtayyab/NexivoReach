@@ -494,7 +494,7 @@ async def run_paginated_discovery(
                         seed_email="",
                         seed_phone="",
                         seed_contacts=[],
-                        use_hunter=True,
+                        use_hunter=False,
                     ),
                     timeout=28.0,
                 )
@@ -502,13 +502,76 @@ async def run_paginated_discovery(
                 found = {"email": "", "phone": "", "contacts": [], "site_text": "", "sources": []}
             stats.websites_inspected += 1
             site_text = (found.get("site_text") or "")[:8000]
+            phone = found.get("phone") or ""
+            contacts = list(found.get("contacts") or [])
+
+            # Verify business location BEFORE Hunter / save — never stamp hunt place.
+            from app.agents.location_verify import verify_business_location
+
+            loc_check = verify_business_location(
+                requested_places=list(profile.places or []),
+                site_text=site_text,
+                title=title,
+                snippet=snippet,
+                row_location=str(found.get("location") or ""),
+                phones=[phone] if phone else [],
+                website=website,
+            )
+            if loc_check.get("should_reject"):
+                with _db() as session:
+                    mem = session.exec(
+                        select(DiscoveredCompany).where(
+                            DiscoveredCompany.business_id == business_id,
+                            DiscoveredCompany.domain == domain,
+                        )
+                    ).first()
+                    now = _now()
+                    if not mem:
+                        mem = DiscoveredCompany(
+                            id=f"disc-{uuid4().hex[:12]}",
+                            business_id=business_id,
+                            domain=domain,
+                            company_name=company_name,
+                            company_name_normalized=_legal_name_key(company_name),
+                            website=website,
+                            first_seen_at=now,
+                            last_seen_at=now,
+                            matched_search_intents=[search_intent] if search_intent else [],
+                        )
+                    mem.processed = True
+                    mem.status = "irrelevant"
+                    mem.last_seen_at = now
+                    session.add(mem)
+                    session.commit()
+                stats.irrelevant += 1
+                return None
+
+            # Hunter only after location clears — avoid spending API on wrong-geo firms
+            email = ""
+            email_status = "email_not_found"
+            email_source = ""
             if found.get("email"):
                 email = found["email"]
                 email_status = "email_found"
                 email_source = (found.get("sources") or ["website"])[0]
                 stats.emails_found += 1
-            phone = found.get("phone") or ""
-            contacts = list(found.get("contacts") or [])
+            elif website:
+                try:
+                    from app.services.enrichment import hunter_domain_search
+                    from urllib.parse import urlparse
+
+                    host = (urlparse(website).hostname or "").lower()
+                    if host.startswith("www."):
+                        host = host[4:]
+                    hunter = await hunter_domain_search(host)
+                    if hunter.get("email"):
+                        email = hunter["email"]
+                        email_status = "email_found"
+                        email_source = "hunter"
+                        contacts = list(hunter.get("contacts") or []) + contacts
+                        stats.emails_found += 1
+                except Exception:
+                    pass
 
             product, role, _p = __import__(
                 "app.agents.geo", fromlist=["parse_discovery_query"]
@@ -535,7 +598,9 @@ async def run_paginated_discovery(
                 "snippet": snippet,
                 "discovery_query": discovery_query,
                 "discovery_queries": discovery_queries,
-                "location": location_hint or found.get("location") or "",
+                # Never use location_hint (hunt place) as business location
+                "location": (loc_check.get("business_location") or found.get("location") or ""),
+                "phone": phone,
                 "source": "web",
             }
             triage = serp_triage(row, categories=profile.categories, buyers=profile.buyers)
@@ -680,7 +745,7 @@ async def run_paginated_discovery(
                     id=prospect_id,
                     company_name=company_name or "Unknown",
                     website=website,
-                    location=(q.get("location") or location_hint or "")[:200],
+                    location=(q.get("location") or "")[:200],
                     industry=(q.get("industry") or "")[:80],
                     company_size="",
                     fit_score=int(q.get("fitScore") or 0),

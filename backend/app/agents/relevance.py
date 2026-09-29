@@ -317,12 +317,28 @@ def qualify_from_fast_decision(
         _resolve_location,
         offer_ev_as_matches,
     )
+    from app.agents.location_verify import apply_location_verification, verify_business_location
 
     name = row.get("company_name") or "This company"
     snippet = row.get("snippet") or ""
     title = row.get("title") or ""
     url = row.get("website") or ""
-    location = _resolve_location(row, site_text, profile)
+    phones: List[str] = []
+    if row.get("phone"):
+        phones.append(str(row.get("phone")))
+    if row.get("phones"):
+        phones.extend(str(p) for p in (row.get("phones") or []) if p)
+
+    verification = verify_business_location(
+        requested_places=list(profile.places or []),
+        site_text=site_text or "",
+        title=title,
+        snippet=snippet,
+        row_location=str(row.get("location") or ""),
+        phones=phones,
+        website=url,
+    )
+    location = (verification.get("business_location") or _resolve_location(row, site_text, profile) or "").strip()
     dq = (row.get("discovery_query") or "")
     product, role, _place = parse_discovery_query(dq)
     if not product:
@@ -330,22 +346,22 @@ def qualify_from_fast_decision(
     if not role:
         role = (profile.buyers[0] if profile.buyers else "distributors") or "distributors"
 
-    if _geo_contradicts(location, list(profile.places or []), site_text or "", row):
-        return {
+    if verification.get("should_reject"):
+        q_reject = {
             "icpFit": "low",
             "offerFit": "low",
             "motionFit": "unknown",
             "fitSummary": "low",
             "intent": "none",
-            "confidence": 0.8,
+            "confidence": 0.85,
             "priority": "reject",
             "evidence": [],
-            "whyThisProspect": f"{name}: skipped — address conflicts with hunt location.",
+            "whyThisProspect": "",
             "whyNow": "No timing evidence.",
-            "fitScore": 20,
+            "fitScore": 18,
             "fitBreakdown": {
                 "aiRelevant": False,
-                "aiReason": "Contradictory location.",
+                "aiReason": "Business location does not match hunt place.",
                 "discoveryQuery": dq,
                 "huntProduct": product,
                 "huntBuyerType": role,
@@ -359,6 +375,7 @@ def qualify_from_fast_decision(
             "location": location,
             "industry": _industry_label(f"{name}\n{snippet}", profile),
         }
+        return apply_location_verification(q_reject, verification, company_name=name)
 
     # If we fetched a page, score high/medium/low/irrelevant from site content
     if site_text.strip():
@@ -384,7 +401,7 @@ def qualify_from_fast_decision(
         evidence_note = ""
 
     if not relevant:
-        return {
+        q_irr = {
             "icpFit": "low",
             "offerFit": "low",
             "motionFit": "unknown",
@@ -414,6 +431,7 @@ def qualify_from_fast_decision(
             "location": location,
             "industry": _industry_label(f"{name}\n{snippet}\n{site_text}", profile),
         }
+        return apply_location_verification(q_irr, verification, company_name=name)
 
     offer = level if level in ("high", "medium", "low") else ("high" if conf >= 0.7 else "medium")
     icp = "high" if level == "high" else ("medium" if level == "medium" else "low")
@@ -445,7 +463,7 @@ def qualify_from_fast_decision(
         site_text=site_text or "",
         seed_key=f"{name}|{url}",
     )
-    return {
+    q_ok = {
         "icpFit": icp,
         "offerFit": offer,
         "motionFit": "unknown",
@@ -491,6 +509,7 @@ def qualify_from_fast_decision(
         "location": location,
         "industry": _industry_label(text, profile),
     }
+    return apply_location_verification(q_ok, verification, company_name=name)
 
 
 async def ask_relevance(
@@ -572,11 +591,25 @@ async def qualify_account_with_ai(
         offer_ev_as_matches,
     )
 
+    from app.agents.location_verify import apply_location_verification, verify_business_location
+
     name = row.get("company_name") or "This company"
     snippet = row.get("snippet") or ""
     title = row.get("title") or ""
     url = page_url or (row.get("website") or "")
-    location = _resolve_location(row, site_text, profile)
+    phones: List[str] = []
+    if row.get("phone"):
+        phones.append(str(row.get("phone")))
+    verification = verify_business_location(
+        requested_places=list(profile.places or []),
+        site_text=site_text or "",
+        title=title,
+        snippet=snippet,
+        row_location=str(row.get("location") or ""),
+        phones=phones,
+        website=url,
+    )
+    location = (verification.get("business_location") or _resolve_location(row, site_text, profile) or "").strip()
     dq = (row.get("discovery_query") or "")
     product, role, _place = parse_discovery_query(dq)
     if not product:
@@ -584,21 +617,17 @@ async def qualify_account_with_ai(
     if not role:
         role = (profile.buyers[0] if profile.buyers else "distributors") or "distributors"
 
-    # Soft geo: only reject when address clearly contradicts the hunt place.
-    if _geo_contradicts(location, list(profile.places or []), site_text or "", row):
-        return {
+    if verification.get("should_reject"):
+        q_rej = {
             "icpFit": "low",
             "offerFit": "low",
             "motionFit": "unknown",
             "fitSummary": "low",
             "intent": "none",
-            "confidence": 0.8,
+            "confidence": 0.85,
             "priority": "reject",
             "evidence": [],
-            "whyThisProspect": (
-                f"{name}: skipped — address conflicts with "
-                f"{', '.join((profile.places or [])[:2])}."
-            ),
+            "whyThisProspect": "",
             "whyNow": "No timing evidence.",
             "fitScore": 20,
             "fitBreakdown": {
@@ -607,7 +636,7 @@ async def qualify_account_with_ai(
                 "motionFit": "unknown",
                 "fitSummary": "low",
                 "intent": "none",
-                "confidence": 0.8,
+                "confidence": 0.85,
                 "priority": "reject",
                 "entityType": row.get("entity_type") or "company",
                 "discoveryPool": row.get("discovery_pool") or "",
@@ -616,7 +645,7 @@ async def qualify_account_with_ai(
                 "huntBuyerType": role,
                 "huntMatches": _hunt_matches(row),
                 "aiRelevant": False,
-                "aiReason": "Contradictory location vs hunt place.",
+                "aiReason": "Business location does not match hunt place.",
                 "evidence": [],
             },
             "buyingSignals": [],
@@ -626,6 +655,7 @@ async def qualify_account_with_ai(
             "location": location,
             "industry": _industry_label(f"{name}\n{snippet}\n{site_text}", profile),
         }
+        return apply_location_verification(q_rej, verification, company_name=name)
 
     brief = seller_brief
     if not brief and products:
@@ -685,7 +715,7 @@ async def qualify_account_with_ai(
         seed_key=f"{name}|{url}",
     )
     why = f"{name}: {reason}" if reason else f"{name}: AI relevance check."
-    return {
+    q_ai = {
         "icpFit": icp,
         "offerFit": offer,
         "motionFit": "unknown",
@@ -724,3 +754,4 @@ async def qualify_account_with_ai(
         "location": location,
         "industry": _industry_label(text, profile),
     }
+    return apply_location_verification(q_ai, verification, company_name=name)

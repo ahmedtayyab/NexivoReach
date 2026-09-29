@@ -401,7 +401,7 @@ class ProspectingAgent:
                                 seed_email="",
                                 seed_phone=phone,
                                 seed_contacts=[],
-                                use_hunter=True,
+                                use_hunter=False,
                             ),
                             timeout=SITE_ENRICH_TIMEOUT_SEC,
                         )
@@ -412,16 +412,52 @@ class ProspectingAgent:
                 inspected += 1
                 site_text = (found.get("site_text") or "")[:8000]
                 page = {"ok": bool(site_text), "text": site_text, "emails": []}
+                phone = found.get("phone") or phone
+                contacts = list(found.get("contacts") or [])
+                # Keep scrape-derived location only — never hunt place
+                if found.get("location") and not (row.get("location") or "").strip():
+                    row["location"] = found["location"]
+
+                from app.agents.location_verify import verify_business_location
+
+                loc_check = verify_business_location(
+                    requested_places=list(profile.places or []),
+                    site_text=site_text,
+                    title=str(row.get("title") or ""),
+                    snippet=str(row.get("snippet") or ""),
+                    row_location=str(row.get("location") or ""),
+                    phones=[phone] if phone else [],
+                    website=website,
+                )
+                if loc_check.get("should_reject"):
+                    irrelevant_count += 1
+                    return None
+                if loc_check.get("business_location"):
+                    row["location"] = loc_check["business_location"]
+
                 if found.get("email"):
                     email = found["email"]
                     email_hits += 1
                     email_status = "email_found"
                     sources = found.get("sources") or []
                     email_source = sources[0] if sources else "website"
-                phone = found.get("phone") or phone
-                contacts = list(found.get("contacts") or [])
-                if found.get("location") and not (row.get("location") or "").strip():
-                    row["location"] = found["location"]
+                elif website:
+                    try:
+                        from app.services.enrichment import hunter_domain_search
+                        from urllib.parse import urlparse
+
+                        host = (urlparse(website).hostname or "").lower()
+                        if host.startswith("www."):
+                            host = host[4:]
+                        hunter = await hunter_domain_search(host)
+                        if hunter.get("email"):
+                            email = hunter["email"]
+                            email_hits += 1
+                            email_status = "email_found"
+                            email_source = "hunter"
+                            contacts = list(hunter.get("contacts") or []) + contacts
+                    except Exception:
+                        pass
 
             from app.agents.geo import parse_discovery_query
 

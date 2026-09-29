@@ -20,13 +20,15 @@ function parseDiscoveryQuery(query: string): { product: string; buyer: string; p
   if (quoted) {
     return { product: quoted[1].trim(), buyer: (quoted[2] || '').trim(), place };
   }
-  const roleMatch = raw.match(
-    /\s+(distributors?|wholesalers?|importers?|retailers?|buyers?|dealers?|gyms?|clinics?|brands?)\s*$/i,
+  // Match trailing place after buyer role (e.g. "straps distributors New York, United States")
+  const rolePlace = raw.match(
+    /^(.+?)\s+(distributors?|wholesalers?|importers?|retailers?|buyers?|dealers?|gyms?|clinics?|brands?)(?:\s+(?:in\s+)?(.+))?$/i,
   );
-  if (roleMatch && roleMatch.index != null) {
+  if (rolePlace) {
+    if (rolePlace[3] && !place) place = rolePlace[3].trim().replace(/[.,]+$/, '');
     return {
-      product: raw.slice(0, roleMatch.index).trim(),
-      buyer: roleMatch[1].trim(),
+      product: rolePlace[1].trim(),
+      buyer: rolePlace[2].trim(),
       place,
     };
   }
@@ -77,17 +79,27 @@ export default function LeadRationaleChips({
     (bd.huntBuyerType || parsed.buyer || '').trim(),
   );
 
-  const location = (
+  const companyLocation = (
+    (bd as { businessLocation?: string }).businessLocation ||
     prospect.location ||
+    ''
+  ).trim();
+  const huntPlace = (
+    (bd as { requestedLocation?: string }).requestedLocation ||
     parsed.place ||
     ''
-  ).trim() || 'Location not confirmed';
+  ).trim();
 
   const chips: Chip[] = [];
   if (product) chips.push({ label: 'Product', value: product, tone: 'accent' });
   if (buyer) chips.push({ label: 'Buyer type', value: buyer, tone: 'good' });
-  chips.push({ label: 'Location', value: location, tone: 'muted' });
-
+  if (companyLocation) {
+    chips.push({ label: 'Location', value: companyLocation, tone: 'muted' });
+  } else if (huntPlace) {
+    chips.push({ label: 'Hunt target', value: huntPlace, tone: 'muted' });
+  } else {
+    chips.push({ label: 'Location', value: 'Not confirmed on site', tone: 'muted' });
+  }
   // Same company found by other product + buyer searches — keep them on the one lead.
   const seenMatch = new Set([`${product.toLowerCase()}|${buyer.toLowerCase()}`]);
   for (const m of bd.huntMatches || []) {
