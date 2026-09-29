@@ -695,8 +695,9 @@ def test_strict_geo_rejects_uae_when_hunting_nj():
     row = classify_serp_row(
         {
             "company_name": "Dubai Apparel Trading",
-            "website": "https://dubaiapparel.example/",
-            "snippet": "Importer of hoodies and fleece in Dubai, UAE",
+            "website": "https://dubaiapparel.ae/",
+            "location": "Dubai, UAE",
+            "snippet": "Importer of hoodies and fleece",
             "source": "web",
         },
         hunting_buyers=True,
@@ -705,6 +706,23 @@ def test_strict_geo_rejects_uae_when_hunting_nj():
     )
     assert row["reject"] is True
     assert row["entity_type"] == "wrong_geo"
+
+
+def test_strict_geo_keeps_us_com_that_mentions_overseas_sourcing():
+    """Sourcing copy ≠ company HQ — do not reject a US .com for naming Pakistan/China."""
+    row = classify_serp_row(
+        {
+            "company_name": "Empire Fitness Wholesale",
+            "website": "https://empirefitnesswholesale.com/",
+            "snippet": "NY distributor of gym belts sourced from Pakistan and China factories",
+            "source": "web",
+            "discovery_query": "weightlifting belts wholesalers New York, United States",
+        },
+        hunting_buyers=True,
+        target_places=["New York", "United States"],
+        strict_geo=True,
+    )
+    assert row["reject"] is False
 
 
 def test_maps_nj_rejected_when_hunting_massachusetts():
