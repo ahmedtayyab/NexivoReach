@@ -857,7 +857,27 @@ export default function App() {
       onComplete: r => {
         if (r.prospects.length) handleAddProspects(r.prospects);
         if (r.agentLog) handleAddLog(r.agentLog);
-        if (r.foundCount > 0) {
+        const paused = r.status === 'paused';
+        const stopped = r.status === 'cancelled' || r.status === 'canceled';
+        if (paused) {
+          pushToast(
+            'info',
+            r.foundCount
+              ? `Hunt paused — ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'} kept`
+              : 'Hunt paused',
+            'Start hunt again to continue from saved Google pages.',
+          );
+          if (r.foundCount > 0) setPreferLatestHunt(true);
+        } else if (stopped) {
+          pushToast(
+            'info',
+            r.foundCount
+              ? `Hunt stopped — kept ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}`
+              : 'Hunt stopped',
+            r.foundCount ? 'Open Leads → Latest hunt to review.' : 'No new leads this run.',
+          );
+          if (r.foundCount > 0) setPreferLatestHunt(true);
+        } else if (r.foundCount > 0) {
           pushToast(
             'ok',
             `Hunt finished — ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}`,

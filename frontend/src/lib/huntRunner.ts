@@ -7,6 +7,16 @@ import type { AgentRunLog, Prospect } from '../types';
 
 const STORAGE_KEY = 'nr-active-hunt-v1';
 
+export type HuntIntentStatus = {
+  searchIntent?: string;
+  query?: string;
+  page?: number;
+  pagesProcessed?: number;
+  status?: string;
+  stopReason?: string;
+  relevantLeads?: number;
+};
+
 export type HuntTelemetry = {
   searchIntents?: number;
   completedIntents?: number;
@@ -18,7 +28,20 @@ export type HuntTelemetry = {
   leadsPerRun?: number;
   perIntentCap?: number;
   alreadyKnown?: number;
+  previouslyKnown?: number;
+  newDomains?: number;
+  relevant?: number;
+  irrelevant?: number;
+  barrenStops?: number;
+  deepContactSkips?: number;
   currentQuery?: string;
+  enrichingNow?: number;
+  enrichBatch?: number;
+  heartbeat?: string;
+  updatedAt?: string;
+  intentStatus?: HuntIntentStatus[];
+  stopReasons?: Record<string, string>;
+  userControl?: string;
 };
 
 export type HuntProgress = {
@@ -27,6 +50,8 @@ export type HuntProgress = {
   phase: string;
   progress: number;
   telemetryHint: string;
+  telemetry: HuntTelemetry | null;
+  updatedAt: string;
   startedAt: number;
   userPrompt: string;
 };
@@ -39,6 +64,7 @@ export type HuntResult = {
   agentLog?: AgentRunLog | null;
   error?: string | null;
   userPrompt: string;
+  status?: string;
 };
 
 type HuntListener = {
@@ -57,6 +83,14 @@ type ActiveHunt = {
 let active: ActiveHunt | null = null;
 let pollPromise: Promise<void> | null = null;
 const listeners = new Set<HuntListener>();
+
+const TERMINAL = new Set([
+  'completed',
+  'failed',
+  'cancelled',
+  'canceled',
+  'paused',
+]);
 
 function emitProgress(p: HuntProgress) {
   listeners.forEach(l => l.onProgress?.(p));
@@ -116,6 +150,9 @@ function telemetryToHint(t: HuntTelemetry | undefined): string {
     t.googlePages != null ? `Pages ${t.googlePages}` : null,
     t.emailsFound != null ? `Emails ${t.emailsFound}` : null,
     t.alreadyKnown ? `Known ${t.alreadyKnown}` : null,
+    t.enrichingNow != null && t.enrichingNow > 0
+      ? `Inspecting ${t.enrichingNow}`
+      : null,
   ].filter(Boolean);
   return bits.join(' · ');
 }
@@ -154,6 +191,8 @@ async function pollUntilDone(job: ActiveHunt): Promise<void> {
     phase: 'Hunting buyers…',
     progress: 4,
     telemetryHint: '',
+    telemetry: null,
+    updatedAt: '',
     startedAt: job.startedAt,
     userPrompt: job.userPrompt,
   });
@@ -169,9 +208,10 @@ async function pollUntilDone(job: ActiveHunt): Promise<void> {
       agent_log?: AgentRunLog;
       error?: string;
       telemetry?: HuntTelemetry;
+      updatedAt?: string;
     } = { status: 'running' };
 
-    while (data.status !== 'completed' && data.status !== 'failed') {
+    while (!TERMINAL.has(String(data.status || ''))) {
       if (job.abort) return;
       await new Promise(r => window.setTimeout(r, 1200));
       if (job.abort) return;
@@ -187,6 +227,8 @@ async function pollUntilDone(job: ActiveHunt): Promise<void> {
         phase: data.phase || 'Hunting buyers…',
         progress: typeof data.progress === 'number' ? data.progress : 4,
         telemetryHint: telemetryToHint(data.telemetry),
+        telemetry: data.telemetry || null,
+        updatedAt: data.updatedAt || data.telemetry?.updatedAt || '',
         startedAt: job.startedAt,
         userPrompt: job.userPrompt,
       });
@@ -206,6 +248,7 @@ async function pollUntilDone(job: ActiveHunt): Promise<void> {
       agentLog: data.agent_log || null,
       error: null,
       userPrompt: job.userPrompt,
+      status: data.status || 'completed',
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Discovery failed';
@@ -260,4 +303,24 @@ export function resumePersistedHunt(): boolean {
   const job: ActiveHunt = { ...saved, abort: false };
   pollPromise = pollUntilDone(job);
   return true;
+}
+
+/** Ask the server to pause or stop the active hunt. Polling continues until the job finishes. */
+export async function controlActiveHunt(action: 'pause' | 'stop'): Promise<void> {
+  const job = active || (readPersisted() as ActiveHunt | null);
+  if (!job?.jobId) throw new Error('No hunt is running');
+  const resp = await apiFetch(`/api/discovery/jobs/${job.jobId}/control`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(text || `Could not ${action} hunt`);
+  }
+}
+
+/** Local-only: stop polling without telling the server (rare; prefer controlActiveHunt). */
+export function abortHuntPolling(): void {
+  if (active) active.abort = true;
 }

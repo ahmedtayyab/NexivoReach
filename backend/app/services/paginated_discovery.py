@@ -203,6 +203,16 @@ def _update_job(job_id: str, **fields: Any) -> None:
                 job = session.get(DiscoveryJob, job_id)
                 if not job:
                     return
+                # Never clobber a user stop/pause request with routine "running" heartbeats.
+                protected = {
+                    "cancel_requested",
+                    "cancelled",
+                    "canceled",
+                    "pause_requested",
+                    "paused",
+                }
+                if job.status in protected and fields.get("status") == "running":
+                    fields = {k: v for k, v in fields.items() if k != "status"}
                 for k, v in fields.items():
                     setattr(job, k, v)
                 job.updated_at = _now()
@@ -214,6 +224,60 @@ def _update_job(job_id: str, **fields: Any) -> None:
                 log.warning("Job update failed for %s: %s", job_id, exc)
                 return
             time.sleep(0.15 * (attempt + 1))
+
+
+def read_job_control(job_id: str) -> str:
+    """
+    Return user control action for a running hunt.
+    Values: "" | "cancel" | "pause" (requested or already applied).
+    """
+    try:
+        with _db() as session:
+            job = session.get(DiscoveryJob, job_id)
+            if not job:
+                return ""
+            status = (job.status or "").strip().lower()
+            if status in ("cancel_requested", "cancelled", "canceled"):
+                return "cancel"
+            if status in ("pause_requested", "paused"):
+                return "pause"
+            payload = job.request_payload if isinstance(job.request_payload, dict) else {}
+            action = str(payload.get("_control") or "").strip().lower()
+            if action in ("cancel", "pause"):
+                return action
+    except Exception as exc:
+        log.warning("Job control read failed for %s: %s", job_id, exc)
+    return ""
+
+
+def request_job_control(job_id: str, action: str) -> bool:
+    """Mark a running job for cancel or pause. Returns False if job cannot be controlled."""
+    action = (action or "").strip().lower()
+    if action not in ("cancel", "pause"):
+        return False
+    for attempt in range(4):
+        try:
+            with _db() as session:
+                job = session.get(DiscoveryJob, job_id)
+                if not job:
+                    return False
+                if job.status in ("completed", "failed", "cancelled", "canceled", "paused"):
+                    return False
+                payload = dict(job.request_payload or {})
+                payload["_control"] = action
+                job.request_payload = payload
+                job.status = f"{action}_requested"
+                job.phase = "Stopping…" if action == "cancel" else "Pausing…"
+                job.updated_at = _now()
+                session.add(job)
+                session.commit()
+            return True
+        except Exception as exc:
+            if attempt >= 3:
+                log.warning("Job control request failed for %s: %s", job_id, exc)
+                return False
+            time.sleep(0.15 * (attempt + 1))
+    return False
 
 
 @dataclass
@@ -833,6 +897,7 @@ async def run_paginated_discovery(
                 return {"prospect": front, "id": prospect_id, "merged": False, "changed": True, "intent_id": intent_id}
 
     # ---- Main fair pagination loop ----
+    stop_control = ""  # cancel | pause (user requested)
     while True:
         hit_reasons: List[str] = []
         if _budget_hit(hit_reasons):
@@ -841,6 +906,22 @@ async def run_paginated_discovery(
                     row.status = "budget"
                     row.stop_reason = hit_reasons[0]
                     stats.stop_reasons[row.search_intent] = hit_reasons[0]
+            break
+
+        stop_control = read_job_control(job_id)
+        if stop_control:
+            for row in intent_rows:
+                if row.status == "active":
+                    row.status = "paused" if stop_control == "pause" else "cancelled"
+                    row.stop_reason = f"user_{stop_control}"
+                    stats.stop_reasons[row.search_intent] = row.stop_reason
+                    _persist_intent(row)
+                    _save_cursor_page(
+                        business_id=business_id,
+                        query=row.query,
+                        next_page=row.current_page,
+                        status="active",
+                    )
             break
 
         active = [r for r in intent_rows if r.status == "active"]
@@ -1154,34 +1235,104 @@ async def run_paginated_discovery(
 
         # Enrich new domains from this page (bounded concurrency) — incremental save
         if enrich_jobs:
+            _update_job(
+                job_id,
+                phase=(
+                    f"Inspecting {len(enrich_jobs)} site"
+                    f"{'' if len(enrich_jobs) == 1 else 's'} · "
+                    + _phase_from_stats(
+                        stats,
+                        current_q,
+                        sum(1 for r in intent_rows if r.status != "active"),
+                        len(intent_rows),
+                        leads_cap=budget.leads_per_run,
+                    )
+                ),
+                progress=_progress_pct(
+                    stats,
+                    budget,
+                    sum(1 for r in intent_rows if r.status != "active"),
+                    len(intent_rows),
+                ),
+                found_count=stats.leads_saved,
+                skipped_existing=stats.already_known_skips,
+                result_prospect_ids=saved_ids[-200:],
+                telemetry={
+                    **_telemetry_payload(stats, intent_rows, current_q, budget, per_intent_cap),
+                    "enrichingNow": len(enrich_jobs),
+                    "heartbeat": "enrich",
+                },
+            )
             tasks = [
                 asyncio.create_task(_enrich_and_maybe_save(**job))
                 for job in enrich_jobs
             ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for res in results:
-                if isinstance(res, Exception) or not res:
-                    continue
-                pid = res.get("id")
-                prospect = res.get("prospect")
-                if pid and prospect and not res.get("merged"):
-                    if pid not in saved_ids:
-                        saved_ids.append(pid)
-                        saved_front.append(prospect)
-                elif pid and prospect and res.get("merged") and res.get("changed"):
-                    if pid not in saved_ids:
-                        saved_ids.append(pid)
-                    # refresh front copy
-                    saved_front = [p for p in saved_front if p.get("id") != pid] + [prospect]
+            pending = set(tasks)
+            while pending:
+                done, pending = await asyncio.wait(pending, timeout=4.0)
+                for fut in done:
+                    if fut.cancelled():
+                        continue
+                    try:
+                        res = fut.result()
+                    except Exception:
+                        continue
+                    if not res:
+                        continue
+                    pid = res.get("id")
+                    prospect = res.get("prospect")
+                    if pid and prospect and not res.get("merged"):
+                        if pid not in saved_ids:
+                            saved_ids.append(pid)
+                            saved_front.append(prospect)
+                    elif pid and prospect and res.get("merged") and res.get("changed"):
+                        if pid not in saved_ids:
+                            saved_ids.append(pid)
+                        saved_front = [p for p in saved_front if p.get("id") != pid] + [prospect]
 
-                # bump intent relevant count
-                with _db() as session:
-                    it = session.get(DiscoverySearchIntent, intent_id)
-                    if it and not res.get("merged"):
-                        it.relevant_leads = int(it.relevant_leads or 0) + 1
-                        intent.relevant_leads = it.relevant_leads
-                        session.add(it)
-                        session.commit()
+                    with _db() as session:
+                        it = session.get(DiscoverySearchIntent, intent_id)
+                        if it and not res.get("merged"):
+                            it.relevant_leads = int(it.relevant_leads or 0) + 1
+                            intent.relevant_leads = it.relevant_leads
+                            session.add(it)
+                            session.commit()
+
+                # Heartbeat so the UI can tell enrich is alive (not frozen)
+                _update_job(
+                    job_id,
+                    phase=(
+                        f"Inspecting sites ({len(tasks) - len(pending)}/{len(tasks)} done) · "
+                        + _phase_from_stats(
+                            stats,
+                            current_q,
+                            sum(1 for r in intent_rows if r.status != "active"),
+                            len(intent_rows),
+                            leads_cap=budget.leads_per_run,
+                        )
+                    ),
+                    found_count=stats.leads_saved,
+                    skipped_existing=stats.already_known_skips,
+                    result_prospect_ids=saved_ids[-200:],
+                    telemetry={
+                        **_telemetry_payload(
+                            stats, intent_rows, current_q, budget, per_intent_cap
+                        ),
+                        "enrichingNow": len(pending),
+                        "enrichBatch": len(tasks),
+                        "heartbeat": "enrich",
+                    },
+                )
+
+                ctrl = read_job_control(job_id)
+                if ctrl:
+                    stop_control = ctrl
+                    for fut in pending:
+                        fut.cancel()
+                    if pending:
+                        await asyncio.gather(*pending, return_exceptions=True)
+                    pending = set()
+                    break
 
             # Stop this intent for the run once its share is filled (resume later pages next hunt)
             if intent_leads_this_run.get(intent_id, 0) >= per_intent_cap and intent.status == "active":
@@ -1224,6 +1375,21 @@ async def run_paginated_discovery(
                 result_prospect_ids=saved_ids[-200:],
                 telemetry=_telemetry_payload(stats, intent_rows, current_q, budget, per_intent_cap),
             )
+
+            if stop_control:
+                for row in intent_rows:
+                    if row.status == "active":
+                        row.status = "paused" if stop_control == "pause" else "cancelled"
+                        row.stop_reason = f"user_{stop_control}"
+                        stats.stop_reasons[row.search_intent] = row.stop_reason
+                        _persist_intent(row)
+                        _save_cursor_page(
+                            business_id=business_id,
+                            query=row.query,
+                            next_page=row.current_page,
+                            status="active",
+                        )
+                break
 
         # Mark intent completed if page cap reached after this page
         if intent.status == "active" and intent.current_page > budget.max_pages_per_intent:
@@ -1287,15 +1453,33 @@ async def run_paginated_discovery(
     telemetry = _telemetry_payload(stats, intent_rows, "", budget, per_intent_cap)
     telemetry["durationMs"] = duration_ms
     telemetry["complete"] = True
+    if stop_control:
+        telemetry["userControl"] = stop_control
 
-    _update_job(
-        job_id,
-        status="completed",
-        phase=(
+    if stop_control == "pause":
+        final_status = "paused"
+        final_phase = (
+            f"Paused · {stats.leads_saved} leads kept · "
+            f"Google pages saved — Start hunt again to continue"
+        )
+    elif stop_control == "cancel":
+        final_status = "cancelled"
+        final_phase = (
+            f"Stopped · {stats.leads_saved} leads kept · "
+            f"{stats.google_pages} Google pages · {stats.emails_found} emails"
+        )
+    else:
+        final_status = "completed"
+        final_phase = (
             f"Done · {stats.leads_saved}/{budget.leads_per_run} leads · "
             f"{stats.google_pages} Google pages · {stats.emails_found} emails "
             f"(next run resumes deeper pages)"
-        ),
+        )
+
+    _update_job(
+        job_id,
+        status=final_status,
+        phase=final_phase,
         progress=100,
         found_count=stats.leads_saved,
         skipped_existing=stats.already_known_skips,
@@ -1310,6 +1494,7 @@ async def run_paginated_discovery(
         "stats": stats.__dict__,
         "agent_log_id": run_id,
         "telemetry": telemetry,
+        "status": final_status,
     }
 
 
@@ -1417,6 +1602,7 @@ def _telemetry_payload(
         "barrenStops": stats.barren_stops,
         "deepContactSkips": stats.deep_contact_skips,
         "barrenPagesStop": budget.barren_pages_stop if budget else 3,
+        "updatedAt": _now(),
         "intentStatus": [
             {
                 "searchIntent": r.search_intent,
