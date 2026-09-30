@@ -68,11 +68,13 @@ async def enrich_website(
     seed_phone: str = "",
     seed_contacts: list | None = None,
     use_hunter: bool = True,
+    deep_contacts: bool = True,
 ) -> dict[str, Any]:
     """
     Enrich a company website for public contact emails/phones.
-    Returns {email, phone, contacts, sources[], site_text} with provenance.
-    Site HTML is the primary source; Hunter is optional fallback.
+
+    deep_contacts=False → homepage scrape only (for location/relevance gates).
+    deep_contacts=True → also crawl contact pages; optional Hunter fallback.
     """
     website = (website or "").strip()
     sources: list[str] = []
@@ -81,6 +83,7 @@ async def enrich_website(
     contacts = list(seed_contacts or [])
     site_text = ""
     location = ""
+    homepage_html = ""
 
     if not website:
         return {
@@ -91,6 +94,7 @@ async def enrich_website(
             "found": bool(email),
             "site_text": "",
             "location": "",
+            "homepage_html": "",
         }
 
     tool = WebSearchTool()
@@ -103,41 +107,34 @@ async def enrich_website(
     if isinstance(page, dict):
         site_text = page.get("text") or ""
         location = page.get("location") or ""
+        homepage_html = (page.get("html") or "")[:400000]
         if page.get("emails") and not email:
             email = (page.get("emails") or [""])[0] or email
 
-    found = await discover_contacts(
-        website=website,
-        homepage_html=(page.get("html") or "")[:400000] if isinstance(page, dict) else "",
-        homepage_text=site_text,
-        homepage_url=(page.get("url") if isinstance(page, dict) else None) or website,
-        seed_phone=phone,
-        seed_emails=list((page.get("emails") or []) if isinstance(page, dict) else []),
-    )
-    if found.get("email"):
-        email = found["email"]
-        sources.append("site")
-    if found.get("phone"):
-        phone = found["phone"] or phone
-    for c in found.get("contacts") or []:
-        if isinstance(c, dict):
-            contacts.append(c)
+    if deep_contacts:
+        found = await discover_contacts(
+            website=website,
+            homepage_html=homepage_html,
+            homepage_text=site_text,
+            homepage_url=(page.get("url") if isinstance(page, dict) else None) or website,
+            seed_phone=phone,
+            seed_emails=list((page.get("emails") or []) if isinstance(page, dict) else []),
+        )
+        if found.get("email"):
+            email = found["email"]
+            sources.append("site")
+        if found.get("phone"):
+            phone = found["phone"] or phone
+        for c in found.get("contacts") or []:
+            if isinstance(c, dict):
+                contacts.append(c)
 
-    # Prefer contact/about/wholesale page text for relevance when homepage is thin
-    if isinstance(page, dict) and site_text:
-        pass  # homepage text already captured
-    # Append contact-page snippets into site_text for relevance (from contact URLs in contacts)
-    for c in contacts:
-        if isinstance(c, dict) and c.get("type") == "url" and c.get("label") == "Contact page":
-            # already fetched during discover_contacts — emails extracted; keep homepage text
-            break
-
-    if use_hunter and not email:
-        hunter = await hunter_domain_search(_domain(website))
-        if hunter.get("email"):
-            email = hunter["email"]
-            sources.append("hunter")
-            contacts = list(hunter.get("contacts") or []) + contacts
+        if use_hunter and not email:
+            hunter = await hunter_domain_search(_domain(website))
+            if hunter.get("email"):
+                email = hunter["email"]
+                sources.append("hunter")
+                contacts = list(hunter.get("contacts") or []) + contacts
 
     # Dedupe contacts by type+value
     seen: set[str] = set()
@@ -175,4 +172,82 @@ async def enrich_website(
         "hunterConfigured": bool((settings.HUNTER_API_KEY or "").strip()),
         "site_text": site_text,
         "location": location,
+        "homepage_html": homepage_html,
+    }
+
+
+async def deepen_website_contacts(
+    website: str,
+    *,
+    site_text: str = "",
+    homepage_html: str = "",
+    seed_email: str = "",
+    seed_phone: str = "",
+    seed_contacts: list | None = None,
+    use_hunter: bool = True,
+) -> dict[str, Any]:
+    """Contact-page crawl + optional Hunter after a light homepage pass already cleared gates."""
+    website = (website or "").strip()
+    sources: list[str] = []
+    email = (seed_email or "").strip()
+    phone = (seed_phone or "").strip()
+    contacts = list(seed_contacts or [])
+
+    if website:
+        found = await discover_contacts(
+            website=website,
+            homepage_html=(homepage_html or "")[:400000],
+            homepage_text=site_text or "",
+            homepage_url=website,
+            seed_phone=phone,
+            seed_emails=[email] if email else [],
+        )
+        if found.get("email"):
+            email = found["email"]
+            sources.append("site")
+        if found.get("phone"):
+            phone = found["phone"] or phone
+        for c in found.get("contacts") or []:
+            if isinstance(c, dict):
+                contacts.append(c)
+
+    if use_hunter and not email and website:
+        hunter = await hunter_domain_search(_domain(website))
+        if hunter.get("email"):
+            email = hunter["email"]
+            sources.append("hunter")
+            contacts = list(hunter.get("contacts") or []) + contacts
+
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for c in contacts:
+        if not isinstance(c, dict):
+            continue
+        key = f"{(c.get('type') or '').lower()}:{(c.get('value') or '').strip().lower()}"
+        if not c.get("value") or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(c)
+
+    if email and not any(
+        isinstance(c, dict) and c.get("type") == "email" and (c.get("value") or "").lower() == email.lower()
+        for c in deduped
+    ):
+        deduped.insert(
+            0,
+            {
+                "type": "email",
+                "value": email,
+                "label": "Email",
+                "source": sources[-1] if sources else "site",
+                "role": "general",
+            },
+        )
+
+    return {
+        "email": email,
+        "phone": phone,
+        "contacts": deduped,
+        "sources": sources,
+        "found": bool(email),
     }
