@@ -7,7 +7,6 @@ import { computeOutcomes, hasEmail } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
 import { FitScoreBadge } from './FitScoreBadge';
 import { useConfirm } from './ConfirmDialog';
-import PageAmbient from './brand/PageAmbient';
 import TemplatesCta from './TemplatesCta';
 
 const EMPTY_QUEUE_IMG = brandAssets.emptyQueue;
@@ -342,7 +341,6 @@ export default function QueueView({
 
   return (
     <div className="page-shell max-w-6xl w-full">
-      {prospects.length > 0 && <PageAmbient variant="leads" tone="whisper" />}
       <div className="page-header nr-enter">
         <h1 className="page-header__title">Leads</h1>
         <p className="page-header__desc">
@@ -354,24 +352,13 @@ export default function QueueView({
         </p>
       </div>
 
-      {onGoTemplates && (
-        <div className="templates-cta-row nr-enter nr-enter-delay-1">
-          <TemplatesCta templateCount={templateCount} onClick={onGoTemplates} />
-          {templateCount <= 0 && (
-            <p className="templates-cta-row__hint">
-              Write your emails once — Prepare will match by category.
-            </p>
-          )}
-        </div>
-      )}
-
-      <div className="toolbar nr-enter nr-enter-delay-1">
+      <div className="toolbar toolbar--filters nr-enter nr-enter-delay-1">
         <button
           type="button"
-          className={`btn btn-primary${emailFilter === 'has_email' ? '' : ' nr-soft-pulse'}`}
+          className={emailFilter === 'has_email' ? 'btn btn-secondary' : 'btn btn-ghost'}
           aria-pressed={emailFilter === 'has_email'}
           onClick={() => {
-            setEmailFilter('has_email');
+            setEmailFilter(emailFilter === 'has_email' ? 'all' : 'has_email');
             setFilter('All');
           }}
           title="Show only leads you can email"
@@ -420,6 +407,18 @@ export default function QueueView({
         >
           Export CSV
         </button>
+        {onGoTemplates && (
+          <TemplatesCta templateCount={templateCount} onClick={onGoTemplates} />
+        )}
+        <span className="toolbar-spacer" />
+        <span className="text-[12px] text-ink-muted tabular-nums">
+          {visible.length} shown
+          {filtersActive || huntScope !== 'all' ? ` of ${prospects.length}` : ''}
+          {selectedIds.length > 0 ? ` · ${selectedIds.length} selected` : ''}
+        </span>
+      </div>
+
+      <div className="toolbar toolbar--actions nr-enter nr-enter-delay-1">
         {onSendSelected && gmailConnected && selectedIds.length > 0 && (
           <button
             type="button"
@@ -428,25 +427,6 @@ export default function QueueView({
             className="btn btn-primary"
           >
             {sendingSelected ? 'Sending…' : `Send selected (${selectedIds.length})`}
-          </button>
-        )}
-        {onSendAllReady && gmailConnected && (
-          <button
-            type="button"
-            disabled={sendingBest}
-            onClick={() => {
-              void (async () => {
-                setSendingBest(true);
-                try {
-                  await onSendAllReady();
-                } finally {
-                  setSendingBest(false);
-                }
-              })();
-            }}
-            className="btn btn-primary"
-          >
-            {sendingBest ? 'Sending…' : 'Send best-fit'}
           </button>
         )}
         {onPrepareOutreach && selectedIds.length > 0 && (
@@ -465,7 +445,11 @@ export default function QueueView({
                 }
               })();
             }}
-            className="btn btn-primary nr-soft-pulse"
+            className={
+              onSendSelected && gmailConnected && selectedIds.length > 0
+                ? 'btn btn-secondary'
+                : 'btn btn-primary'
+            }
             title="Draft outreach only for the leads you’ve checked"
           >
             {preparingKind === 'selected' ? 'Preparing…' : `Prepare selected (${selectedIds.length})`}
@@ -491,10 +475,29 @@ export default function QueueView({
                 }
               })();
             }}
-            className={selectedIds.length > 0 ? 'btn btn-secondary' : 'btn btn-primary'}
+            className="btn btn-secondary"
             title="Draft outreach for all high-fit leads that don’t have a draft yet"
           >
             {preparingKind === 'best' ? 'Preparing…' : 'Prepare best-fit'}
+          </button>
+        )}
+        {onSendAllReady && gmailConnected && (
+          <button
+            type="button"
+            disabled={sendingBest}
+            onClick={() => {
+              void (async () => {
+                setSendingBest(true);
+                try {
+                  await onSendAllReady();
+                } finally {
+                  setSendingBest(false);
+                }
+              })();
+            }}
+            className="btn btn-ghost"
+          >
+            {sendingBest ? 'Sending…' : 'Send best-fit'}
           </button>
         )}
         {selectedIds.length > 0 && (
@@ -507,17 +510,11 @@ export default function QueueView({
             type="button"
             onClick={handleClear}
             disabled={clearing}
-            className="btn btn-ghost"
+            className="btn btn-ghost text-ink-muted"
           >
             {clearing ? 'Clearing…' : 'Clear all'}
           </button>
         )}
-        <span className="toolbar-spacer" />
-        <span className="text-[12px] text-ink-muted tabular-nums">
-          {visible.length} shown
-          {filtersActive || huntScope !== 'all' ? ` of ${prospects.length}` : ''}
-          {selectedIds.length > 0 ? ` · ${selectedIds.length} selected` : ''}
-        </span>
       </div>
 
       <div className="seg mb-4 overflow-x-auto max-w-full nr-enter nr-enter-delay-2" role="group" aria-label="Lead stage">
@@ -624,11 +621,11 @@ export default function QueueView({
                       aria-label={`Select ${prospect.companyName}`}
                     />
                   )}
-                  <button type="button" className="text-left w-full min-w-0" onClick={() => onReviewProspect(prospect.id)}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
-                        <p className="text-[13px] text-ink-muted truncate mt-0.5">
+                      <button type="button" className="text-left w-full min-w-0" onClick={() => onReviewProspect(prospect.id)}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-[14px] font-semibold text-ink truncate">{prospect.companyName}</p>
+                            <p className="text-[12px] text-ink-muted truncate mt-0.5">
                           {prospect.location || prospect.website || '—'}
                         </p>
                       </div>
@@ -718,8 +715,8 @@ export default function QueueView({
                       )}
                     </span>
                     <button type="button" className="text-left min-w-0" onClick={() => onReviewProspect(prospect.id)}>
-                      <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
-                      <p className="text-[13px] text-ink-muted truncate mt-px">
+                      <p className="text-[14px] font-semibold text-ink truncate leading-snug">{prospect.companyName}</p>
+                      <p className="text-[12px] text-ink-muted truncate mt-0.5">
                         {prospect.location || prospect.website || '—'}
                       </p>
                     </button>

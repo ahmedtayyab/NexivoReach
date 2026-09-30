@@ -1,5 +1,4 @@
 import type { OutreachMode, OutreachTemplate, Product } from '../types';
-import PageAmbient from './brand/PageAmbient';
 import OutreachTemplatesSection from './workspace/OutreachTemplatesSection';
 
 type Props = {
@@ -24,7 +23,6 @@ export default function OutreachTemplatesView({
 
   return (
     <div className="page-shell max-w-2xl w-full">
-      <PageAmbient variant="outreach" tone="whisper" />
       <header className="page-header nr-enter">
         <button type="button" className="setup-desk__back" onClick={onBack}>
           ← Back

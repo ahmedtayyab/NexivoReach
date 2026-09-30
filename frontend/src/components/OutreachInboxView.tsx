@@ -6,7 +6,6 @@ import { isDueFollowUp } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
 import { useConfirm } from './ConfirmDialog';
 import { FitScoreBadge } from './FitScoreBadge';
-import PageAmbient from './brand/PageAmbient';
 import OutreachModeBar from './OutreachModeBar';
 
 interface Props {
@@ -321,7 +320,6 @@ export default function OutreachInboxView({
 
   return (
     <div className="page-shell max-w-5xl w-full">
-      <PageAmbient variant="outreach" tone="whisper" />
       <div className="page-header nr-enter">
         <h1 className="page-header__title">Outreach</h1>
         <p className="page-header__desc">
@@ -384,38 +382,7 @@ export default function OutreachInboxView({
       )}
 
       <div className="toolbar outreach-toolbar nr-enter nr-enter-delay-1">
-        {onSendSelected && filtered.length > 0 && (
-          <button
-            type="button"
-            onClick={selectAllVisible}
-            className={`btn btn-primary${allVisibleSelected ? '' : ' nr-soft-pulse'}`}
-            aria-pressed={allVisibleSelected}
-            title="Select every lead in this list"
-          >
-            Select all ({visibleIds.length})
-          </button>
-        )}
-        {gmailConnected && onSendAllReady && sendableCount > 0 && (
-          <button type="button" onClick={() => onSendAllReady()} className="btn btn-primary">
-            Send all ready ({sendableCount})
-          </button>
-        )}
-        {gmailConnected && onPrepareAndSend && (
-          <button type="button" onClick={() => onPrepareAndSend()} className="btn btn-secondary">
-            Prepare & send
-          </button>
-        )}
-        {onSendSelected && filter !== 'with_email' && withEmailIds.length > 0 && withEmailIds.length < visibleIds.length && (
-          <button
-            type="button"
-            onClick={selectAllWithEmail}
-            className={`btn btn-ghost${allWithEmailSelected && !allVisibleSelected ? ' is-active' : ''}`}
-            title="Select only leads that have a recipient email"
-          >
-            Select with email ({withEmailIds.length})
-          </button>
-        )}
-        {gmailConnected && onSendSelected && selectedIds.length > 0 && (
+        {gmailConnected && onSendSelected && selectedIds.length > 0 ? (
           <button
             type="button"
             onClick={() => {
@@ -439,6 +406,41 @@ export default function OutreachInboxView({
             className="btn btn-primary"
           >
             Send selected ({selectedIds.length})
+          </button>
+        ) : gmailConnected && onSendAllReady && sendableCount > 0 ? (
+          <button type="button" onClick={() => onSendAllReady()} className="btn btn-primary">
+            Send all ready ({sendableCount})
+          </button>
+        ) : null}
+        {gmailConnected && onSendAllReady && sendableCount > 0 && selectedIds.length > 0 && (
+          <button type="button" onClick={() => onSendAllReady()} className="btn btn-secondary">
+            Send all ready ({sendableCount})
+          </button>
+        )}
+        {gmailConnected && onPrepareAndSend && (
+          <button type="button" onClick={() => onPrepareAndSend()} className="btn btn-secondary">
+            Prepare & send
+          </button>
+        )}
+        {onSendSelected && filtered.length > 0 && (
+          <button
+            type="button"
+            onClick={selectAllVisible}
+            className="btn btn-ghost"
+            aria-pressed={allVisibleSelected}
+            title="Select every lead in this list"
+          >
+            Select all ({visibleIds.length})
+          </button>
+        )}
+        {onSendSelected && filter !== 'with_email' && withEmailIds.length > 0 && withEmailIds.length < visibleIds.length && (
+          <button
+            type="button"
+            onClick={selectAllWithEmail}
+            className={`btn btn-ghost${allWithEmailSelected && !allVisibleSelected ? ' is-active' : ''}`}
+            title="Select only leads that have a recipient email"
+          >
+            Select with email ({withEmailIds.length})
           </button>
         )}
         {selectedIds.length > 0 && (

@@ -27,7 +27,6 @@ import {
   HUNT_LOCATION_OPTIONS,
 } from '../data/huntTaxonomy';
 import { isPlaceholderCompanyName } from '../lib/workspace';
-import PageAmbient from './brand/PageAmbient';
 import HuntCombobox from './FindBuyers/HuntCombobox';
 
 interface Props {
@@ -738,7 +737,6 @@ export default function FindBuyersPanel({
 
   return (
     <div className={`find-buyers${compact ? ' find-buyers--compact' : ' find-buyers--primary'}`}>
-      {!compact && <PageAmbient variant="leads" tone="whisper" />}
       {isRunning && (
         <div className="find-buyers__overlay" role="status" aria-live="polite">
           <div className="find-buyers__overlay-top">
