@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
 import { ArrowDown, ArrowUp, Loader2, Mail, MailWarning } from 'lucide-react';
 import { apiFetch } from '../lib/api';
@@ -33,6 +33,7 @@ interface Props {
   onSendAllReady?: () => void | Promise<void>;
   onSendSelected?: (ids: string[]) => Promise<void> | void;
   onRefreshContacts?: (id: string) => Promise<void> | void;
+  onSetManualEmail?: (id: string, email: string) => Promise<void> | void;
   gmailConnected?: boolean;
   onGoWorkspace?: () => void;
   templateCount?: number;
@@ -59,6 +60,7 @@ export default function QueueView({
   onSendAllReady,
   onSendSelected,
   onRefreshContacts,
+  onSetManualEmail,
   gmailConnected = false,
   onGoWorkspace,
   templateCount = 0,
@@ -76,6 +78,9 @@ export default function QueueView({
   const [preparingKind, setPreparingKind] = useState<'selected' | 'best' | ''>('');
   const [sendingBest, setSendingBest] = useState(false);
   const [refreshingId, setRefreshingId] = useState('');
+  const [editingEmailId, setEditingEmailId] = useState('');
+  const [emailDraft, setEmailDraft] = useState('');
+  const [savingEmailId, setSavingEmailId] = useState('');
   const [sortKey, setSortKey] = useState<SortKey | null>('fit');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const confirm = useConfirm();
@@ -188,13 +193,85 @@ export default function QueueView({
     }
   };
 
+  const startEditEmail = (prospect: Prospect, e?: MouseEvent) => {
+    e?.stopPropagation();
+    setEditingEmailId(prospect.id);
+    setEmailDraft(recipientEmail(prospect) || '');
+  };
+
+  const saveManualEmail = async (id: string) => {
+    if (!onSetManualEmail || savingEmailId) return;
+    setSavingEmailId(id);
+    try {
+      await onSetManualEmail(id, emailDraft.trim());
+      setEditingEmailId('');
+      setEmailDraft('');
+    } finally {
+      setSavingEmailId('');
+    }
+  };
+
   const emailCell = (prospect: Prospect) => {
     const email = recipientEmail(prospect);
+    if (editingEmailId === prospect.id) {
+      return (
+        <span className="lead-email-edit" onClick={e => e.stopPropagation()}>
+          <input
+            type="email"
+            className="lead-email-edit__input"
+            value={emailDraft}
+            autoFocus
+            placeholder="name@company.com"
+            onChange={e => setEmailDraft(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void saveManualEmail(prospect.id);
+              }
+              if (e.key === 'Escape') {
+                setEditingEmailId('');
+                setEmailDraft('');
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="linkish lead-email__find"
+            disabled={savingEmailId === prospect.id}
+            onClick={() => void saveManualEmail(prospect.id)}
+          >
+            {savingEmailId === prospect.id ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save'}
+          </button>
+          <button
+            type="button"
+            className="linkish lead-email__find"
+            disabled={savingEmailId === prospect.id}
+            onClick={e => {
+              e.stopPropagation();
+              setEditingEmailId('');
+              setEmailDraft('');
+            }}
+          >
+            Cancel
+          </button>
+        </span>
+      );
+    }
     if (email) {
       return (
         <span className="lead-email is-ok" title={email}>
           <Mail className="w-3 h-3 shrink-0" strokeWidth={1.75} />
           <span className="truncate">{email}</span>
+          {onSetManualEmail && (
+            <button
+              type="button"
+              className="linkish lead-email__find"
+              title="Edit email"
+              onClick={e => startEditEmail(prospect, e)}
+            >
+              Edit
+            </button>
+          )}
         </span>
       );
     }
@@ -202,6 +279,16 @@ export default function QueueView({
       <span className="lead-email is-missing">
         <MailWarning className="w-3 h-3 shrink-0" strokeWidth={1.75} />
         <span>No email</span>
+        {onSetManualEmail && (
+          <button
+            type="button"
+            className="linkish lead-email__find"
+            title="Type an email you found on their site"
+            onClick={e => startEditEmail(prospect, e)}
+          >
+            Add
+          </button>
+        )}
         {onRefreshContacts && (
           <button
             type="button"
