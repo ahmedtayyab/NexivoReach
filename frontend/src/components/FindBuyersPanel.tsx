@@ -1,17 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product } from '../types';
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  FileSpreadsheet,
-  Loader2,
-  Pause,
-  RotateCcw,
-  Search,
-  Square,
-  X,
-} from 'lucide-react';
+import { Check, FileSpreadsheet, Loader2, RotateCcw, Search, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { useConfirm } from './ConfirmDialog';
 import {
@@ -20,13 +9,12 @@ import {
   resumePersistedHunt,
   getActiveHunt,
   isHuntRunning,
-  controlActiveHunt,
-  type HuntTelemetry,
 } from '../lib/huntRunner';
 import {
   HUNT_LOCATION_OPTIONS,
 } from '../data/huntTaxonomy';
 import { isPlaceholderCompanyName } from '../lib/workspace';
+import PageAmbient from './brand/PageAmbient';
 import HuntCombobox from './FindBuyers/HuntCombobox';
 
 interface Props {
@@ -81,20 +69,6 @@ export function formatEtaRange(low: number, high: number): string {
   const hiM = Math.max(loM, Math.round(high / 60));
   if (loM === hiM) return `~${loM} min`;
   return `~${loM}–${hiM} min`;
-}
-
-function ageSeconds(iso: string | undefined, nowMs: number): number | null {
-  if (!iso) return null;
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return null;
-  return Math.max(0, Math.floor((nowMs - t) / 1000));
-}
-
-function formatAge(sec: number | null): string {
-  if (sec == null) return 'waiting for first update…';
-  if (sec < 3) return 'just now';
-  if (sec < 60) return `${sec}s ago`;
-  return `${Math.floor(sec / 60)}m ${sec % 60}s ago`;
 }
 
 function notifyHuntFinishedInTab(foundCount: number, failed = false) {
@@ -257,10 +231,6 @@ export default function FindBuyersPanel({
   const [serverPhase, setServerPhase] = useState('');
   const [serverProgress, setServerProgress] = useState(0);
   const [telemetryHint, setTelemetryHint] = useState('');
-  const [telemetry, setTelemetry] = useState<HuntTelemetry | null>(null);
-  const [jobUpdatedAt, setJobUpdatedAt] = useState('');
-  const [showLiveDetails, setShowLiveDetails] = useState(false);
-  const [controlBusy, setControlBusy] = useState<'pause' | 'stop' | ''>('');
   const [recentHunts, setRecentHunts] = useState<RecentHunt[]>([]);
   const [leadsPerRun, setLeadsPerRun] = useState(100);
   const [resettingMemory, setResettingMemory] = useState(false);
@@ -350,56 +320,25 @@ export default function FindBuyersPanel({
         setStatusText(p.phase);
         setServerProgress(p.progress);
         if (p.telemetryHint) setTelemetryHint(p.telemetryHint);
-        setTelemetry(p.telemetry || null);
-        setJobUpdatedAt(p.updatedAt || '');
         const started = p.startedAt || Date.now();
         setElapsedSec(Math.max(0, Math.floor((Date.now() - started) / 1000)));
-        if (
-          p.status === 'pause_requested' ||
-          p.status === 'cancel_requested' ||
-          p.status === 'paused' ||
-          p.status === 'cancelled' ||
-          p.status === 'canceled'
-        ) {
-          setControlBusy('');
-        }
       },
       onComplete: r => {
         setIsRunning(false);
         setServerProgress(0);
         setServerPhase('');
         setTelemetryHint('');
-        setTelemetry(null);
-        setJobUpdatedAt('');
-        setShowLiveDetails(false);
-        setControlBusy('');
         setLastFound(r.foundCount);
         const sheetsNote = sheetsWorkbookLinked ? ' Synced to Sheets.' : '';
-        const paused = r.status === 'paused';
-        const stopped = r.status === 'cancelled' || r.status === 'canceled';
-        if (paused) {
-          setStatusText(
-            r.foundCount
-              ? `Paused — ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'} kept. Start hunt again to continue from saved Google pages.`
-              : 'Paused — Start hunt again to continue from saved Google pages.',
-          );
-        } else if (stopped) {
-          setStatusText(
-            r.foundCount
-              ? `Stopped — kept ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}.${sheetsNote}`
-              : 'Stopped — no new leads this run.',
-          );
-        } else {
-          setStatusText(
-            r.foundCount
-              ? `Added ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}${
-                  r.skippedExisting ? ` (${r.skippedExisting} already researched)` : ''
-                } — open Latest hunt on Leads to review new accounts.${sheetsNote}`
-              : r.skippedExisting
-                ? `All matches were already researched (${r.skippedExisting}). Use Start over to rediscover them, or try a different hunt.`
-                : 'No accounts this round — try more specific hunt lines or another location.',
-          );
-        }
+        setStatusText(
+          r.foundCount
+            ? `Added ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}${
+                r.skippedExisting ? ` (${r.skippedExisting} already researched)` : ''
+              } — open Latest hunt on Leads to review new accounts.${sheetsNote}`
+            : r.skippedExisting
+              ? `All matches were already researched (${r.skippedExisting}). Use Start over to rediscover them, or try a different hunt.`
+              : 'No accounts this round — try more specific hunt lines or another location.',
+        );
         notifyHuntFinishedInTab(r.foundCount);
         void loadRecentHunts();
         // Prospects / navigation are handled by the App-level huntRunner subscriber
@@ -410,10 +349,6 @@ export default function FindBuyersPanel({
         setServerProgress(0);
         setServerPhase('');
         setTelemetryHint('');
-        setTelemetry(null);
-        setJobUpdatedAt('');
-        setShowLiveDetails(false);
-        setControlBusy('');
         setStatusText(message);
         notifyHuntFinishedInTab(0, true);
       },
@@ -501,13 +436,9 @@ export default function FindBuyersPanel({
     if (!isRunning) return '';
     const etaLabel = formatEtaRange(huntEta.low, huntEta.high);
     const remaining = Math.max(0, huntEta.high - elapsedSec);
-    const overdue = elapsedSec > huntEta.high + 60;
-    const timeBit = overdue
-      ? `${formatDuration(elapsedSec)} elapsed · longer than usual`
-      : `${formatDuration(elapsedSec)} elapsed · est. ${etaLabel}`;
-    const leftBit = overdue
-      ? ''
-      : elapsedSec < huntEta.low
+    const timeBit = `${formatDuration(elapsedSec)} elapsed · est. ${etaLabel}`;
+    const leftBit =
+      elapsedSec < huntEta.low
         ? ` · ~${formatDuration(Math.max(15, huntEta.low - elapsedSec))}–${formatDuration(remaining)} left`
         : remaining > 20
           ? ` · ~${formatDuration(remaining)} left`
@@ -517,32 +448,6 @@ export default function FindBuyersPanel({
     if (elapsedSec < 180) return `Inspecting sites · ${timeBit}${leftBit}`;
     return `Deep research · ${timeBit}${leftBit}`;
   }, [isRunning, elapsedSec, telemetryHint, huntEta]);
-
-  const serverAgeSec = ageSeconds(jobUpdatedAt || telemetry?.updatedAt, Date.now());
-  const intentRows = telemetry?.intentStatus || [];
-  const activeIntentCount = intentRows.filter(r => r.status === 'active').length;
-
-  const handleHuntControl = async (action: 'pause' | 'stop') => {
-    if (controlBusy) return;
-    if (action === 'stop') {
-      const ok = await confirm({
-        title: 'Stop this hunt?',
-        body: 'Leads already saved stay in your queue. This run ends now.',
-        confirmLabel: 'Stop hunt',
-        cancelLabel: 'Keep hunting',
-        tone: 'danger',
-      });
-      if (!ok) return;
-    }
-    setControlBusy(action);
-    try {
-      await controlActiveHunt(action);
-      setStatusText(action === 'pause' ? 'Pausing hunt…' : 'Stopping hunt…');
-    } catch (err: unknown) {
-      setControlBusy('');
-      setStatusText(err instanceof Error ? err.message : `Could not ${action} hunt`);
-    }
-  };
 
   const progressPct = useMemo(() => {
     if (!isRunning) return 0;
@@ -737,129 +642,20 @@ export default function FindBuyersPanel({
 
   return (
     <div className={`find-buyers${compact ? ' find-buyers--compact' : ' find-buyers--primary'}`}>
+      {!compact && <PageAmbient variant="leads" tone="whisper" />}
       {isRunning && (
         <div className="find-buyers__overlay" role="status" aria-live="polite">
-          <div className="find-buyers__overlay-top">
-            <Loader2 className="w-5 h-5 animate-spin text-[var(--cta)] shrink-0" />
-            <p className="find-buyers__overlay-title">Hunting buyers</p>
-          </div>
+          <Loader2 className="w-5 h-5 animate-spin text-[var(--cta)]" />
+          <p className="find-buyers__overlay-title">Hunting buyers</p>
           <p className="find-buyers__overlay-phase">{serverPhase || phases[phaseIndex]}</p>
           <p className="find-buyers__overlay-timer">
-            {formatDuration(elapsedSec)} elapsed
-            {elapsedSec > huntEta.high + 60
-              ? ' · taking longer than usual'
-              : ` · est. ${formatEtaRange(huntEta.low, huntEta.high)}`}
+            {formatDuration(elapsedSec)} elapsed · est. {formatEtaRange(huntEta.low, huntEta.high)}
             {lineCount > 0 ? ` · ${lineCount} search lines` : ''}
-          </p>
-          <p className="find-buyers__overlay-heartbeat">
-            Server update: {formatAge(serverAgeSec)}
-            {telemetry?.enrichingNow != null && telemetry.enrichingNow > 0
-              ? ` · inspecting ${telemetry.enrichingNow} site${telemetry.enrichingNow === 1 ? '' : 's'}`
-              : ''}
-            {serverAgeSec != null && serverAgeSec > 45 ? ' · may be stuck on a slow site' : ''}
           </p>
           <div className="find-buyers__overlay-track" aria-hidden="true">
             <div className="find-buyers__overlay-fill" style={{ width: `${progressPct}%` }} />
           </div>
           <p className="find-buyers__overlay-eta">{progressLabel}</p>
-
-          <div className="find-buyers__overlay-actions">
-            <button
-              type="button"
-              className="btn btn-secondary find-buyers__overlay-btn"
-              disabled={Boolean(controlBusy)}
-              onClick={() => void handleHuntControl('pause')}
-            >
-              {controlBusy === 'pause' ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Pause className="w-3.5 h-3.5" strokeWidth={2} />
-              )}
-              Pause
-            </button>
-            <button
-              type="button"
-              className="btn btn-danger find-buyers__overlay-btn"
-              disabled={Boolean(controlBusy)}
-              onClick={() => void handleHuntControl('stop')}
-            >
-              {controlBusy === 'stop' ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Square className="w-3.5 h-3.5" strokeWidth={2} />
-              )}
-              Stop
-            </button>
-            <button
-              type="button"
-              className="linkish find-buyers__overlay-details-toggle"
-              aria-expanded={showLiveDetails}
-              onClick={() => setShowLiveDetails(v => !v)}
-            >
-              {showLiveDetails ? (
-                <ChevronDown className="w-3.5 h-3.5" strokeWidth={2} />
-              ) : (
-                <ChevronRight className="w-3.5 h-3.5" strokeWidth={2} />
-              )}
-              {showLiveDetails ? 'Hide live progress' : 'Live progress'}
-            </button>
-          </div>
-
-          {showLiveDetails && (
-            <div className="find-buyers__live" aria-label="Live hunt progress">
-              <div className="find-buyers__live-grid">
-                <span>Leads</span>
-                <strong>
-                  {telemetry?.leadsSaved ?? 0}/{telemetry?.leadsPerRun ?? leadsPerRun}
-                </strong>
-                <span>Active lines</span>
-                <strong>
-                  {activeIntentCount}/{telemetry?.searchIntents ?? lineCount ?? 0}
-                </strong>
-                <span>Google pages</span>
-                <strong>{telemetry?.googlePages ?? 0}</strong>
-                <span>Businesses</span>
-                <strong>{telemetry?.uniqueDomains ?? 0}</strong>
-                <span>Inspected</span>
-                <strong>{telemetry?.websitesInspected ?? 0}</strong>
-                <span>Emails</span>
-                <strong>{telemetry?.emailsFound ?? 0}</strong>
-                <span>Already known</span>
-                <strong>{telemetry?.alreadyKnown ?? 0}</strong>
-                <span>Skipped deep crawl</span>
-                <strong>{telemetry?.deepContactSkips ?? 0}</strong>
-              </div>
-              {telemetry?.currentQuery ? (
-                <p className="find-buyers__live-current">
-                  <span>Now</span> {telemetry.currentQuery}
-                </p>
-              ) : null}
-              {intentRows.length > 0 && (
-                <ul className="find-buyers__live-intents">
-                  {intentRows.map((row, idx) => (
-                    <li key={`${row.searchIntent || row.query || idx}-${idx}`}>
-                      <span
-                        className={`find-buyers__live-dot is-${(row.status || 'active').replace(/\s+/g, '-')}`}
-                        title={row.status || 'active'}
-                      />
-                      <span className="find-buyers__live-intent-name">
-                        {row.searchIntent || row.query || `Line ${idx + 1}`}
-                      </span>
-                      <span className="find-buyers__live-intent-meta">
-                        p{row.page ?? row.pagesProcessed ?? '—'}
-                        {row.relevantLeads ? ` · ${row.relevantLeads} leads` : ''}
-                        {row.stopReason ? ` · ${row.stopReason}` : ` · ${row.status || 'active'}`}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <p className="find-buyers__live-foot">
-                Job {getActiveHunt()?.jobId || '—'}
-                {telemetry?.barrenStops ? ` · barren stops ${telemetry.barrenStops}` : ''}
-              </p>
-            </div>
-          )}
         </div>
       )}
 

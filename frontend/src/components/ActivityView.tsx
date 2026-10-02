@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { AgentRunLog } from '../types';
 import type { AuthUser, Prospect } from '../types';
 import { brandAssets } from '../lib/brandAssets';
+import { computeOutcomes } from '../lib/outcomes';
+import OutcomesStrip from './OutcomesStrip';
 import PlanUsageCard from './PlanUsageCard';
+import PageAmbient from './brand/PageAmbient';
 
 interface Props {
   agentLogs: AgentRunLog[];
@@ -21,6 +24,7 @@ export default function ActivityView({
 }: Props) {
   const [selectedRunId, setSelectedRunId] = useState<string>(agentLogs[0]?.id || '');
   const selectedLog = agentLogs.find(l => l.id === selectedRunId) || agentLogs[0];
+  const outcomes = useMemo(() => computeOutcomes(prospects), [prospects]);
 
   useEffect(() => {
     if (!agentLogs.length) {
@@ -34,14 +38,15 @@ export default function ActivityView({
 
   return (
     <div className="activity-desk page-shell">
+      {agentLogs.length > 0 && <PageAmbient variant="activity" tone="whisper" />}
       <div className="page-header">
         <h1 className="page-header__title">Activity</h1>
         <p className="page-header__desc">
-          Hunt runs and decision traces for this company.
-          {onGoLeads ? ' Open Leads to act on results.' : ''}
+          Pipeline outcomes for this company, today’s plan usage, and hunt decision traces.
         </p>
       </div>
 
+      <OutcomesStrip outcomes={outcomes} className="mb-4 nr-enter" />
       <PlanUsageCard user={user} compact onAskSupport={onAskSupport} />
 
       {agentLogs.length === 0 ? (

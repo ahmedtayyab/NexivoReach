@@ -157,8 +157,7 @@ class DiscoveryJob(SQLModel, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     user_id: str = Field(index=True)
     business_id: str = Field(index=True)
-    # queued | running | completed | failed | cancel_requested | cancelled | pause_requested | paused
-    status: str = "queued"
+    status: str = "queued"  # queued | running | completed | failed
     phase: str = "queued"
     progress: int = 0  # 0–100
     found_count: int = 0

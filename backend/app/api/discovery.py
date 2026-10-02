@@ -70,15 +70,6 @@ def _update_job(job_id: str, **fields: Any) -> None:
         job = session.get(DiscoveryJob, job_id)
         if not job:
             return
-        protected = {
-            "cancel_requested",
-            "cancelled",
-            "canceled",
-            "pause_requested",
-            "paused",
-        }
-        if job.status in protected and fields.get("status") == "running":
-            fields = {k: v for k, v in fields.items() if k != "status"}
         for k, v in fields.items():
             setattr(job, k, v)
         job.updated_at = _now()
@@ -204,15 +195,14 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
         saved_front = list(res.get("prospects") or [])
         saved_ids = [p.get("id") for p in saved_front if p.get("id")]
         telemetry = res.get("telemetry") or {}
-        end_status = (res.get("status") or "").strip().lower()
 
-        # Finish leftover emails while the job is still alive (skip if user stopped/paused)
+        # Finish leftover emails while the job is still alive
         missing_ids = [
             p.get("id")
             for p in saved_front
             if p.get("id") and p.get("website") and not (p.get("email") or "").strip()
         ]
-        if missing_ids and end_status not in ("cancelled", "canceled", "paused"):
+        if missing_ids:
             _update_job(
                 job_id,
                 status="running",
@@ -241,15 +231,7 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
         # Ensure job marked complete (paginated runner usually already did)
         with Session(engine) as session:
             job = session.get(DiscoveryJob, job_id)
-            if not job:
-                pass
-            elif job.status in ("cancelled", "canceled", "paused"):
-                job.found_count = max(job.found_count, len(saved_front))
-                job.result_prospect_ids = saved_ids or job.result_prospect_ids
-                job.updated_at = _now()
-                session.add(job)
-                session.commit()
-            elif job.status != "completed":
+            if job and job.status != "completed":
                 job.status = "completed"
                 job.phase = job.phase or "Done"
                 job.progress = 100
@@ -259,13 +241,13 @@ async def _execute_discovery_job(job_id: str, user_id: str, business_id: str, re
                 job.updated_at = _now()
                 session.add(job)
                 session.commit()
-            else:
+            elif job:
                 job.found_count = max(job.found_count, len(saved_front))
                 job.result_prospect_ids = saved_ids or job.result_prospect_ids
                 session.add(job)
                 session.commit()
 
-        if saved_front and end_status not in ("cancelled", "canceled"):
+        if saved_front:
             _sync_leads_job(business_id, saved_front)
     except Exception as exc:
         log.exception("Discovery job %s failed", job_id)
@@ -335,14 +317,7 @@ def get_discovery_job(job_id: str, request: Request, user: AuthUser = Depends(ge
             raise HTTPException(status_code=404, detail="Hunt job not found")
         prospects = []
         agent_log = None
-        terminal = job.status in (
-            "completed",
-            "failed",
-            "cancelled",
-            "canceled",
-            "paused",
-        )
-        if terminal and job.result_prospect_ids:
+        if job.status == "completed" and job.result_prospect_ids:
             for pid in job.result_prospect_ids:
                 row = session.get(ProspectRecord, pid)
                 if row:
@@ -354,50 +329,6 @@ def get_discovery_job(job_id: str, request: Request, user: AuthUser = Depends(ge
         payload = _job_to_dict(job, prospects)
         payload["agent_log"] = agent_log
         return payload
-
-
-@router.post("/jobs/{job_id}/control")
-def control_discovery_job(
-    job_id: str,
-    payload: Dict[str, Any],
-    request: Request,
-    user: AuthUser = Depends(get_current_user),
-):
-    """
-    Pause or stop a running hunt.
-    - pause: keep leads + Google page cursors; Start hunt again continues.
-    - cancel/stop: keep leads already saved; end this job.
-    """
-    from app.services.paginated_discovery import request_job_control
-
-    action = str(payload.get("action") or "").strip().lower()
-    if action in ("stop", "cancel"):
-        action = "cancel"
-    if action not in ("cancel", "pause"):
-        raise HTTPException(status_code=400, detail="action must be pause or stop")
-
-    with Session(engine) as session:
-        business_id = resolve_business_id(request, user, session)
-        job = session.get(DiscoveryJob, job_id)
-        if not job or job.business_id != business_id:
-            raise HTTPException(status_code=404, detail="Hunt job not found")
-        if job.status in ("completed", "failed", "cancelled", "canceled", "paused"):
-            return {
-                "ok": True,
-                "jobId": job_id,
-                "status": job.status,
-                "alreadyFinished": True,
-            }
-
-    ok = request_job_control(job_id, action)
-    if not ok:
-        raise HTTPException(status_code=409, detail="Could not control this hunt")
-    return {
-        "ok": True,
-        "jobId": job_id,
-        "status": f"{action}_requested",
-        "action": action,
-    }
 
 
 @router.post("/reset-memory")

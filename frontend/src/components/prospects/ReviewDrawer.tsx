@@ -19,7 +19,6 @@ interface Props {
   onPrepareOutreach?: (id: string) => void;
   onPrepareFollowUp?: (id: string) => void;
   onRefreshContacts?: (id: string) => Promise<void> | void;
-  onSetManualEmail?: (id: string, email: string) => Promise<void> | void;
   gmailConnected?: boolean;
 }
 
@@ -34,7 +33,6 @@ export default function ReviewDrawer({
   onPrepareOutreach,
   onPrepareFollowUp,
   onRefreshContacts,
-  onSetManualEmail,
   gmailConnected = false,
 }: Props) {
   const [draftBody, setDraftBody] = useState('');
@@ -43,8 +41,6 @@ export default function ReviewDrawer({
   const [replyNote, setReplyNote] = useState('');
   const [draftDirty, setDraftDirty] = useState(false);
   const [findingEmail, setFindingEmail] = useState(false);
-  const [manualEmail, setManualEmail] = useState('');
-  const [savingManualEmail, setSavingManualEmail] = useState(false);
 
   useEffect(() => {
     if (!prospect?.outreachDraft) {
@@ -67,10 +63,6 @@ export default function ReviewDrawer({
     prospect?.outreachDraft?.toEmail,
     prospect?.email,
   ]);
-
-  useEffect(() => {
-    setManualEmail(recipientEmail(prospect) || prospect?.email || '');
-  }, [prospect?.id, prospect?.email, prospect?.outreachDraft?.toEmail]);
 
   if (!prospect) return null;
 
@@ -339,43 +331,6 @@ export default function ReviewDrawer({
                 </div>
               );
             })()}
-            {onSetManualEmail && (
-              <form
-                className="lead-manual-email mt-4"
-                onSubmit={e => {
-                  e.preventDefault();
-                  void (async () => {
-                    setSavingManualEmail(true);
-                    try {
-                      await onSetManualEmail(prospect.id, manualEmail.trim());
-                    } finally {
-                      setSavingManualEmail(false);
-                    }
-                  })();
-                }}
-              >
-                <label className="lead-manual-email__label" htmlFor={`manual-email-${prospect.id}`}>
-                  Add or edit email
-                </label>
-                <div className="lead-manual-email__row">
-                  <input
-                    id={`manual-email-${prospect.id}`}
-                    type="email"
-                    value={manualEmail}
-                    onChange={e => setManualEmail(e.target.value)}
-                    placeholder="name@company.com"
-                    className="lead-manual-email__input"
-                    disabled={savingManualEmail}
-                  />
-                  <button type="submit" className="btn btn-secondary" disabled={savingManualEmail}>
-                    {savingManualEmail ? 'Saving…' : 'Save email'}
-                  </button>
-                </div>
-                <p className="text-[12px] text-ink-muted m-0 mt-1.5">
-                  Paste an address you found on their site. Used for Prepare / Send.
-                </p>
-              </form>
-            )}
             <label className="mt-4 flex items-center gap-2 text-[13px] text-ink-secondary">
               <input
                 type="checkbox"

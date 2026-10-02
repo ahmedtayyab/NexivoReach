@@ -8,11 +8,11 @@ import TeamMembersPanel from './TeamMembersPanel';
 import { useConfirm } from './ConfirmDialog';
 import type { SettingsSection } from '../lib/navigation';
 import {
-  isCompanySetupComplete,
   nextWorkspaceSection,
   workspaceSetupProgress,
   workspaceSetupSteps,
 } from '../lib/workspace';
+import PageAmbient from './brand/PageAmbient';
 
 async function apiErrorMessage(resp: Response, fallback: string): Promise<string> {
   const text = await resp.text();
@@ -78,10 +78,6 @@ export default function SettingsView({
   const stepNumber = stepIndex >= 0 ? stepIndex + 1 : 1;
 
   const isPrimaryStep = section === 'company' || section === 'icp';
-  const briefDone = isCompanySetupComplete(businessInfo);
-  /** After brief exists, Hunt is the workspace home — hide setup stepper chrome. */
-  const huntIsHome = briefDone && section === 'icp';
-  const showSetupChrome = isPrimaryStep && !huntIsHome;
   const titles: Record<SettingsSection, string> = {
     company: 'Company brief',
     integrations: 'Connect Google',
@@ -89,12 +85,10 @@ export default function SettingsView({
     icp: 'Find buyers',
   };
   const blurb: Record<SettingsSection, string> = {
-    company: 'Name and website are enough to unlock Hunt.',
-    integrations: 'Gmail for send · Sheets for optional backup.',
+    company: 'Name and website are enough.',
+    integrations: 'Needed for Gmail and Sheets.',
     catalog: 'Optional — products you sell.',
-    icp: huntIsHome
-      ? 'Describe who to find, then run a hunt.'
-      : 'Finish your brief, then describe who to find.',
+    icp: 'Pick a market, then hunt.',
   };
 
   useEffect(() => {
@@ -137,12 +131,13 @@ export default function SettingsView({
 
   return (
     <div className="setup-desk page-shell">
-      <header className={`setup-desk__hero${huntIsHome ? ' setup-desk__hero--hunt-home' : ''}`}>
-        {showSetupChrome ? (
+      <PageAmbient variant="workspace" tone="whisper" />
+      <header className="setup-desk__hero">
+        {isPrimaryStep ? (
           <p className="setup-desk__step tabular-nums">
             Step {stepNumber} of {steps.length}
           </p>
-        ) : section !== 'icp' ? (
+        ) : (
           <button
             type="button"
             className="setup-desk__back"
@@ -150,12 +145,10 @@ export default function SettingsView({
           >
             ← Back to Hunt
           </button>
-        ) : briefDone ? (
-          <p className="setup-desk__eyebrow">Workspace</p>
-        ) : null}
+        )}
         <h1 className="setup-desk__title">{titles[section]}</h1>
         <p className="setup-desk__lede">{blurb[section]}</p>
-        {showSetupChrome && (
+        {isPrimaryStep && (
           <>
             <div className="ws-stepper ws-stepper--two" aria-label="Workspace steps">
               {steps.map((step, i) => (
@@ -185,21 +178,6 @@ export default function SettingsView({
             </div>
           </>
         )}
-        {huntIsHome && (
-          <p className="ws-find__satellites">
-            <button type="button" className="linkish" onClick={() => onSectionChange('company')}>
-              Edit brief
-            </button>
-            <span aria-hidden="true"> · </span>
-            <button type="button" className="linkish" onClick={() => onSectionChange('integrations')}>
-              {sheetsConnected ? 'Google connected' : 'Connect Google'}
-            </button>
-            <span aria-hidden="true"> · </span>
-            <button type="button" className="linkish" onClick={() => onSectionChange('catalog')}>
-              Product catalog
-            </button>
-          </p>
-        )}
       </header>
 
       {showFind && (
@@ -215,19 +193,17 @@ export default function SettingsView({
             sheetsConnected={sheetsConnected}
             onGoConnect={() => onSectionChange('integrations')}
           />
-          {!huntIsHome && (
-            <p className="ws-find__secondary">
-              <button type="button" className="linkish" onClick={() => onSectionChange('integrations')}>
-                {sheetsConnected
-                  ? 'Sheets account ready'
-                  : 'Connect Google Sheets (recommended)'}
-              </button>
-              <span aria-hidden="true"> · </span>
-              <button type="button" className="linkish" onClick={() => onSectionChange('catalog')}>
-                Product catalog
-              </button>
-            </p>
-          )}
+          <p className="ws-find__secondary">
+            <button type="button" className="linkish" onClick={() => onSectionChange('integrations')}>
+              {sheetsConnected
+                ? 'Sheets account ready'
+                : 'Connect Google Sheets (recommended)'}
+            </button>
+            <span aria-hidden="true"> · </span>
+            <button type="button" className="linkish" onClick={() => onSectionChange('catalog')}>
+              Product catalog
+            </button>
+          </p>
         </div>
       )}
 

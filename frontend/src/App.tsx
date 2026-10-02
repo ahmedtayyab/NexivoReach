@@ -781,25 +781,6 @@ export default function App() {
     }
   };
 
-  const handleSetManualEmail = async (prospectId: string, email: string) => {
-    const resp = await apiFetch(`/api/prospects/${prospectId}/email`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
-    if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Could not save email'));
-    const data = await resp.json();
-    if (data.prospect) {
-      setProspects(prev => prev.map(p => (p.id === prospectId ? (data.prospect as Prospect) : p)));
-    }
-    const saved = (email || '').trim();
-    pushToast(
-      saved ? 'ok' : 'info',
-      saved ? 'Email saved' : 'Email cleared',
-      saved || 'Removed from this lead',
-    );
-  };
-
   const handleSkipOutreach = (_prospectId: string) => {
     // Inbox advances selection; draft stays for later.
   };
@@ -857,27 +838,7 @@ export default function App() {
       onComplete: r => {
         if (r.prospects.length) handleAddProspects(r.prospects);
         if (r.agentLog) handleAddLog(r.agentLog);
-        const paused = r.status === 'paused';
-        const stopped = r.status === 'cancelled' || r.status === 'canceled';
-        if (paused) {
-          pushToast(
-            'info',
-            r.foundCount
-              ? `Hunt paused — ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'} kept`
-              : 'Hunt paused',
-            'Start hunt again to continue from saved Google pages.',
-          );
-          if (r.foundCount > 0) setPreferLatestHunt(true);
-        } else if (stopped) {
-          pushToast(
-            'info',
-            r.foundCount
-              ? `Hunt stopped — kept ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}`
-              : 'Hunt stopped',
-            r.foundCount ? 'Open Leads → Latest hunt to review.' : 'No new leads this run.',
-          );
-          if (r.foundCount > 0) setPreferLatestHunt(true);
-        } else if (r.foundCount > 0) {
+        if (r.foundCount > 0) {
           pushToast(
             'ok',
             `Hunt finished — ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}`,
@@ -1100,7 +1061,6 @@ export default function App() {
             onSendAllReady={() => handleSendAllReady('ready')}
             onSendSelected={handleSendSelected}
             onRefreshContacts={handleRefreshContacts}
-            onSetManualEmail={handleSetManualEmail}
             gmailConnected={gmailCanSend(user)}
             onGoWorkspace={() => navigate(preferredWorkspaceRoute(businessInfo))}
             templateCount={outreachTemplates.length}
@@ -1244,7 +1204,6 @@ export default function App() {
         onPrepareOutreach={id => handlePrepareOutreach(id)}
         onPrepareFollowUp={handlePrepareFollowUp}
         onRefreshContacts={handleRefreshContacts}
-        onSetManualEmail={handleSetManualEmail}
         gmailConnected={gmailCanSend(user)}
       />
     </div>

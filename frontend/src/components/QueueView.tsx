@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
 import { ArrowDown, ArrowUp, Loader2, Mail, MailWarning } from 'lucide-react';
 import { apiFetch } from '../lib/api';
@@ -7,6 +7,7 @@ import { computeOutcomes, hasEmail } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
 import { FitScoreBadge } from './FitScoreBadge';
 import { useConfirm } from './ConfirmDialog';
+import PageAmbient from './brand/PageAmbient';
 import TemplatesCta from './TemplatesCta';
 
 const EMPTY_QUEUE_IMG = brandAssets.emptyQueue;
@@ -32,7 +33,6 @@ interface Props {
   onSendAllReady?: () => void | Promise<void>;
   onSendSelected?: (ids: string[]) => Promise<void> | void;
   onRefreshContacts?: (id: string) => Promise<void> | void;
-  onSetManualEmail?: (id: string, email: string) => Promise<void> | void;
   gmailConnected?: boolean;
   onGoWorkspace?: () => void;
   templateCount?: number;
@@ -59,7 +59,6 @@ export default function QueueView({
   onSendAllReady,
   onSendSelected,
   onRefreshContacts,
-  onSetManualEmail,
   gmailConnected = false,
   onGoWorkspace,
   templateCount = 0,
@@ -77,9 +76,6 @@ export default function QueueView({
   const [preparingKind, setPreparingKind] = useState<'selected' | 'best' | ''>('');
   const [sendingBest, setSendingBest] = useState(false);
   const [refreshingId, setRefreshingId] = useState('');
-  const [editingEmailId, setEditingEmailId] = useState('');
-  const [emailDraft, setEmailDraft] = useState('');
-  const [savingEmailId, setSavingEmailId] = useState('');
   const [sortKey, setSortKey] = useState<SortKey | null>('fit');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const confirm = useConfirm();
@@ -192,85 +188,13 @@ export default function QueueView({
     }
   };
 
-  const startEditEmail = (prospect: Prospect, e?: MouseEvent) => {
-    e?.stopPropagation();
-    setEditingEmailId(prospect.id);
-    setEmailDraft(recipientEmail(prospect) || '');
-  };
-
-  const saveManualEmail = async (id: string) => {
-    if (!onSetManualEmail || savingEmailId) return;
-    setSavingEmailId(id);
-    try {
-      await onSetManualEmail(id, emailDraft.trim());
-      setEditingEmailId('');
-      setEmailDraft('');
-    } finally {
-      setSavingEmailId('');
-    }
-  };
-
   const emailCell = (prospect: Prospect) => {
     const email = recipientEmail(prospect);
-    if (editingEmailId === prospect.id) {
-      return (
-        <span className="lead-email-edit" onClick={e => e.stopPropagation()}>
-          <input
-            type="email"
-            className="lead-email-edit__input"
-            value={emailDraft}
-            autoFocus
-            placeholder="name@company.com"
-            onChange={e => setEmailDraft(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void saveManualEmail(prospect.id);
-              }
-              if (e.key === 'Escape') {
-                setEditingEmailId('');
-                setEmailDraft('');
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="linkish lead-email__find"
-            disabled={savingEmailId === prospect.id}
-            onClick={() => void saveManualEmail(prospect.id)}
-          >
-            {savingEmailId === prospect.id ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save'}
-          </button>
-          <button
-            type="button"
-            className="linkish lead-email__find"
-            disabled={savingEmailId === prospect.id}
-            onClick={e => {
-              e.stopPropagation();
-              setEditingEmailId('');
-              setEmailDraft('');
-            }}
-          >
-            Cancel
-          </button>
-        </span>
-      );
-    }
     if (email) {
       return (
         <span className="lead-email is-ok" title={email}>
           <Mail className="w-3 h-3 shrink-0" strokeWidth={1.75} />
           <span className="truncate">{email}</span>
-          {onSetManualEmail && (
-            <button
-              type="button"
-              className="linkish lead-email__find"
-              title="Edit email"
-              onClick={e => startEditEmail(prospect, e)}
-            >
-              Edit
-            </button>
-          )}
         </span>
       );
     }
@@ -278,16 +202,6 @@ export default function QueueView({
       <span className="lead-email is-missing">
         <MailWarning className="w-3 h-3 shrink-0" strokeWidth={1.75} />
         <span>No email</span>
-        {onSetManualEmail && (
-          <button
-            type="button"
-            className="linkish lead-email__find"
-            title="Type an email you found on their site"
-            onClick={e => startEditEmail(prospect, e)}
-          >
-            Add
-          </button>
-        )}
         {onRefreshContacts && (
           <button
             type="button"
@@ -341,6 +255,7 @@ export default function QueueView({
 
   return (
     <div className="page-shell max-w-6xl w-full">
+      {prospects.length > 0 && <PageAmbient variant="leads" tone="whisper" />}
       <div className="page-header nr-enter">
         <h1 className="page-header__title">Leads</h1>
         <p className="page-header__desc">
@@ -352,13 +267,24 @@ export default function QueueView({
         </p>
       </div>
 
-      <div className="toolbar toolbar--filters nr-enter nr-enter-delay-1">
+      {onGoTemplates && (
+        <div className="templates-cta-row nr-enter nr-enter-delay-1">
+          <TemplatesCta templateCount={templateCount} onClick={onGoTemplates} />
+          {templateCount <= 0 && (
+            <p className="templates-cta-row__hint">
+              Write your emails once — Prepare will match by category.
+            </p>
+          )}
+        </div>
+      )}
+
+      <div className="toolbar nr-enter nr-enter-delay-1">
         <button
           type="button"
-          className={emailFilter === 'has_email' ? 'btn btn-secondary' : 'btn btn-ghost'}
+          className={`btn btn-primary${emailFilter === 'has_email' ? '' : ' nr-soft-pulse'}`}
           aria-pressed={emailFilter === 'has_email'}
           onClick={() => {
-            setEmailFilter(emailFilter === 'has_email' ? 'all' : 'has_email');
+            setEmailFilter('has_email');
             setFilter('All');
           }}
           title="Show only leads you can email"
@@ -407,18 +333,6 @@ export default function QueueView({
         >
           Export CSV
         </button>
-        {onGoTemplates && (
-          <TemplatesCta templateCount={templateCount} onClick={onGoTemplates} />
-        )}
-        <span className="toolbar-spacer" />
-        <span className="text-[12px] text-ink-muted tabular-nums">
-          {visible.length} shown
-          {filtersActive || huntScope !== 'all' ? ` of ${prospects.length}` : ''}
-          {selectedIds.length > 0 ? ` · ${selectedIds.length} selected` : ''}
-        </span>
-      </div>
-
-      <div className="toolbar toolbar--actions nr-enter nr-enter-delay-1">
         {onSendSelected && gmailConnected && selectedIds.length > 0 && (
           <button
             type="button"
@@ -427,6 +341,25 @@ export default function QueueView({
             className="btn btn-primary"
           >
             {sendingSelected ? 'Sending…' : `Send selected (${selectedIds.length})`}
+          </button>
+        )}
+        {onSendAllReady && gmailConnected && (
+          <button
+            type="button"
+            disabled={sendingBest}
+            onClick={() => {
+              void (async () => {
+                setSendingBest(true);
+                try {
+                  await onSendAllReady();
+                } finally {
+                  setSendingBest(false);
+                }
+              })();
+            }}
+            className="btn btn-primary"
+          >
+            {sendingBest ? 'Sending…' : 'Send best-fit'}
           </button>
         )}
         {onPrepareOutreach && selectedIds.length > 0 && (
@@ -445,11 +378,7 @@ export default function QueueView({
                 }
               })();
             }}
-            className={
-              onSendSelected && gmailConnected && selectedIds.length > 0
-                ? 'btn btn-secondary'
-                : 'btn btn-primary'
-            }
+            className="btn btn-primary nr-soft-pulse"
             title="Draft outreach only for the leads you’ve checked"
           >
             {preparingKind === 'selected' ? 'Preparing…' : `Prepare selected (${selectedIds.length})`}
@@ -475,29 +404,10 @@ export default function QueueView({
                 }
               })();
             }}
-            className="btn btn-secondary"
+            className={selectedIds.length > 0 ? 'btn btn-secondary' : 'btn btn-primary'}
             title="Draft outreach for all high-fit leads that don’t have a draft yet"
           >
             {preparingKind === 'best' ? 'Preparing…' : 'Prepare best-fit'}
-          </button>
-        )}
-        {onSendAllReady && gmailConnected && (
-          <button
-            type="button"
-            disabled={sendingBest}
-            onClick={() => {
-              void (async () => {
-                setSendingBest(true);
-                try {
-                  await onSendAllReady();
-                } finally {
-                  setSendingBest(false);
-                }
-              })();
-            }}
-            className="btn btn-ghost"
-          >
-            {sendingBest ? 'Sending…' : 'Send best-fit'}
           </button>
         )}
         {selectedIds.length > 0 && (
@@ -510,11 +420,17 @@ export default function QueueView({
             type="button"
             onClick={handleClear}
             disabled={clearing}
-            className="btn btn-ghost text-ink-muted"
+            className="btn btn-ghost"
           >
             {clearing ? 'Clearing…' : 'Clear all'}
           </button>
         )}
+        <span className="toolbar-spacer" />
+        <span className="text-[12px] text-ink-muted tabular-nums">
+          {visible.length} shown
+          {filtersActive || huntScope !== 'all' ? ` of ${prospects.length}` : ''}
+          {selectedIds.length > 0 ? ` · ${selectedIds.length} selected` : ''}
+        </span>
       </div>
 
       <div className="seg mb-4 overflow-x-auto max-w-full nr-enter nr-enter-delay-2" role="group" aria-label="Lead stage">
@@ -621,11 +537,11 @@ export default function QueueView({
                       aria-label={`Select ${prospect.companyName}`}
                     />
                   )}
-                      <button type="button" className="text-left w-full min-w-0" onClick={() => onReviewProspect(prospect.id)}>
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="text-[14px] font-semibold text-ink truncate">{prospect.companyName}</p>
-                            <p className="text-[12px] text-ink-muted truncate mt-0.5">
+                  <button type="button" className="text-left w-full min-w-0" onClick={() => onReviewProspect(prospect.id)}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
+                        <p className="text-[13px] text-ink-muted truncate mt-0.5">
                           {prospect.location || prospect.website || '—'}
                         </p>
                       </div>
@@ -715,8 +631,8 @@ export default function QueueView({
                       )}
                     </span>
                     <button type="button" className="text-left min-w-0" onClick={() => onReviewProspect(prospect.id)}>
-                      <p className="text-[14px] font-semibold text-ink truncate leading-snug">{prospect.companyName}</p>
-                      <p className="text-[12px] text-ink-muted truncate mt-0.5">
+                      <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
+                      <p className="text-[13px] text-ink-muted truncate mt-px">
                         {prospect.location || prospect.website || '—'}
                       </p>
                     </button>

@@ -48,7 +48,7 @@ from app.services.app_settings import (
     hunt_max_pages_per_intent,
     leads_per_intent_share,
 )
-from app.services.enrichment import deepen_website_contacts, enrich_website
+from app.services.enrichment import enrich_website
 from app.tools.web_search import WebSearchTool
 
 log = logging.getLogger(__name__)
@@ -83,18 +83,6 @@ def _legal_name_key(name: str) -> str:
 def _fingerprint(domains: List[str]) -> str:
     blob = "|".join(sorted({d for d in domains if d}))
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
-
-
-def update_barren_streak(streak: int, new_enrich_count: int, limit: int) -> Tuple[int, bool]:
-    """
-    Track consecutive Google pages with nothing new to enrich.
-    Returns (new_streak, should_stop_intent).
-    """
-    lim = max(1, int(limit or 3))
-    if int(new_enrich_count or 0) <= 0:
-        nxt = int(streak or 0) + 1
-        return nxt, nxt >= lim
-    return 0, False
 
 
 def _query_key(query: str) -> str:
@@ -203,16 +191,6 @@ def _update_job(job_id: str, **fields: Any) -> None:
                 job = session.get(DiscoveryJob, job_id)
                 if not job:
                     return
-                # Never clobber a user stop/pause request with routine "running" heartbeats.
-                protected = {
-                    "cancel_requested",
-                    "cancelled",
-                    "canceled",
-                    "pause_requested",
-                    "paused",
-                }
-                if job.status in protected and fields.get("status") == "running":
-                    fields = {k: v for k, v in fields.items() if k != "status"}
                 for k, v in fields.items():
                     setattr(job, k, v)
                 job.updated_at = _now()
@@ -224,60 +202,6 @@ def _update_job(job_id: str, **fields: Any) -> None:
                 log.warning("Job update failed for %s: %s", job_id, exc)
                 return
             time.sleep(0.15 * (attempt + 1))
-
-
-def read_job_control(job_id: str) -> str:
-    """
-    Return user control action for a running hunt.
-    Values: "" | "cancel" | "pause" (requested or already applied).
-    """
-    try:
-        with _db() as session:
-            job = session.get(DiscoveryJob, job_id)
-            if not job:
-                return ""
-            status = (job.status or "").strip().lower()
-            if status in ("cancel_requested", "cancelled", "canceled"):
-                return "cancel"
-            if status in ("pause_requested", "paused"):
-                return "pause"
-            payload = job.request_payload if isinstance(job.request_payload, dict) else {}
-            action = str(payload.get("_control") or "").strip().lower()
-            if action in ("cancel", "pause"):
-                return action
-    except Exception as exc:
-        log.warning("Job control read failed for %s: %s", job_id, exc)
-    return ""
-
-
-def request_job_control(job_id: str, action: str) -> bool:
-    """Mark a running job for cancel or pause. Returns False if job cannot be controlled."""
-    action = (action or "").strip().lower()
-    if action not in ("cancel", "pause"):
-        return False
-    for attempt in range(4):
-        try:
-            with _db() as session:
-                job = session.get(DiscoveryJob, job_id)
-                if not job:
-                    return False
-                if job.status in ("completed", "failed", "cancelled", "canceled", "paused"):
-                    return False
-                payload = dict(job.request_payload or {})
-                payload["_control"] = action
-                job.request_payload = payload
-                job.status = f"{action}_requested"
-                job.phase = "Stopping…" if action == "cancel" else "Pausing…"
-                job.updated_at = _now()
-                session.add(job)
-                session.commit()
-            return True
-        except Exception as exc:
-            if attempt >= 3:
-                log.warning("Job control request failed for %s: %s", job_id, exc)
-                return False
-            time.sleep(0.15 * (attempt + 1))
-    return False
 
 
 @dataclass
@@ -305,10 +229,6 @@ class HuntBudget:
     results_per_page: int = field(
         default_factory=lambda: int(settings.HUNT_RESULTS_PER_PAGE or 10)
     )
-    # Consecutive Google pages with 0 new domains → stop this search line early.
-    barren_pages_stop: int = field(
-        default_factory=lambda: max(1, int(getattr(settings, "HUNT_BARREN_PAGES_STOP", None) or 3))
-    )
 
 
 @dataclass
@@ -327,8 +247,6 @@ class HuntStats:
     leads_saved: int = 0
     already_known_skips: int = 0
     enrichments: int = 0
-    barren_stops: int = 0
-    deep_contact_skips: int = 0  # rejected after light pass (no deep crawl)
     stop_reasons: Dict[str, str] = field(default_factory=dict)
 
 
@@ -353,8 +271,6 @@ def _phase_from_stats(
     parts.append(f"Emails: {stats.emails_found}")
     if stats.already_known_skips:
         parts.append(f"Already known: {stats.already_known_skips}")
-    if stats.barren_stops:
-        parts.append(f"Barren stops: {stats.barren_stops}")
     return " · ".join(parts)
 
 
@@ -517,9 +433,6 @@ async def run_paginated_discovery(
     saved_ids: List[str] = []
     saved_front: List[Dict[str, Any]] = []
     seen_domains_this_hunt: set[str] = set()
-    # Domains already queued/enriched this run — never scrape twice even if processed=False yet.
-    enrich_queued_this_hunt: set[str] = set()
-    barren_streak: Dict[str, int] = {}
     rr_index = 0
 
     def _budget_hit(reason_holder: List[str]) -> bool:
@@ -559,10 +472,6 @@ async def run_paginated_discovery(
         location_hint: str,
         intent_id: str = "",
     ) -> Optional[Dict[str, Any]]:
-        """
-        Light homepage scrape → location + relevance gates → deep contacts/Hunter → save.
-        Known domains must never reach here (filtered before queue).
-        """
         nonlocal stats
         async with enrich_sem:
             if stats.leads_saved >= budget.leads_per_run:
@@ -571,7 +480,6 @@ async def run_paginated_discovery(
                 return None
             if stats.enrichments >= budget.max_enrichments:
                 return None
-
             stats.enrichments += 1
             site_text = ""
             email = ""
@@ -579,21 +487,6 @@ async def run_paginated_discovery(
             contacts: List[Dict[str, Any]] = []
             email_status = "email_not_found"
             email_source = ""
-            homepage_html = ""
-
-            # Hard skip: another concurrent task may have finished this domain
-            with _db() as session:
-                mem_early = session.exec(
-                    select(DiscoveredCompany).where(
-                        DiscoveredCompany.business_id == business_id,
-                        DiscoveredCompany.domain == domain,
-                    )
-                ).first()
-                if mem_early and mem_early.processed:
-                    stats.already_known_skips += 1
-                    return None
-
-            # --- Light pass: homepage only (no contact crawl / Hunter) ---
             try:
                 found = await asyncio.wait_for(
                     enrich_website(
@@ -602,27 +495,17 @@ async def run_paginated_discovery(
                         seed_phone="",
                         seed_contacts=[],
                         use_hunter=False,
-                        deep_contacts=False,
                     ),
-                    timeout=18.0,
+                    timeout=28.0,
                 )
             except Exception:
-                found = {
-                    "email": "",
-                    "phone": "",
-                    "contacts": [],
-                    "site_text": "",
-                    "sources": [],
-                    "homepage_html": "",
-                }
+                found = {"email": "", "phone": "", "contacts": [], "site_text": "", "sources": []}
             stats.websites_inspected += 1
             site_text = (found.get("site_text") or "")[:8000]
-            homepage_html = found.get("homepage_html") or ""
             phone = found.get("phone") or ""
-            # Homepage may already expose a mailto — keep it without deep crawl yet
-            if found.get("email"):
-                email = found["email"]
+            contacts = list(found.get("contacts") or [])
 
+            # Verify business location BEFORE Hunter / save — never stamp hunt place.
             from app.agents.location_verify import verify_business_location
 
             loc_check = verify_business_location(
@@ -634,28 +517,7 @@ async def run_paginated_discovery(
                 phones=[phone] if phone else [],
                 website=website,
             )
-
-            product, role, _p = __import__(
-                "app.agents.geo", fromlist=["parse_discovery_query"]
-            ).parse_discovery_query(discovery_query)
-            if not product:
-                product = (profile.categories[0] if profile.categories else "") or ""
-            if not role:
-                role = (profile.buyers[0] if profile.buyers else "distributors") or "distributors"
-
-            graded = website_relevance(
-                product=product,
-                buyer_type=role,
-                company_name=company_name,
-                title=title,
-                snippet=snippet,
-                site_text=site_text or f"{title}\n{snippet}",
-                categories=list(profile.categories or []),
-            )
-            level = graded.get("level") or "irrelevant"
-            relevant = bool(graded.get("relevant")) and level != "irrelevant"
-
-            def _mark_irrelevant(status: str = "irrelevant") -> None:
+            if loc_check.get("should_reject"):
                 with _db() as session:
                     mem = session.exec(
                         select(DiscoveredCompany).where(
@@ -677,43 +539,57 @@ async def run_paginated_discovery(
                             matched_search_intents=[search_intent] if search_intent else [],
                         )
                     mem.processed = True
-                    mem.status = status
+                    mem.status = "irrelevant"
                     mem.last_seen_at = now
                     session.add(mem)
                     session.commit()
                 stats.irrelevant += 1
-                stats.deep_contact_skips += 1
-
-            if loc_check.get("should_reject"):
-                _mark_irrelevant("irrelevant")
-                return None
-            if not relevant:
-                _mark_irrelevant("irrelevant")
                 return None
 
-            # --- Deep pass: contact crawl + Hunter only after gates clear ---
-            try:
-                deep = await asyncio.wait_for(
-                    deepen_website_contacts(
-                        website,
-                        site_text=site_text,
-                        homepage_html=homepage_html,
-                        seed_email=email,
-                        seed_phone=phone,
-                        seed_contacts=[],
-                        use_hunter=True,
-                    ),
-                    timeout=22.0,
-                )
-            except Exception:
-                deep = {"email": email, "phone": phone, "contacts": [], "sources": []}
-            if deep.get("email"):
-                email = deep["email"]
+            # Hunter only after location clears — avoid spending API on wrong-geo firms
+            email = ""
+            email_status = "email_not_found"
+            email_source = ""
+            if found.get("email"):
+                email = found["email"]
                 email_status = "email_found"
-                email_source = (deep.get("sources") or ["website"])[0]
+                email_source = (found.get("sources") or ["website"])[0]
                 stats.emails_found += 1
-            phone = deep.get("phone") or phone
-            contacts = list(deep.get("contacts") or [])
+            elif website:
+                try:
+                    from app.services.enrichment import hunter_domain_search
+                    from urllib.parse import urlparse
+
+                    host = (urlparse(website).hostname or "").lower()
+                    if host.startswith("www."):
+                        host = host[4:]
+                    hunter = await hunter_domain_search(host)
+                    if hunter.get("email"):
+                        email = hunter["email"]
+                        email_status = "email_found"
+                        email_source = "hunter"
+                        contacts = list(hunter.get("contacts") or []) + contacts
+                        stats.emails_found += 1
+                except Exception:
+                    pass
+
+            product, role, _p = __import__(
+                "app.agents.geo", fromlist=["parse_discovery_query"]
+            ).parse_discovery_query(discovery_query)
+            if not product:
+                product = (profile.categories[0] if profile.categories else "") or ""
+            if not role:
+                role = (profile.buyers[0] if profile.buyers else "distributors") or "distributors"
+
+            graded = website_relevance(
+                product=product,
+                buyer_type=role,
+                company_name=company_name,
+                title=title,
+                snippet=snippet,
+                site_text=site_text or f"{title}\n{snippet}",
+                categories=list(profile.categories or []),
+            )
 
             row = {
                 "company_name": company_name,
@@ -722,11 +598,14 @@ async def run_paginated_discovery(
                 "snippet": snippet,
                 "discovery_query": discovery_query,
                 "discovery_queries": discovery_queries,
+                # Never use location_hint (hunt place) as business location
                 "location": (loc_check.get("business_location") or found.get("location") or ""),
                 "phone": phone,
                 "source": "web",
             }
             triage = serp_triage(row, categories=profile.categories, buyers=profile.buyers)
+            level = graded.get("level") or "irrelevant"
+            relevant = bool(graded.get("relevant")) and level != "irrelevant"
 
             with _db() as session:
                 mem = session.exec(
@@ -762,6 +641,12 @@ async def run_paginated_discovery(
                 mem.processed = True
                 mem.email = email or mem.email or ""
                 mem.email_status = email_status
+                if not relevant:
+                    mem.status = "irrelevant"
+                    stats.irrelevant += 1
+                    session.add(mem)
+                    session.commit()
+                    return None
 
                 q = qualify_from_fast_decision(
                     row=row,
@@ -897,7 +782,6 @@ async def run_paginated_discovery(
                 return {"prospect": front, "id": prospect_id, "merged": False, "changed": True, "intent_id": intent_id}
 
     # ---- Main fair pagination loop ----
-    stop_control = ""  # cancel | pause (user requested)
     while True:
         hit_reasons: List[str] = []
         if _budget_hit(hit_reasons):
@@ -906,22 +790,6 @@ async def run_paginated_discovery(
                     row.status = "budget"
                     row.stop_reason = hit_reasons[0]
                     stats.stop_reasons[row.search_intent] = hit_reasons[0]
-            break
-
-        stop_control = read_job_control(job_id)
-        if stop_control:
-            for row in intent_rows:
-                if row.status == "active":
-                    row.status = "paused" if stop_control == "pause" else "cancelled"
-                    row.stop_reason = f"user_{stop_control}"
-                    stats.stop_reasons[row.search_intent] = row.stop_reason
-                    _persist_intent(row)
-                    _save_cursor_page(
-                        business_id=business_id,
-                        query=row.query,
-                        next_page=row.current_page,
-                        status="active",
-                    )
             break
 
         active = [r for r in intent_rows if r.status == "active"]
@@ -1106,53 +974,48 @@ async def run_paginated_discovery(
 
                 already = False
                 mem = None
-                if domain and domain in enrich_queued_this_hunt:
-                    # Already queued/enriched earlier this hunt — never scrape twice.
-                    already = True
-                    serp.already_known = True
-                    stats.previously_known += 1
-                    stats.already_known_skips += 1
-                elif domain:
+                if domain:
                     mem = session.exec(
                         select(DiscoveredCompany).where(
                             DiscoveredCompany.business_id == business_id,
                             DiscoveredCompany.domain == domain,
                         )
                     ).first()
-                    if mem and mem.processed:
-                        already = True
-                        serp.already_known = True
-                        stats.previously_known += 1
-                        stats.already_known_skips += 1
-                        # Still merge search intent memory; do NOT stop pagination
-                        intents = list(mem.matched_search_intents or [])
-                        if intent.search_intent and intent.search_intent not in intents:
-                            intents.append(intent.search_intent)
-                            mem.matched_search_intents = intents[:24]
-                        mem.last_seen_at = _now()
-                        session.add(mem)
-                        if mem.prospect_id:
-                            pr = session.get(ProspectRecord, mem.prospect_id)
-                            if pr:
-                                fb = dict(pr.fit_breakdown or {})
-                                mi = list(fb.get("matchedSearchIntents") or [])
-                                if intent.search_intent and intent.search_intent not in mi:
-                                    mi.append(intent.search_intent)
-                                    fb["matchedSearchIntents"] = mi[:16]
-                                    pr.fit_breakdown = fb
-                                    session.add(pr)
-                    elif domain:
-                        stats.new_domains += 1
-                        _touch_discovered(
-                            session,
-                            business_id=business_id,
-                            domain=domain,
-                            company_name=classified.get("company_name") or title,
-                            website=url,
-                            search_intent=intent.search_intent,
-                            status="seen",
-                            processed=False,
-                        )
+                if mem and mem.processed:
+                    already = True
+                    serp.already_known = True
+                    stats.previously_known += 1
+                    stats.already_known_skips += 1
+                    # Still merge search intent memory; do NOT stop pagination
+                    intents = list(mem.matched_search_intents or [])
+                    if intent.search_intent and intent.search_intent not in intents:
+                        intents.append(intent.search_intent)
+                        mem.matched_search_intents = intents[:24]
+                    mem.last_seen_at = _now()
+                    session.add(mem)
+                    # If saved prospect exists, merge intent onto fit_breakdown
+                    if mem.prospect_id:
+                        pr = session.get(ProspectRecord, mem.prospect_id)
+                        if pr:
+                            fb = dict(pr.fit_breakdown or {})
+                            mi = list(fb.get("matchedSearchIntents") or [])
+                            if intent.search_intent and intent.search_intent not in mi:
+                                mi.append(intent.search_intent)
+                                fb["matchedSearchIntents"] = mi[:16]
+                                pr.fit_breakdown = fb
+                                session.add(pr)
+                elif domain:
+                    stats.new_domains += 1
+                    _touch_discovered(
+                        session,
+                        business_id=business_id,
+                        domain=domain,
+                        company_name=classified.get("company_name") or title,
+                        website=url,
+                        search_intent=intent.search_intent,
+                        status="seen",
+                        processed=False,
+                    )
 
                 session.add(serp)
                 if domain:
@@ -1167,7 +1030,6 @@ async def run_paginated_discovery(
                     continue
                 if intent_leads_this_run.get(intent.id or "", 0) >= per_intent_cap:
                     continue
-                enrich_queued_this_hunt.add(domain)
                 enrich_jobs.append({
                     "domain": domain,
                     "website": url,
@@ -1188,7 +1050,6 @@ async def run_paginated_discovery(
                 intent.status = "exhausted"
                 intent.stop_reason = "repeated_results"
                 stats.stop_reasons[intent.search_intent] = "repeated_results"
-                barren_streak[intent_id] = 0
                 _save_cursor_page(
                     business_id=business_id,
                     query=intent.query,
@@ -1200,28 +1061,11 @@ async def run_paginated_discovery(
                 intent.last_page_fingerprint = fp
                 intent.current_page = page + 1
                 intent.new_domains += len(enrich_jobs)
-                # Barren-page early stop: consecutive pages with nothing new to enrich
-                streak, should_stop = update_barren_streak(
-                    barren_streak.get(intent_id, 0),
-                    len(enrich_jobs),
-                    budget.barren_pages_stop,
-                )
-                barren_streak[intent_id] = streak
-                if should_stop and intent.status == "active":
-                    intent.status = "exhausted"
-                    intent.stop_reason = "barren_pages"
-                    stats.stop_reasons[intent.search_intent] = "barren_pages"
-                    stats.barren_stops += 1
-                    log.info(
-                        "Intent %r stopped after %s barren pages (0 new domains)",
-                        intent.search_intent,
-                        streak,
-                    )
                 _save_cursor_page(
                     business_id=business_id,
                     query=intent.query,
                     next_page=intent.current_page,
-                    status="exhausted" if intent.stop_reason == "barren_pages" else "active",
+                    status="active",
                     session=session,
                 )
             intent.updated_at = _now()
@@ -1235,104 +1079,34 @@ async def run_paginated_discovery(
 
         # Enrich new domains from this page (bounded concurrency) — incremental save
         if enrich_jobs:
-            _update_job(
-                job_id,
-                phase=(
-                    f"Inspecting {len(enrich_jobs)} site"
-                    f"{'' if len(enrich_jobs) == 1 else 's'} · "
-                    + _phase_from_stats(
-                        stats,
-                        current_q,
-                        sum(1 for r in intent_rows if r.status != "active"),
-                        len(intent_rows),
-                        leads_cap=budget.leads_per_run,
-                    )
-                ),
-                progress=_progress_pct(
-                    stats,
-                    budget,
-                    sum(1 for r in intent_rows if r.status != "active"),
-                    len(intent_rows),
-                ),
-                found_count=stats.leads_saved,
-                skipped_existing=stats.already_known_skips,
-                result_prospect_ids=saved_ids[-200:],
-                telemetry={
-                    **_telemetry_payload(stats, intent_rows, current_q, budget, per_intent_cap),
-                    "enrichingNow": len(enrich_jobs),
-                    "heartbeat": "enrich",
-                },
-            )
             tasks = [
                 asyncio.create_task(_enrich_and_maybe_save(**job))
                 for job in enrich_jobs
             ]
-            pending = set(tasks)
-            while pending:
-                done, pending = await asyncio.wait(pending, timeout=4.0)
-                for fut in done:
-                    if fut.cancelled():
-                        continue
-                    try:
-                        res = fut.result()
-                    except Exception:
-                        continue
-                    if not res:
-                        continue
-                    pid = res.get("id")
-                    prospect = res.get("prospect")
-                    if pid and prospect and not res.get("merged"):
-                        if pid not in saved_ids:
-                            saved_ids.append(pid)
-                            saved_front.append(prospect)
-                    elif pid and prospect and res.get("merged") and res.get("changed"):
-                        if pid not in saved_ids:
-                            saved_ids.append(pid)
-                        saved_front = [p for p in saved_front if p.get("id") != pid] + [prospect]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for res in results:
+                if isinstance(res, Exception) or not res:
+                    continue
+                pid = res.get("id")
+                prospect = res.get("prospect")
+                if pid and prospect and not res.get("merged"):
+                    if pid not in saved_ids:
+                        saved_ids.append(pid)
+                        saved_front.append(prospect)
+                elif pid and prospect and res.get("merged") and res.get("changed"):
+                    if pid not in saved_ids:
+                        saved_ids.append(pid)
+                    # refresh front copy
+                    saved_front = [p for p in saved_front if p.get("id") != pid] + [prospect]
 
-                    with _db() as session:
-                        it = session.get(DiscoverySearchIntent, intent_id)
-                        if it and not res.get("merged"):
-                            it.relevant_leads = int(it.relevant_leads or 0) + 1
-                            intent.relevant_leads = it.relevant_leads
-                            session.add(it)
-                            session.commit()
-
-                # Heartbeat so the UI can tell enrich is alive (not frozen)
-                _update_job(
-                    job_id,
-                    phase=(
-                        f"Inspecting sites ({len(tasks) - len(pending)}/{len(tasks)} done) · "
-                        + _phase_from_stats(
-                            stats,
-                            current_q,
-                            sum(1 for r in intent_rows if r.status != "active"),
-                            len(intent_rows),
-                            leads_cap=budget.leads_per_run,
-                        )
-                    ),
-                    found_count=stats.leads_saved,
-                    skipped_existing=stats.already_known_skips,
-                    result_prospect_ids=saved_ids[-200:],
-                    telemetry={
-                        **_telemetry_payload(
-                            stats, intent_rows, current_q, budget, per_intent_cap
-                        ),
-                        "enrichingNow": len(pending),
-                        "enrichBatch": len(tasks),
-                        "heartbeat": "enrich",
-                    },
-                )
-
-                ctrl = read_job_control(job_id)
-                if ctrl:
-                    stop_control = ctrl
-                    for fut in pending:
-                        fut.cancel()
-                    if pending:
-                        await asyncio.gather(*pending, return_exceptions=True)
-                    pending = set()
-                    break
+                # bump intent relevant count
+                with _db() as session:
+                    it = session.get(DiscoverySearchIntent, intent_id)
+                    if it and not res.get("merged"):
+                        it.relevant_leads = int(it.relevant_leads or 0) + 1
+                        intent.relevant_leads = it.relevant_leads
+                        session.add(it)
+                        session.commit()
 
             # Stop this intent for the run once its share is filled (resume later pages next hunt)
             if intent_leads_this_run.get(intent_id, 0) >= per_intent_cap and intent.status == "active":
@@ -1375,21 +1149,6 @@ async def run_paginated_discovery(
                 result_prospect_ids=saved_ids[-200:],
                 telemetry=_telemetry_payload(stats, intent_rows, current_q, budget, per_intent_cap),
             )
-
-            if stop_control:
-                for row in intent_rows:
-                    if row.status == "active":
-                        row.status = "paused" if stop_control == "pause" else "cancelled"
-                        row.stop_reason = f"user_{stop_control}"
-                        stats.stop_reasons[row.search_intent] = row.stop_reason
-                        _persist_intent(row)
-                        _save_cursor_page(
-                            business_id=business_id,
-                            query=row.query,
-                            next_page=row.current_page,
-                            status="active",
-                        )
-                break
 
         # Mark intent completed if page cap reached after this page
         if intent.status == "active" and intent.current_page > budget.max_pages_per_intent:
@@ -1453,33 +1212,15 @@ async def run_paginated_discovery(
     telemetry = _telemetry_payload(stats, intent_rows, "", budget, per_intent_cap)
     telemetry["durationMs"] = duration_ms
     telemetry["complete"] = True
-    if stop_control:
-        telemetry["userControl"] = stop_control
-
-    if stop_control == "pause":
-        final_status = "paused"
-        final_phase = (
-            f"Paused · {stats.leads_saved} leads kept · "
-            f"Google pages saved — Start hunt again to continue"
-        )
-    elif stop_control == "cancel":
-        final_status = "cancelled"
-        final_phase = (
-            f"Stopped · {stats.leads_saved} leads kept · "
-            f"{stats.google_pages} Google pages · {stats.emails_found} emails"
-        )
-    else:
-        final_status = "completed"
-        final_phase = (
-            f"Done · {stats.leads_saved}/{budget.leads_per_run} leads · "
-            f"{stats.google_pages} Google pages · {stats.emails_found} emails "
-            f"(next run resumes deeper pages)"
-        )
 
     _update_job(
         job_id,
-        status=final_status,
-        phase=final_phase,
+        status="completed",
+        phase=(
+            f"Done · {stats.leads_saved}/{budget.leads_per_run} leads · "
+            f"{stats.google_pages} Google pages · {stats.emails_found} emails "
+            f"(next run resumes deeper pages)"
+        ),
         progress=100,
         found_count=stats.leads_saved,
         skipped_existing=stats.already_known_skips,
@@ -1494,7 +1235,6 @@ async def run_paginated_discovery(
         "stats": stats.__dict__,
         "agent_log_id": run_id,
         "telemetry": telemetry,
-        "status": final_status,
     }
 
 
@@ -1599,10 +1339,6 @@ def _telemetry_payload(
         "emailsFound": stats.emails_found,
         "leadsSaved": stats.leads_saved,
         "alreadyKnown": stats.already_known_skips,
-        "barrenStops": stats.barren_stops,
-        "deepContactSkips": stats.deep_contact_skips,
-        "barrenPagesStop": budget.barren_pages_stop if budget else 3,
-        "updatedAt": _now(),
         "intentStatus": [
             {
                 "searchIntent": r.search_intent,

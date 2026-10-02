@@ -1,4 +1,4 @@
-import { Settings, LayoutList, Mail, LifeBuoy } from 'lucide-react';
+import { Settings, LayoutList, Activity, Mail, LifeBuoy } from 'lucide-react';
 import type { AppRoute } from '../../lib/navigation';
 
 interface Props {
@@ -9,12 +9,12 @@ interface Props {
   draftCount?: number;
 }
 
-/** Primary mobile destinations — Activity stays in the sidebar drawer. */
 const items = [
   { id: 'settings', label: 'Workspace', icon: Settings },
   { id: 'queue', label: 'Leads', icon: LayoutList },
   { id: 'outreach', label: 'Outreach', icon: Mail },
   { id: 'support', label: 'Support', icon: LifeBuoy },
+  { id: 'activity', label: 'Activity', icon: Activity },
 ] as const;
 
 export default function MobileNav({
@@ -29,7 +29,7 @@ export default function MobileNav({
       className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-panel-elevated border-t border-border safe-bottom"
       aria-label="Primary"
     >
-      <div className="grid grid-cols-4 h-14">
+      <div className="grid grid-cols-5 h-14">
         {items.map(({ id, label, icon: Icon }) => {
           const isActive =
             id === 'settings'
