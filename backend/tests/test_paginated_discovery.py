@@ -69,7 +69,8 @@ def test_hunt_budget_defaults_are_safety_not_lead_caps():
     assert b.max_pages_per_intent >= 5
     assert b.max_total_pages >= 50
     assert b.leads_per_run >= 5
-    assert b.barren_pages_stop >= 1
+    # Barren early-stop stays off by default.
+    assert b.barren_pages_stop == 0
 
 
 def test_leads_split_evenly_across_hunt_lines():
@@ -88,6 +89,13 @@ def test_barren_streak_stops_after_n_empty_pages():
     assert streak == 2 and stop is False
     streak, stop = update_barren_streak(streak, 0, 3)
     assert streak == 3 and stop is True
+
+
+def test_barren_streak_disabled_when_limit_zero():
+    streak, stop = update_barren_streak(0, 0, 0)
+    assert streak == 0 and stop is False
+    streak, stop = update_barren_streak(99, 0, 0)
+    assert streak == 0 and stop is False
 
 
 def test_barren_streak_resets_when_new_domains_found():

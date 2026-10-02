@@ -89,8 +89,12 @@ def update_barren_streak(streak: int, new_enrich_count: int, limit: int) -> Tupl
     """
     Track consecutive Google pages with nothing new to enrich.
     Returns (new_streak, should_stop_intent).
+
+    limit <= 0 disables early-stop (keep paging until lead/page caps).
     """
-    lim = max(1, int(limit or 3))
+    lim = int(limit or 0)
+    if lim <= 0:
+        return 0, False
     if int(new_enrich_count or 0) <= 0:
         nxt = int(streak or 0) + 1
         return nxt, nxt >= lim
@@ -168,10 +172,11 @@ def _save_cursor_page(
             )
         else:
             row.next_page = next_page
+            # Allow revive from exhausted → active on later hunts.
             if status == "exhausted":
                 row.status = "exhausted"
-            elif row.status != "exhausted":
-                row.status = status
+            else:
+                row.status = status or "active"
             if search_intent and not row.search_intent:
                 row.search_intent = search_intent
             if location and not row.location:
@@ -242,8 +247,9 @@ class HuntBudget:
         default_factory=lambda: int(settings.HUNT_RESULTS_PER_PAGE or 10)
     )
     # Consecutive Google pages with 0 new domains → stop this search line early.
+    # 0 = off. Early barren stops were finishing hunts with 0 leads and no warning.
     barren_pages_stop: int = field(
-        default_factory=lambda: max(1, int(getattr(settings, "HUNT_BARREN_PAGES_STOP", None) or 3))
+        default_factory=lambda: max(0, int(getattr(settings, "HUNT_BARREN_PAGES_STOP", None) or 0))
     )
 
 
@@ -407,7 +413,11 @@ async def run_paginated_discovery(
                 query=spec["query"],
             )
             start_page = max(1, int(cursor.next_page or 1))
-            initial_status = "exhausted" if cursor.status == "exhausted" else "active"
+            # Never no-op Find buyers on a stale exhausted cursor.
+            if cursor.status == "exhausted":
+                cursor.status = "active"
+                cursor.updated_at = _now()
+                session.add(cursor)
             row = DiscoverySearchIntent(
                 id=f"intent-{uuid4().hex[:12]}",
                 job_id=job_id,
@@ -420,8 +430,8 @@ async def run_paginated_discovery(
                 results_processed=0,
                 new_domains=0,
                 relevant_leads=0,
-                status=initial_status,
-                stop_reason="previously_exhausted" if initial_status == "exhausted" else "",
+                status="active",
+                stop_reason="",
                 created_at=_now(),
                 updated_at=_now(),
             )
@@ -432,8 +442,6 @@ async def run_paginated_discovery(
         for row in intent_rows:
             session.refresh(row)
             intent_leads_this_run[row.id or ""] = 0
-            if row.stop_reason == "previously_exhausted":
-                stats.stop_reasons[row.search_intent] = "previously_exhausted"
 
     _update_job(
         job_id,
@@ -502,8 +510,6 @@ async def run_paginated_discovery(
         nonlocal stats
         async with enrich_sem:
             if stats.leads_saved >= budget.leads_per_run:
-                return None
-            if intent_id and intent_leads_this_run.get(intent_id, 0) >= per_intent_cap:
                 return None
             if stats.enrichments >= budget.max_enrichments:
                 return None
@@ -847,28 +853,15 @@ async def run_paginated_discovery(
         if not active:
             break
 
-        # Prefer intents still under their per-line share
+        # Soft fair-share: prefer under-quota lines, but keep going until leads_per_run.
         under_quota = [
             r for r in active
             if intent_leads_this_run.get(r.id or "", 0) < per_intent_cap
         ]
-        if not under_quota:
-            # All active intents hit their share — stop run (pages resume next time)
-            for row in active:
-                row.status = "quota"
-                row.stop_reason = "per_intent_lead_cap"
-                stats.stop_reasons[row.search_intent] = "per_intent_lead_cap"
-                _persist_intent(row)
-                _save_cursor_page(
-                    business_id=business_id,
-                    query=row.query,
-                    next_page=row.current_page,
-                    status="active",
-                )
-            break
+        pool = under_quota if under_quota else active
 
         # Fair round-robin among intents still needing leads
-        intent = under_quota[rr_index % len(under_quota)]
+        intent = pool[rr_index % len(pool)]
         rr_index += 1
         intent_id = intent.id or ""
 
@@ -1084,8 +1077,6 @@ async def run_paginated_discovery(
                     continue
                 if stats.leads_saved >= budget.leads_per_run:
                     continue
-                if intent_leads_this_run.get(intent.id or "", 0) >= per_intent_cap:
-                    continue
                 enrich_queued_this_hunt.add(domain)
                 enrich_jobs.append({
                     "domain": domain,
@@ -1104,22 +1095,25 @@ async def run_paginated_discovery(
             intent.pages_processed += 1
             fp = _fingerprint(page_domains)
             if fp and fp == intent.last_page_fingerprint:
-                intent.status = "exhausted"
+                # Advance past the duplicate page; soft-complete this line for the run
+                # without parking the cursor forever on the same page.
+                intent.status = "completed"
                 intent.stop_reason = "repeated_results"
                 stats.stop_reasons[intent.search_intent] = "repeated_results"
                 barren_streak[intent_id] = 0
+                intent.current_page = page + 1
                 _save_cursor_page(
                     business_id=business_id,
                     query=intent.query,
-                    next_page=page,
-                    status="exhausted",
+                    next_page=intent.current_page,
+                    status="active",
                     session=session,
                 )
             else:
                 intent.last_page_fingerprint = fp
                 intent.current_page = page + 1
                 intent.new_domains += len(enrich_jobs)
-                # Barren-page early stop: consecutive pages with nothing new to enrich
+                # Barren early-stop (disabled when barren_pages_stop <= 0)
                 streak, should_stop = update_barren_streak(
                     barren_streak.get(intent_id, 0),
                     len(enrich_jobs),
@@ -1127,12 +1121,12 @@ async def run_paginated_discovery(
                 )
                 barren_streak[intent_id] = streak
                 if should_stop and intent.status == "active":
-                    intent.status = "exhausted"
+                    intent.status = "completed"
                     intent.stop_reason = "barren_pages"
                     stats.stop_reasons[intent.search_intent] = "barren_pages"
                     stats.barren_stops += 1
                     log.info(
-                        "Intent %r stopped after %s barren pages (0 new domains)",
+                        "Intent %r paused after %s barren pages (0 new domains)",
                         intent.search_intent,
                         streak,
                     )
@@ -1140,7 +1134,7 @@ async def run_paginated_discovery(
                     business_id=business_id,
                     query=intent.query,
                     next_page=intent.current_page,
-                    status="exhausted" if intent.stop_reason == "barren_pages" else "active",
+                    status="active",
                     session=session,
                 )
             intent.updated_at = _now()
@@ -1183,13 +1177,7 @@ async def run_paginated_discovery(
                         session.add(it)
                         session.commit()
 
-            # Stop this intent for the run once its share is filled (resume later pages next hunt)
-            if intent_leads_this_run.get(intent_id, 0) >= per_intent_cap and intent.status == "active":
-                intent.status = "quota"
-                intent.stop_reason = "per_intent_lead_cap"
-                stats.stop_reasons[intent.search_intent] = "per_intent_lead_cap"
-                _persist_intent(intent)
-
+            # Only stop the whole run when the lead cap is hit (not per-line share).
             if stats.leads_saved >= budget.leads_per_run:
                 for row in intent_rows:
                     if row.status == "active":
@@ -1288,14 +1276,23 @@ async def run_paginated_discovery(
     telemetry["durationMs"] = duration_ms
     telemetry["complete"] = True
 
-    _update_job(
-        job_id,
-        status="completed",
-        phase=(
+    if stats.leads_saved <= 0 and (stats.already_known_skips or stats.barren_stops or stats.stop_reasons):
+        final_phase = (
+            f"Done · 0 new leads · {stats.google_pages} Google pages · "
+            f"{stats.already_known_skips} already known · "
+            f"stops={list(stats.stop_reasons.values())[:4]}"
+        )
+    else:
+        final_phase = (
             f"Done · {stats.leads_saved}/{budget.leads_per_run} leads · "
             f"{stats.google_pages} Google pages · {stats.emails_found} emails "
             f"(next run resumes deeper pages)"
-        ),
+        )
+
+    _update_job(
+        job_id,
+        status="completed",
+        phase=final_phase,
         progress=100,
         found_count=stats.leads_saved,
         skipped_existing=stats.already_known_skips,
@@ -1416,7 +1413,7 @@ def _telemetry_payload(
         "alreadyKnown": stats.already_known_skips,
         "barrenStops": stats.barren_stops,
         "deepContactSkips": stats.deep_contact_skips,
-        "barrenPagesStop": budget.barren_pages_stop if budget else 3,
+        "barrenPagesStop": budget.barren_pages_stop if budget else 0,
         "intentStatus": [
             {
                 "searchIntent": r.search_intent,

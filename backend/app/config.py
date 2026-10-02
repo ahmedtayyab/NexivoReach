@@ -92,8 +92,9 @@ class Settings(BaseSettings):
     HUNT_MAX_RUNTIME_SEC: int = 2700  # 45 minutes
     HUNT_ENRICH_CONCURRENCY: int = 12
     HUNT_RESULTS_PER_PAGE: int = 10
-    # Stop a search line after this many consecutive Google pages with 0 new domains to enrich.
-    HUNT_BARREN_PAGES_STOP: int = 3
+    # Stop a search line after N consecutive Google pages with 0 new domains.
+    # 0 = disabled. Must stay off — early barren stops ended hunts with 0 leads.
+    HUNT_BARREN_PAGES_STOP: int = 0
     CONTACT_BROWSER_ENABLED: bool = True
     # Keep Chromium peak RAM low on small hosts (Render free ~512MB).
     CONTACT_BROWSER_MAX_CONCURRENT: int = 1
