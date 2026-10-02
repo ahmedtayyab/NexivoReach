@@ -747,16 +747,29 @@ async def run_paginated_discovery(
                     efb["matchedSearchIntents"] = old_i[:16]
                     efb["relevance"] = efb.get("relevance") or level
                     efb["emailStatus"] = email_status
+                    # Start over clears domain memory — same company can resurface.
+                    # Flag it so Leads can highlight "already saved" vs brand-new.
+                    efb["rediscovered"] = True
+                    efb["rediscoveredInJobId"] = job_id
                     existing.fit_breakdown = efb
+                    if job_id and existing.discovery_job_id != job_id:
+                        existing.discovery_job_id = job_id
+                        changed = True
                     if contacts:
                         existing.contacts = contacts
+                    existing.agent_timeline = list(existing.agent_timeline or []) + [
+                        {
+                            "time": time.strftime("%H:%M"),
+                            "action": "Already in Leads — merged (duplicate from Start over / re-hunt)",
+                        }
+                    ]
                     session.add(existing)
                     mem.status = "saved"
                     mem.prospect_id = existing.id
                     session.add(mem)
                     session.commit()
                     front = prospect_to_frontend(existing)
-                    return {"prospect": front, "id": existing.id, "merged": True, "changed": changed}
+                    return {"prospect": front, "id": existing.id, "merged": True, "changed": True}
 
                 prospect_id = f"prospect-{uuid4().hex[:10]}"
                 pr = ProspectRecord(

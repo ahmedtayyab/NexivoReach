@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
 import { ArrowDown, ArrowUp, Loader2, Mail, MailWarning } from 'lucide-react';
 import { apiFetch } from '../lib/api';
-import { leadRowToneClass, recipientEmail } from '../lib/leadTone';
+import {
+  duplicateDomainSet,
+  isDuplicateLead,
+  leadRowToneClass,
+  recipientEmail,
+} from '../lib/leadTone';
 import { computeOutcomes, hasEmail } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
 import { FitScoreBadge } from './FitScoreBadge';
@@ -166,6 +171,12 @@ export default function QueueView({
       return (a.companyName || '').localeCompare(b.companyName || '');
     });
   }, [scopedProspects, emailFilter, filter, sortKey, sortDir]);
+
+  const duplicateDomains = useMemo(() => duplicateDomainSet(visible), [visible]);
+  const toneOpts = useMemo(
+    () => ({ duplicateDomains, latestHuntId }),
+    [duplicateDomains, latestHuntId],
+  );
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -525,7 +536,7 @@ export default function QueueView({
             {visible.map(prospect => (
               <div
                 key={prospect.id}
-                className={`bg-panel border border-border p-3 lead-row-tone ${leadRowToneClass(prospect)}`}
+                className={`bg-panel border border-border p-3 lead-row-tone ${leadRowToneClass(prospect, toneOpts)}`}
               >
                 <div className="flex items-start gap-2">
                   {onSendSelected && (
@@ -541,6 +552,9 @@ export default function QueueView({
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
+                        {isDuplicateLead(prospect, duplicateDomains, latestHuntId) && (
+                          <span className="lead-dupe-badge">Already saved</span>
+                        )}
                         <p className="text-[13px] text-ink-muted truncate mt-0.5">
                           {prospect.location || prospect.website || '—'}
                         </p>
@@ -617,7 +631,7 @@ export default function QueueView({
                 {visible.map(prospect => (
                   <div
                     key={prospect.id}
-                    className={`data-table__row lead-row-tone ${leadRowToneClass(prospect)}`}
+                    className={`data-table__row lead-row-tone ${leadRowToneClass(prospect, toneOpts)}`}
                   >
                     <span>
                       {onSendSelected && (
@@ -632,6 +646,9 @@ export default function QueueView({
                     </span>
                     <button type="button" className="text-left min-w-0" onClick={() => onReviewProspect(prospect.id)}>
                       <p className="text-[13.5px] font-medium text-ink truncate">{prospect.companyName}</p>
+                      {isDuplicateLead(prospect, duplicateDomains, latestHuntId) && (
+                        <span className="lead-dupe-badge">Already saved</span>
+                      )}
                       <p className="text-[13px] text-ink-muted truncate mt-px">
                         {prospect.location || prospect.website || '—'}
                       </p>
