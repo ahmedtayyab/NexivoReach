@@ -781,25 +781,6 @@ export default function App() {
     }
   };
 
-  const handleSetManualEmail = async (prospectId: string, email: string) => {
-    const resp = await apiFetch(`/api/prospects/${prospectId}/email`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
-    if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Could not save email'));
-    const data = await resp.json();
-    if (data.prospect) {
-      setProspects(prev => prev.map(p => (p.id === prospectId ? (data.prospect as Prospect) : p)));
-    }
-    const saved = (email || '').trim();
-    pushToast(
-      saved ? 'ok' : 'info',
-      saved ? 'Email saved' : 'Email cleared',
-      saved || 'Removed from this lead',
-    );
-  };
-
   const handleSkipOutreach = (_prospectId: string) => {
     // Inbox advances selection; draft stays for later.
   };
@@ -1080,7 +1061,6 @@ export default function App() {
             onSendAllReady={() => handleSendAllReady('ready')}
             onSendSelected={handleSendSelected}
             onRefreshContacts={handleRefreshContacts}
-            onSetManualEmail={handleSetManualEmail}
             gmailConnected={gmailCanSend(user)}
             onGoWorkspace={() => navigate(preferredWorkspaceRoute(businessInfo))}
             templateCount={outreachTemplates.length}
@@ -1224,7 +1204,6 @@ export default function App() {
         onPrepareOutreach={id => handlePrepareOutreach(id)}
         onPrepareFollowUp={handlePrepareFollowUp}
         onRefreshContacts={handleRefreshContacts}
-        onSetManualEmail={handleSetManualEmail}
         gmailConnected={gmailCanSend(user)}
       />
     </div>

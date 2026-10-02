@@ -99,23 +99,16 @@ def update_hunt_settings(
 
 
 def ensure_hunt_setting_defaults() -> None:
-    """Seed DB keys; keep admin values aligned with the shipped code default."""
-    code_leads = int(settings.HUNT_LEADS_PER_RUN or 100)
+    """Seed DB keys; bump legacy default of 40 → 100 once."""
     raw = get_setting(KEY_LEADS_PER_RUN, "")
     if raw == "":
-        set_setting(KEY_LEADS_PER_RUN, str(code_leads))
-    else:
-        try:
-            n = int(str(raw).strip())
-        except (TypeError, ValueError):
-            n = 0
-        # Legacy 40 → 100, and wipe stale 200 left from a later deploy after rollback.
-        if n in (40, 200) or n > code_leads:
-            set_setting(KEY_LEADS_PER_RUN, str(code_leads))
+        set_setting(KEY_LEADS_PER_RUN, str(int(settings.HUNT_LEADS_PER_RUN or 100)))
+    elif raw.strip() == "40":
+        # Previous product default; expand to the new 100-lead run size.
+        set_setting(KEY_LEADS_PER_RUN, "100")
     pages = get_setting(KEY_MAX_PAGES_PER_INTENT, "")
-    code_pages = int(settings.HUNT_MAX_PAGES_PER_INTENT or 10)
     if pages == "":
-        set_setting(KEY_MAX_PAGES_PER_INTENT, str(code_pages))
+        set_setting(KEY_MAX_PAGES_PER_INTENT, str(int(settings.HUNT_MAX_PAGES_PER_INTENT or 10)))
 
 
 def leads_per_intent_share(leads_per_run: int, intent_count: int) -> int:
