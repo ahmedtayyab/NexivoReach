@@ -28,50 +28,8 @@ export function recipientEmail(p: Prospect | null | undefined): string {
   return '';
 }
 
-function prospectDomain(p: Prospect): string {
-  try {
-    const raw = (p.website || '').trim();
-    if (!raw) return '';
-    const host = new URL(raw.startsWith('http') ? raw : `https://${raw}`).hostname.toLowerCase();
-    return host.startsWith('www.') ? host.slice(4) : host;
-  } catch {
-    return (p.website || '').trim().toLowerCase();
-  }
-}
-
-/** Domains that appear on more than one lead in the given list. */
-export function duplicateDomainSet(prospects: Prospect[]): Set<string> {
-  const counts = new Map<string, number>();
-  for (const p of prospects) {
-    const d = prospectDomain(p);
-    if (!d) continue;
-    counts.set(d, (counts.get(d) || 0) + 1);
-  }
-  const dupes = new Set<string>();
-  for (const [d, n] of counts) {
-    if (n > 1) dupes.add(d);
-  }
-  return dupes;
-}
-
-export function isDuplicateLead(
-  prospect: Prospect,
-  duplicateDomains?: Set<string>,
-  latestHuntId?: string,
-): boolean {
-  if (duplicateDomains?.has(prospectDomain(prospect))) return true;
-  if (prospect.fitBreakdown?.rediscovered) {
-    const job = (prospect.fitBreakdown.rediscoveredInJobId || '').trim();
-    if (!latestHuntId || !job || job === latestHuntId) return true;
-  }
-  return false;
-}
-
 /** Visual wash for outreached / replied / follow-up rows. */
-export function leadRowToneClass(
-  prospect: Prospect,
-  opts?: { duplicateDomains?: Set<string>; latestHuntId?: string },
-): string {
+export function leadRowToneClass(prospect: Prospect): string {
   const stage = normalizeStage(prospect.stage);
   const draftStatus = prospect.outreachDraft?.status;
 
@@ -84,8 +42,5 @@ export function leadRowToneClass(
   if (stage === 'Re-contact') return 'lead-row-tone-recontact';
   if (stage === 'Contacted' || draftStatus === 'Sent') return 'lead-row-tone-sent';
   if (draftStatus === 'Draft' || draftStatus === 'Approved') return 'lead-row-tone-draft';
-  if (isDuplicateLead(prospect, opts?.duplicateDomains, opts?.latestHuntId)) {
-    return 'lead-row-tone-duplicate';
-  }
   return 'lead-row-tone-idle';
 }

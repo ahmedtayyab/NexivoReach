@@ -121,9 +121,6 @@ export interface Prospect {
       lastEnrichAt?: string;
       bestTo?: string;
     };
-    /** True when a later hunt merged into this already-saved lead (e.g. after Start over). */
-    rediscovered?: boolean;
-    rediscoveredInJobId?: string;
   };
   whyThisProspect: string;
   whyNow?: string;

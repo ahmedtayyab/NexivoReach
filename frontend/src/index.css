@@ -428,27 +428,6 @@ input:focus, textarea:focus, select:focus {
   background: color-mix(in srgb, var(--info) 16%, transparent);
   border-left-color: var(--accent-hover);
 }
-.lead-row-tone-duplicate {
-  background: color-mix(in srgb, #8B7355 12%, transparent);
-  border-left-color: #8B7355;
-}
-.lead-row-tone-duplicate:hover,
-.nr-row.lead-row-tone-duplicate:hover {
-  background: color-mix(in srgb, #8B7355 18%, transparent);
-}
-.lead-dupe-badge {
-  display: inline-block;
-  margin-top: 2px;
-  padding: 1px 6px;
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: #6B5A45;
-  background: color-mix(in srgb, #8B7355 18%, transparent);
-  border: 1px solid color-mix(in srgb, #8B7355 35%, transparent);
-  border-radius: 3px;
-}
 
 .lead-tone-legend {
   display: flex;

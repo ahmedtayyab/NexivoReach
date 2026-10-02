@@ -80,6 +80,30 @@ def _legal_name_key(name: str) -> str:
     return " ".join(raw.split())
 
 
+def _norm_email(value: str) -> str:
+    return (value or "").strip().lower()
+
+
+def _prospect_emails(pr: Any) -> set[str]:
+    out: set[str] = set()
+    e = _norm_email(getattr(pr, "email", "") or "")
+    if e and "@" in e:
+        out.add(e)
+    for c in getattr(pr, "contacts", None) or []:
+        if not isinstance(c, dict):
+            continue
+        ctype = str(c.get("type") or "").lower()
+        val = _norm_email(str(c.get("value") or ""))
+        if val.startswith("mailto:"):
+            val = val.split(":", 1)[-1].split("?", 1)[0].strip().lower()
+        if "@" not in val:
+            continue
+        if ctype and ctype not in ("email", "mail", "e-mail"):
+            continue
+        out.add(val)
+    return out
+
+
 def _fingerprint(domains: List[str]) -> str:
     blob = "|".join(sorted({d for d in domains if d}))
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
@@ -696,18 +720,25 @@ async def run_paginated_discovery(
 
                 # Merge into existing prospect or create
                 existing = None
-                if domain:
-                    for pr in session.exec(
+                email_key = _norm_email(email)
+                prospects_here = list(
+                    session.exec(
                         select(ProspectRecord).where(ProspectRecord.business_id == business_id)
-                    ).all():
+                    ).all()
+                )
+                if domain:
+                    for pr in prospects_here:
                         if _domain(pr.website) == domain:
+                            existing = pr
+                            break
+                if not existing and email_key and "@" in email_key:
+                    for pr in prospects_here:
+                        if email_key in _prospect_emails(pr):
                             existing = pr
                             break
                 if not existing and company_name:
                     name_key = _legal_name_key(company_name)
-                    for pr in session.exec(
-                        select(ProspectRecord).where(ProspectRecord.business_id == business_id)
-                    ).all():
+                    for pr in prospects_here:
                         if _legal_name_key(pr.company_name) == name_key:
                             existing = pr
                             break
@@ -731,45 +762,58 @@ async def run_paginated_discovery(
                     })
 
                 if existing:
-                    changed = False
+                    # Already in Leads — never re-surface in Latest hunt / found count.
+                    # Same domain, same email, or same legal name after Start over.
+                    existing_emails = _prospect_emails(existing)
+                    email_dupe = bool(email_key and "@" in email_key and email_key in existing_emails)
                     if email and not (existing.email or "").strip():
                         existing.email = email
-                        changed = True
                     if phone and not (existing.phone or "").strip():
                         existing.phone = phone
-                        changed = True
                     efb = dict(existing.fit_breakdown or {})
                     old_i = list(efb.get("matchedSearchIntents") or [])
                     for intent in fb.get("matchedSearchIntents") or []:
                         if intent and intent not in old_i:
                             old_i.append(intent)
-                            changed = True
                     efb["matchedSearchIntents"] = old_i[:16]
                     efb["relevance"] = efb.get("relevance") or level
-                    efb["emailStatus"] = email_status
-                    # Start over clears domain memory — same company can resurface.
-                    # Flag it so Leads can highlight "already saved" vs brand-new.
-                    efb["rediscovered"] = True
-                    efb["rediscoveredInJobId"] = job_id
+                    if email_status:
+                        efb["emailStatus"] = email_status
                     existing.fit_breakdown = efb
-                    if job_id and existing.discovery_job_id != job_id:
-                        existing.discovery_job_id = job_id
-                        changed = True
-                    if contacts:
+                    if contacts and not (existing.contacts or []):
                         existing.contacts = contacts
-                    existing.agent_timeline = list(existing.agent_timeline or []) + [
-                        {
-                            "time": time.strftime("%H:%M"),
-                            "action": "Already in Leads — merged (duplicate from Start over / re-hunt)",
-                        }
-                    ]
                     session.add(existing)
                     mem.status = "saved"
                     mem.prospect_id = existing.id
                     session.add(mem)
                     session.commit()
-                    front = prospect_to_frontend(existing)
-                    return {"prospect": front, "id": existing.id, "merged": True, "changed": True}
+                    stats.already_known_skips += 1
+                    return {
+                        "prospect": None,
+                        "id": existing.id,
+                        "merged": True,
+                        "changed": False,
+                        "duplicate": True,
+                        "duplicateReason": "email" if email_dupe else "existing_lead",
+                    }
+
+                # Email already on another lead → do not create a second row
+                if email_key and "@" in email_key:
+                    for pr in prospects_here:
+                        if email_key in _prospect_emails(pr):
+                            mem.status = "saved"
+                            mem.prospect_id = pr.id
+                            session.add(mem)
+                            session.commit()
+                            stats.already_known_skips += 1
+                            return {
+                                "prospect": None,
+                                "id": pr.id,
+                                "merged": True,
+                                "changed": False,
+                                "duplicate": True,
+                                "duplicateReason": "email",
+                            }
 
                 prospect_id = f"prospect-{uuid4().hex[:10]}"
                 pr = ProspectRecord(
