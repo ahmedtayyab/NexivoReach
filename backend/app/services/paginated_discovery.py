@@ -481,43 +481,9 @@ async def run_paginated_discovery(
             if stats.enrichments >= budget.max_enrichments:
                 return None
             stats.enrichments += 1
-            site_text = ""
-            email = ""
-            phone = ""
-            contacts: List[Dict[str, Any]] = []
-            email_status = "email_not_found"
-            email_source = ""
-            try:
-                found = await asyncio.wait_for(
-                    enrich_website(
-                        website,
-                        seed_email="",
-                        seed_phone="",
-                        seed_contacts=[],
-                        use_hunter=False,
-                    ),
-                    timeout=28.0,
-                )
-            except Exception:
-                found = {"email": "", "phone": "", "contacts": [], "site_text": "", "sources": []}
-            stats.websites_inspected += 1
-            site_text = (found.get("site_text") or "")[:8000]
-            phone = found.get("phone") or ""
-            contacts = list(found.get("contacts") or [])
-
-            # Verify business location BEFORE Hunter / save — never stamp hunt place.
             from app.agents.location_verify import verify_business_location
 
-            loc_check = verify_business_location(
-                requested_places=list(profile.places or []),
-                site_text=site_text,
-                title=title,
-                snippet=snippet,
-                row_location=str(found.get("location") or ""),
-                phones=[phone] if phone else [],
-                website=website,
-            )
-            if loc_check.get("should_reject"):
+            def _mark_irrelevant() -> None:
                 with _db() as session:
                     mem = session.exec(
                         select(DiscoveredCompany).where(
@@ -544,6 +510,58 @@ async def run_paginated_discovery(
                     session.add(mem)
                     session.commit()
                 stats.irrelevant += 1
+
+            # Cheap SERP geo gate before deep crawl — skip clear country mismatches
+            # without burning 10–20s per site (not barren early-stop; per-domain only).
+            pre_loc = verify_business_location(
+                requested_places=list(profile.places or []),
+                site_text="",
+                title=title,
+                snippet=snippet,
+                row_location="",
+                phones=[],
+                website=website,
+            )
+            if pre_loc.get("should_reject"):
+                _mark_irrelevant()
+                return None
+
+            site_text = ""
+            email = ""
+            phone = ""
+            contacts: List[Dict[str, Any]] = []
+            email_status = "email_not_found"
+            email_source = ""
+            try:
+                found = await asyncio.wait_for(
+                    enrich_website(
+                        website,
+                        seed_email="",
+                        seed_phone="",
+                        seed_contacts=[],
+                        use_hunter=False,
+                    ),
+                    timeout=14.0,
+                )
+            except Exception:
+                found = {"email": "", "phone": "", "contacts": [], "site_text": "", "sources": []}
+            stats.websites_inspected += 1
+            site_text = (found.get("site_text") or "")[:8000]
+            phone = found.get("phone") or ""
+            contacts = list(found.get("contacts") or [])
+
+            # Full location verify after site text — never stamp hunt place.
+            loc_check = verify_business_location(
+                requested_places=list(profile.places or []),
+                site_text=site_text,
+                title=title,
+                snippet=snippet,
+                row_location=str(found.get("location") or ""),
+                phones=[phone] if phone else [],
+                website=website,
+            )
+            if loc_check.get("should_reject"):
+                _mark_irrelevant()
                 return None
 
             # Hunter only after location clears — avoid spending API on wrong-geo firms

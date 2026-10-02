@@ -50,9 +50,10 @@ export function estimateHuntSeconds(
 ): { low: number; high: number } {
   const lines = Math.max(1, Math.min(40, Math.floor(lineCount || 1)));
   const leads = Math.max(20, Math.min(200, Math.floor(leadsPerRun || 100)));
-  // Scale with both search lines and lead quota (inspect/enrich dominates).
-  const low = Math.max(60, Math.round(25 + lines * 4 + leads * 0.9));
-  const high = Math.max(low + 45, Math.round(50 + lines * 8 + leads * 1.6));
+  // Inspect/enrich dominates; many SERP hits are skipped after a short look.
+  // Calibrated from live runs (~10–20s/site, several sites per saved lead).
+  const low = Math.max(180, Math.round(90 + lines * 12 + leads * 7));
+  const high = Math.max(low + 180, Math.round(150 + lines * 20 + leads * 12));
   return { low, high };
 }
 
