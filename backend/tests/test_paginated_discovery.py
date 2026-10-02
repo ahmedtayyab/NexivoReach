@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from app.services.paginated_discovery import (
     HuntBudget,
     _build_intents_from_prompt,
     _fingerprint,
+    update_barren_streak,
 )
 
 
@@ -66,6 +69,7 @@ def test_hunt_budget_defaults_are_safety_not_lead_caps():
     assert b.max_pages_per_intent >= 5
     assert b.max_total_pages >= 50
     assert b.leads_per_run >= 5
+    assert b.barren_pages_stop >= 1
 
 
 def test_leads_split_evenly_across_hunt_lines():
@@ -75,3 +79,55 @@ def test_leads_split_evenly_across_hunt_lines():
     assert leads_per_intent_share(40, 15) == 3
     assert leads_per_intent_share(30, 5) == 6
     assert leads_per_intent_share(40, 1) == 40
+
+
+def test_barren_streak_stops_after_n_empty_pages():
+    streak, stop = update_barren_streak(0, 0, 3)
+    assert streak == 1 and stop is False
+    streak, stop = update_barren_streak(streak, 0, 3)
+    assert streak == 2 and stop is False
+    streak, stop = update_barren_streak(streak, 0, 3)
+    assert streak == 3 and stop is True
+
+
+def test_barren_streak_resets_when_new_domains_found():
+    streak, stop = update_barren_streak(2, 4, 3)
+    assert streak == 0 and stop is False
+
+
+def test_enrich_website_light_skips_discover_contacts(monkeypatch):
+    """Light pass must not call discover_contacts / Hunter."""
+    import app.services.enrichment as enrich_mod
+
+    called = {"discover": 0, "hunter": 0}
+
+    async def fake_scrape(self, website, limit=8000, keep_html=True):
+        return {
+            "text": "Wholesale gym gear New York",
+            "html": "<html/>",
+            "emails": [],
+            "location": "New York, NY",
+        }
+
+    async def fake_discover(**kwargs):
+        called["discover"] += 1
+        return {"email": "", "phone": "", "contacts": []}
+
+    async def fake_hunter(domain):
+        called["hunter"] += 1
+        return {"email": "", "contacts": []}
+
+    monkeypatch.setattr(enrich_mod.WebSearchTool, "scrape_homepage", fake_scrape)
+    monkeypatch.setattr(enrich_mod, "discover_contacts", fake_discover)
+    monkeypatch.setattr(enrich_mod, "hunter_domain_search", fake_hunter)
+
+    out = asyncio.run(
+        enrich_mod.enrich_website(
+            "https://example.com",
+            use_hunter=True,
+            deep_contacts=False,
+        )
+    )
+    assert called["discover"] == 0
+    assert called["hunter"] == 0
+    assert "New York" in (out.get("site_text") or "")
