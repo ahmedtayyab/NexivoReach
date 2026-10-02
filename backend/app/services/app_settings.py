@@ -103,8 +103,8 @@ def ensure_hunt_setting_defaults() -> None:
     raw = get_setting(KEY_LEADS_PER_RUN, "")
     if raw == "":
         set_setting(KEY_LEADS_PER_RUN, str(int(settings.HUNT_LEADS_PER_RUN or 100)))
-    elif raw.strip() == "40":
-        # Previous product default; expand to the new 100-lead run size.
+    elif raw.strip() in ("40", "200"):
+        # 40 = old default; 200 = leftover from a later deploy after rollback.
         set_setting(KEY_LEADS_PER_RUN, "100")
     pages = get_setting(KEY_MAX_PAGES_PER_INTENT, "")
     if pages == "":
