@@ -95,6 +95,12 @@ def health_check():
     except Exception as exc:
         db_ok = False
         db_error = str(exc)[:200]
+    git_commit = (
+        os.getenv("RENDER_GIT_COMMIT")
+        or os.getenv("GIT_COMMIT")
+        or os.getenv("SOURCE_VERSION")
+        or ""
+    )
     return {
         "status": "healthy" if db_ok else "degraded",
         "service": "NexivoReach Backend",
@@ -102,6 +108,8 @@ def health_check():
         "database": database_backend(),
         "databaseOk": db_ok,
         "databaseError": db_error,
+        "gitCommit": (git_commit[:12] if git_commit else ""),
+        "huntLeadsPerRunDefault": int(settings.HUNT_LEADS_PER_RUN or 100),
     }
 
 
