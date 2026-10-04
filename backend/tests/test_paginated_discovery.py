@@ -10,6 +10,14 @@ from app.services.paginated_discovery import (
 )
 
 
+def test_duckduckgo_stops_after_the_first_empty_later_page():
+    from app.services.paginated_discovery import should_stop_backup_after_empty
+
+    assert should_stop_backup_after_empty(had_results=True, page=2) is True
+    assert should_stop_backup_after_empty(had_results=False, page=2) is True
+    assert should_stop_backup_after_empty(had_results=False, page=1) is False
+
+
 def test_sheet_sent_status_skips_only_emailed_rows():
     from app.integrations.sheets import is_sent_sheet_status
 

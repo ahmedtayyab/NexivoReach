@@ -379,11 +379,22 @@ def _halt_searches_on_error(
         )
 
 
-def _finish_backup_search(stats: HuntStats, intent: Any, business_id: str, page: int) -> None:
-    """One free-search page is enough for this run. Leave the Google cursor open."""
+def should_stop_backup_after_empty(*, had_results: bool, page: int) -> bool:
+    """DuckDuckGo's next page is empty almost immediately when there is nothing further."""
+    return had_results or int(page or 1) > 1
+
+
+def _finish_backup_search(
+    stats: HuntStats,
+    intent: Any,
+    business_id: str,
+    page: int,
+    reason: str = "backup_page",
+) -> None:
+    """Stop this free-search line for the run. Leave the Google cursor open."""
     intent.status = "quota"
-    intent.stop_reason = "backup_page"
-    stats.stop_reasons[intent.search_intent] = "backup_page"
+    intent.stop_reason = reason
+    stats.stop_reasons[intent.search_intent] = reason
     _persist_intent(intent)
     _save_cursor_page(
         business_id=business_id,
@@ -400,6 +411,7 @@ _STOP_TEXT = {
     "repeated_results": "Google kept returning the same page, so this search is finished.",
     "search_error": "Google rejected the search. The same page will be tried again.",
     "backup_page": "DuckDuckGo had no more new pages. The Google page is still open.",
+    "backup_timeout": "DuckDuckGo timed out, so later pages were not searched. The Google page is still open.",
     "backup_budget": "Used this run's DuckDuckGo page budget. The Google page is still open.",
     "previously_exhausted": "Already finished on an earlier hunt. Start over to search it from page 1.",
     "blank_page": "This page was empty. The hunt continued.",
@@ -1080,6 +1092,7 @@ async def run_paginated_discovery(
     # ---- Main fair pagination loop ----
     serper_credits_out = False
     backup_pages: Dict[str, int] = {}
+    backup_had_hits: Dict[str, bool] = {}
     while True:
         hit_reasons: List[str] = []
         if _budget_hit(hit_reasons):
@@ -1170,6 +1183,7 @@ async def run_paginated_discovery(
         search_error = str(report.get("error") or "")
         if not fallback and report.get("out_of_credits"):
             serper_credits_out = True
+            stats.google_requests += 1
             _note(stats, search_error)
             _note(
                 stats,
@@ -1188,15 +1202,25 @@ async def run_paginated_discovery(
             "duckduckgo": "DuckDuckGo, not Google",
         }.get(provider, "No search provider")
         if fallback:
+            stats.google_requests += 1
             _note(stats, f"DuckDuckGo, not Google — page {fetch_page}: {intent.query}")
             if search_error and not organic:
                 _note(stats, search_error)
-                _finish_backup_search(stats, intent, business_id, page)
-                continue
+                _note(
+                    stats,
+                    "DuckDuckGo timed out. Later pages were not searched. Google pages were not marked finished.",
+                )
+                for row in intent_rows:
+                    if row.status == "active":
+                        _finish_backup_search(
+                            stats, row, business_id, int(row.current_page or 1), "backup_timeout",
+                        )
+                break
             if not organic:
-                streak = empty_streaks.get(intent_id, 0) + 1
-                empty_streaks[intent_id] = streak
-                if should_exhaust_after_gaps(streak, fetch_page):
+                if should_stop_backup_after_empty(
+                    had_results=bool(backup_had_hits.get(intent_id)),
+                    page=fetch_page,
+                ):
                     _note(stats, f"“{intent.query}” has no more DuckDuckGo results after page {fetch_page}.")
                     _finish_backup_search(stats, intent, business_id, page)
                 else:
@@ -1206,6 +1230,7 @@ async def run_paginated_discovery(
                         f"DuckDuckGo page {fetch_page} for “{intent.query}” was empty. Continuing to the next page.",
                     )
                 continue
+            backup_had_hits[intent_id] = True
             _note(stats, f"Page {fetch_page} returned {len(organic)} results.")
         else:
             _note(stats, f"{provider_label} — page {page}: {intent.query}")
