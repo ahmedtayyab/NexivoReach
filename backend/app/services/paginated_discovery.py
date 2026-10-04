@@ -437,9 +437,9 @@ _STOP_TEXT = {
     "no_more_results": "Google returned empty pages, so this search is finished.",
     "repeated_results": "Google kept returning the same page, so this search is finished.",
     "search_error": "Google rejected the search. The same page will be tried again.",
-    "backup_page": "DuckDuckGo had no more new pages. The Google page is still open.",
-    "backup_timeout": "DuckDuckGo timed out, so later pages were not searched. The Google page is still open.",
-    "backup_retry": "DuckDuckGo More results did not load. The next hunt tries that same button again.",
+    "backup_page": "This search had no more new pages. The Google page is still open.",
+    "backup_timeout": "The free search timed out, so later pages were not searched. The Google page is still open.",
+    "backup_retry": "This search did not load. The next hunt tries it again.",
     "backup_budget": "Used this run's DuckDuckGo page budget. The Google page is still open.",
     "previously_exhausted": "Already finished on an earlier hunt. Start over to search it from page 1.",
     "blank_page": "This page was empty. The hunt continued.",
@@ -1247,7 +1247,7 @@ async def run_paginated_discovery(
             _note(stats, search_error)
             _note(
                 stats,
-                "Serper is out of credits. This run follows DuckDuckGo's More results button, and the next hunt continues from that button. Google pages were not marked finished.",
+                "Serper is out of credits. This run uses a free search instead. Google pages were not marked finished.",
             )
             report = await _backup_report(intent.query, intent_id)
             ddg_batch = int(report.get("batch") or 1)
@@ -1272,8 +1272,12 @@ async def run_paginated_discovery(
                 _finish_backup_search(stats, intent, business_id, page)
                 continue
             label = "first results" if ddg_batch <= 1 and not (backup_states.get(intent_id) or {}).get("fields") else f"More results {ddg_batch}"
-            _note(stats, f"DuckDuckGo, not Google — {label}: {intent.query}")
-            if report.get("html_down") and not ddg_html_noted:
+            engine_name = {"duckduckgo": "DuckDuckGo", "yahoo": "Yahoo"}.get(provider, provider or "Search")
+            _note(stats, f"{engine_name}, not Google — {label}: {intent.query}")
+            if provider == "yahoo" and not ddg_html_noted:
+                ddg_html_noted = True
+                _note(stats, "DuckDuckGo did not answer. This run uses Yahoo instead. It is not Google.")
+            elif report.get("html_down") and not ddg_html_noted:
                 ddg_html_noted = True
                 _note(
                     stats,
@@ -1305,7 +1309,8 @@ async def run_paginated_discovery(
                     )
                     _finish_backup_search(stats, intent, business_id, page, "backup_retry")
                 else:
-                    _note(stats, f"DuckDuckGo returned no results for “{intent.query}”.")
+                    who = "Yahoo" if provider == "yahoo" else "DuckDuckGo"
+                    _note(stats, f"{who} returned no results for “{intent.query}”.")
                     _finish_backup_search(stats, intent, business_id, page)
                 continue
             _note(stats, f"Batch {ddg_batch} returned {len(organic)} results.")

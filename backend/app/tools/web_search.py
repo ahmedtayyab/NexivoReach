@@ -339,6 +339,10 @@ def serper_out_of_credits(message: str) -> bool:
     return "not enough credits" in (message or "").lower()
 
 
+def _is_yahoo_form(form: Optional[Dict[str, str]]) -> bool:
+    return bool(form and form.get("engine") == "yahoo" and not form.get("vqd"))
+
+
 def serper_failure_message(status_code: int, body: str) -> str:
     """Serper's own message, not only the HTTP status line."""
     detail = ""
@@ -626,9 +630,22 @@ class WebSearchTool:
         page: int = 1,
         form: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        """DuckDuckGo batch. `form` is the More results button from the previous batch."""
-        del page  # More results uses the saved form, not a page number.
-        return self._duckduckgo_more(query, form=form)
+        """Free search when Google credits are gone. DuckDuckGo first, then Yahoo."""
+        del page  # Later batches use the saved form, not a Google page number.
+        if _is_yahoo_form(form):
+            return self._yahoo_page(query, int((form or {}).get("page") or 1))
+        if getattr(self, "_ddg_down", False):
+            return self._yahoo_page(query, 1)
+        report = self._duckduckgo_more(query, form=form)
+        if report.get("hits") or (form and form.get("vqd")):
+            return report
+        self._ddg_down = True
+        yahoo = self._yahoo_page(query, 1)
+        if yahoo.get("hits"):
+            return yahoo
+        if report.get("error"):
+            return report
+        return yahoo
 
     def _duckduckgo_more(self, query: str, form: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         # A saved More results button has to be posted. The first batch uses the
@@ -702,6 +719,61 @@ class WebSearchTool:
             res = client.post("https://html.duckduckgo.com/html/", data=data)
             res.raise_for_status()
         return parse_duckduckgo_html(res.text)
+
+    def _yahoo_page(self, query: str, page: int) -> Dict[str, Any]:
+        page = max(1, int(page or 1))
+        try:
+            hits = self._yahoo_hits(query, page)
+        except Exception as exc:
+            log.warning("Yahoo search failed page %s: %s", page, exc)
+            keep = {"engine": "yahoo", "page": str(page)} if page > 1 else None
+            return {
+                "hits": [],
+                "next_form": keep,
+                "provider": "yahoo",
+                "error": f"Yahoo search failed: {exc}",
+                "fallback": True,
+            }
+        if not hits:
+            return {
+                "hits": [],
+                "next_form": None,
+                "provider": "yahoo",
+                "error": "",
+                "fallback": True,
+            }
+        return {
+            "hits": hits,
+            "next_form": {"engine": "yahoo", "page": str(page + 1)},
+            "provider": "yahoo",
+            "error": "",
+            "fallback": True,
+        }
+
+    def _yahoo_hits(self, query: str, page: int) -> List[Dict[str, str]]:
+        from ddgs.engines.yahoo import Yahoo
+
+        engine = Yahoo(timeout=15)
+        rows = engine.search(
+            query,
+            region="us-en",
+            safesearch="moderate",
+            timelimit=None,
+            page=max(1, int(page or 1)),
+        )
+        if rows is None:
+            raise RuntimeError("Yahoo did not answer")
+        hits: List[Dict[str, str]] = []
+        for row in rows:
+            href = str(getattr(row, "href", "") or "")
+            if not href.startswith("http") or "bing.com/aclick" in href or "r.search.yahoo.com" in href:
+                continue
+            hits.append({
+                "title": str(getattr(row, "title", "") or ""),
+                "href": href,
+                "body": str(getattr(row, "body", "") or ""),
+            })
+        return hits
 
     def _serper(self, query: str, page: int = 1, num: int = 20) -> List[Dict[str, str]]:
         if not settings.SERPER_API_KEY:

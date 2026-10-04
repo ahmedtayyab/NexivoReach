@@ -59,6 +59,46 @@ def test_sheet_sent_status_skips_only_emailed_rows():
     assert is_sent_sheet_status("") is False
 
 
+def test_backup_uses_yahoo_when_duckduckgo_returns_nothing():
+    from app.tools.web_search import WebSearchTool
+
+    tool = WebSearchTool()
+    calls = {"ddg": 0, "yahoo_pages": []}
+
+    def _ddg(query, form=None):
+        calls["ddg"] += 1
+        return {
+            "hits": [],
+            "next_form": None,
+            "provider": "duckduckgo",
+            "error": "DuckDuckGo search failed: timed out",
+            "fallback": True,
+            "html_down": True,
+        }
+
+    def _yahoo(query, page):
+        calls["yahoo_pages"].append(page)
+        return [{"title": "RDX", "href": "https://wholesale.rdxsports.com/knee", "body": "wholesale"}]
+
+    tool._duckduckgo_more = _ddg  # type: ignore[method-assign]
+    tool._yahoo_hits = _yahoo  # type: ignore[method-assign]
+    report = tool.search_backup_page("gym knee sleeves distributors Ohio")
+    assert report["provider"] == "yahoo"
+    assert report["error"] == ""
+    assert report["hits"][0]["href"] == "https://wholesale.rdxsports.com/knee"
+    assert report["next_form"]["page"] == "2"
+    again = tool.search_backup_page("fitness knee sleeves importers Ohio")
+    assert again["provider"] == "yahoo"
+    assert calls["ddg"] == 1
+    assert calls["yahoo_pages"] == [1, 1]
+    continued = tool.search_backup_page(
+        "gym knee sleeves distributors Ohio",
+        form={"engine": "yahoo", "page": "2"},
+    )
+    assert calls["yahoo_pages"] == [1, 1, 2]
+    assert continued["next_form"]["page"] == "3"
+
+
 def test_serper_out_of_credits_is_detected():
     from app.tools.web_search import serper_out_of_credits
 
