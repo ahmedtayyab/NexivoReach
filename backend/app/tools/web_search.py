@@ -288,6 +288,10 @@ def serper_hits(payload: Dict[str, Any]) -> List[Dict[str, str]]:
     return rows
 
 
+def serper_out_of_credits(message: str) -> bool:
+    return "not enough credits" in (message or "").lower()
+
+
 def serper_failure_message(status_code: int, body: str) -> str:
     """Serper's own message, not only the HTTP status line."""
     detail = ""
@@ -561,11 +565,43 @@ class WebSearchTool:
             return {"hits": hits or [], "provider": "serper", "error": ""}
         except Exception as exc:
             log.warning("Serper search failed page %s: %s", page, exc)
+            message = f"Serper Google search failed: {exc}"
             return {
                 "hits": [],
                 "provider": "serper",
-                "error": f"Serper Google search failed: {exc}",
+                "error": message,
+                "out_of_credits": serper_out_of_credits(message),
             }
+
+    def search_backup_page(self, query: str) -> Dict[str, Any]:
+        """First page from a free search when Serper has no credits. Not Google."""
+        for name, fn in (
+            ("DuckDuckGo", self._duckduckgo),
+            ("Brave", self._brave),
+            ("Tavily", self._tavily),
+        ):
+            try:
+                hits = fn(query) or []
+            except Exception as exc:
+                log.warning("%s backup search failed: %s", name, exc)
+                continue
+            if hits:
+                return {
+                    "hits": hits,
+                    "provider": name.lower(),
+                    "error": "",
+                    "fallback": True,
+                    "notice": (
+                        f"{name}, not Google. Serper is out of credits, "
+                        "so only this first page was searched."
+                    ),
+                }
+        return {
+            "hits": [],
+            "provider": "none",
+            "error": "Serper is out of credits, and DuckDuckGo returned no results.",
+            "fallback": True,
+        }
 
     def _serper(self, query: str, page: int = 1, num: int = 20) -> List[Dict[str, str]]:
         if not settings.SERPER_API_KEY:

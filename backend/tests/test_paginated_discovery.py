@@ -10,6 +10,14 @@ from app.services.paginated_discovery import (
 )
 
 
+def test_serper_out_of_credits_is_detected():
+    from app.tools.web_search import serper_out_of_credits
+
+    assert serper_out_of_credits("Serper Google search failed: Serper 400: Not enough credits")
+    assert serper_out_of_credits("not enough credits") is True
+    assert serper_out_of_credits("Serper 400: Query is required") is False
+
+
 def test_serper_failure_includes_response_message():
     from app.tools.web_search import serper_failure_message
 

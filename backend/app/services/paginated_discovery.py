@@ -352,12 +352,27 @@ def _halt_searches_on_error(
         )
 
 
+def _finish_backup_search(stats: HuntStats, intent: Any, business_id: str, page: int) -> None:
+    """One free-search page is enough for this run. Leave the Google cursor open."""
+    intent.status = "quota"
+    intent.stop_reason = "backup_page"
+    stats.stop_reasons[intent.search_intent] = "backup_page"
+    _persist_intent(intent)
+    _save_cursor_page(
+        business_id=business_id,
+        query=intent.query,
+        next_page=max(1, int(page or 1)),
+        status="active",
+    )
+
+
 _STOP_TEXT = {
     "leads_per_run": "Reached the new-lead limit for this run.",
     "pages_per_run": "Used this run's Google page budget. The next hunt continues on the following page.",
     "no_more_results": "Google returned empty pages, so this search is finished.",
     "repeated_results": "Google kept returning the same page, so this search is finished.",
     "search_error": "Google rejected the search. The same page will be tried again.",
+    "backup_page": "Serper is out of credits, so only the first DuckDuckGo page was searched. The Google page is still open.",
     "previously_exhausted": "Already finished on an earlier hunt. Start over to search it from page 1.",
     "blank_page": "This page was empty. The hunt continued.",
     "max_runtime": "Stopped because the hunt hit the time limit.",
@@ -984,6 +999,7 @@ async def run_paginated_discovery(
                 return {"prospect": front, "id": prospect_id, "merged": False, "changed": True, "intent_id": intent_id}
 
     # ---- Main fair pagination loop ----
+    serper_credits_out = False
     while True:
         hit_reasons: List[str] = []
         if _budget_hit(hit_reasons):
@@ -1039,12 +1055,17 @@ async def run_paginated_discovery(
             telemetry=_telemetry_payload(stats, intent_rows, current_q, budget),
         )
 
+        fallback = False
         try:
-            report = await web.search_organic_page(
-                intent.query,
-                page=page,
-                num=budget.results_per_page,
-            )
+            if serper_credits_out:
+                report = await asyncio.to_thread(web.search_backup_page, intent.query)
+                fallback = True
+            else:
+                report = await web.search_organic_page(
+                    intent.query,
+                    page=page,
+                    num=budget.results_per_page,
+                )
         except Exception as exc:
             log.warning("Search failed for %s page %s: %s", intent.query, page, exc)
             _halt_searches_on_error(
@@ -1058,20 +1079,41 @@ async def run_paginated_discovery(
         organic = list(report.get("hits") or [])
         provider = str(report.get("provider") or "none")
         search_error = str(report.get("error") or "")
+        if not fallback and report.get("out_of_credits"):
+            serper_credits_out = True
+            _note(stats, search_error)
+            _note(
+                stats,
+                "Serper is out of credits. This run will use DuckDuckGo for the first page of each search. Google pages were not marked finished.",
+            )
+            report = await asyncio.to_thread(web.search_backup_page, intent.query)
+            organic = list(report.get("hits") or [])
+            provider = str(report.get("provider") or "none")
+            search_error = str(report.get("error") or "")
+            fallback = True
         provider_label = {
             "serper": "Google via Serper",
             "brave": "Brave, not Google",
             "tavily": "Tavily, not Google",
             "duckduckgo": "DuckDuckGo, not Google",
         }.get(provider, "No search provider")
-        _note(stats, f"{provider_label} — page {page}: {intent.query}")
-        stats.google_requests += 1
-        if search_error:
-            # A failed request is not an empty Google page. Leave the cursor
-            # on this page and stop, instead of walking later pages.
-            _halt_searches_on_error(stats, intent_rows, business_id, search_error)
-            break
-        _note(stats, f"Page {page} returned {len(organic)} results.")
+        if fallback:
+            notice = str(report.get("notice") or "")
+            _note(stats, notice or f"{provider_label}: {intent.query}")
+            if search_error and not organic:
+                _note(stats, search_error)
+                _finish_backup_search(stats, intent, business_id, page)
+                continue
+            _note(stats, f"Returned {len(organic)} results for “{intent.query}”.")
+        else:
+            _note(stats, f"{provider_label} — page {page}: {intent.query}")
+            stats.google_requests += 1
+            if search_error:
+                # A failed request is not an empty Google page. Leave the cursor
+                # on this page and stop, instead of walking later pages.
+                _halt_searches_on_error(stats, intent_rows, business_id, search_error)
+                break
+            _note(stats, f"Page {page} returned {len(organic)} results.")
 
         stats.google_pages += 1
         stats.raw_results += len(organic)
@@ -1276,40 +1318,53 @@ async def run_paginated_discovery(
 
             intent.results_processed += len(organic)
             intent.pages_processed += 1
-            fp = _fingerprint(page_domains)
-            if fp and fp == intent.last_page_fingerprint:
-                repeats = repeat_streaks.get(intent_id, 0) + 1
-                repeat_streaks[intent_id] = repeats
-                if should_exhaust_after_gaps(repeats, page):
-                    intent.status = "exhausted"
-                    intent.stop_reason = "repeated_results"
-                    stats.stop_reasons[intent.search_intent] = "repeated_results"
-                    _note(stats, f"“{intent.query}” page {page} repeated earlier results. This search is finished.")
-                    _save_cursor_page(
-                        business_id=business_id,
-                        query=intent.query,
-                        next_page=page,
-                        status="exhausted",
-                        session=session,
-                    )
-                else:
-                    # Same results once is not the end of Google. Request the next page.
-                    intent.current_page = page + 1
-                    pending_cursor = intent.current_page
+            if fallback:
+                # DuckDuckGo has no later Google page. Do not move the cursor.
+                intent.status = "quota"
+                intent.stop_reason = "backup_page"
+                stats.stop_reasons[intent.search_intent] = "backup_page"
+                intent.updated_at = _now()
+                session.add(intent)
+                session.commit()
+                for i, r in enumerate(intent_rows):
+                    if r.id == intent_id:
+                        intent_rows[i] = intent
+                        break
             else:
-                repeat_streaks[intent_id] = 0
-                intent.last_page_fingerprint = fp
-                intent.current_page = page + 1
-                intent.new_domains += len(enrich_jobs)
-                pending_cursor = intent.current_page
-            intent.updated_at = _now()
-            session.add(intent)
-            session.commit()
-            # Keep a live copy on the round-robin list (same object; expire_on_commit=False).
-            for i, r in enumerate(intent_rows):
-                if r.id == intent_id:
-                    intent_rows[i] = intent
-                    break
+                fp = _fingerprint(page_domains)
+                if fp and fp == intent.last_page_fingerprint:
+                    repeats = repeat_streaks.get(intent_id, 0) + 1
+                    repeat_streaks[intent_id] = repeats
+                    if should_exhaust_after_gaps(repeats, page):
+                        intent.status = "exhausted"
+                        intent.stop_reason = "repeated_results"
+                        stats.stop_reasons[intent.search_intent] = "repeated_results"
+                        _note(stats, f"“{intent.query}” page {page} repeated earlier results. This search is finished.")
+                        _save_cursor_page(
+                            business_id=business_id,
+                            query=intent.query,
+                            next_page=page,
+                            status="exhausted",
+                            session=session,
+                        )
+                    else:
+                        # Same results once is not the end of Google. Request the next page.
+                        intent.current_page = page + 1
+                        pending_cursor = intent.current_page
+                else:
+                    repeat_streaks[intent_id] = 0
+                    intent.last_page_fingerprint = fp
+                    intent.current_page = page + 1
+                    intent.new_domains += len(enrich_jobs)
+                    pending_cursor = intent.current_page
+                intent.updated_at = _now()
+                session.add(intent)
+                session.commit()
+                # Keep a live copy on the round-robin list (same object; expire_on_commit=False).
+                for i, r in enumerate(intent_rows):
+                    if r.id == intent_id:
+                        intent_rows[i] = intent
+                        break
 
         # Enrich new domains from this page (bounded concurrency) — incremental save
         if enrich_jobs:
@@ -1377,11 +1432,18 @@ async def run_paginated_discovery(
                 telemetry=_telemetry_payload(stats, intent_rows, current_q, budget),
             )
 
-        if pending_cursor is not None:
+        if pending_cursor is not None and not fallback:
             _save_cursor_page(
                 business_id=business_id,
                 query=intent.query,
                 next_page=pending_cursor,
+                status="active",
+            )
+        elif fallback:
+            _save_cursor_page(
+                business_id=business_id,
+                query=intent.query,
+                next_page=page,
                 status="active",
             )
 
