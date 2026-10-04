@@ -573,33 +573,23 @@ class WebSearchTool:
                 "out_of_credits": serper_out_of_credits(message),
             }
 
-    def search_backup_page(self, query: str) -> Dict[str, Any]:
-        """First page from a free search when Serper has no credits. Not Google."""
-        for name, fn in (
-            ("DuckDuckGo", self._duckduckgo),
-            ("Brave", self._brave),
-            ("Tavily", self._tavily),
-        ):
-            try:
-                hits = fn(query) or []
-            except Exception as exc:
-                log.warning("%s backup search failed: %s", name, exc)
-                continue
-            if hits:
-                return {
-                    "hits": hits,
-                    "provider": name.lower(),
-                    "error": "",
-                    "fallback": True,
-                    "notice": (
-                        f"{name}, not Google. Serper is out of credits, "
-                        "so only this first page was searched."
-                    ),
-                }
+    def search_backup_page(self, query: str, page: int = 1) -> Dict[str, Any]:
+        """One DuckDuckGo page when Serper has no credits. Not Google."""
+        page = max(1, int(page or 1))
+        try:
+            hits = self._duckduckgo(query, page=page) or []
+        except Exception as exc:
+            log.warning("DuckDuckGo backup search failed page %s: %s", page, exc)
+            return {
+                "hits": [],
+                "provider": "duckduckgo",
+                "error": f"DuckDuckGo search failed: {exc}",
+                "fallback": True,
+            }
         return {
-            "hits": [],
-            "provider": "none",
-            "error": "Serper is out of credits, and DuckDuckGo returned no results.",
+            "hits": hits,
+            "provider": "duckduckgo",
+            "error": "",
             "fallback": True,
         }
 
@@ -646,11 +636,12 @@ class WebSearchTool:
                 for r in res.json().get("results") or []
             ]
 
-    def _duckduckgo(self, query: str) -> List[Dict[str, str]]:
+    def _duckduckgo(self, query: str, page: int = 1) -> List[Dict[str, str]]:
+        page = max(1, int(page or 1))
         try:
             from ddgs import DDGS
             with DDGS() as ddgs:
-                rows = list(ddgs.text(query, max_results=15))
+                rows = list(ddgs.text(query, max_results=15, page=page, backend="duckduckgo"))
                 return [
                     {"title": r.get("title", ""), "href": r.get("href", ""), "body": r.get("body", "")}
                     for r in rows
@@ -667,11 +658,15 @@ class WebSearchTool:
                 ]
         except Exception:
             pass
-        return self._duckduckgo_html(query)
+        return self._duckduckgo_html(query, page=page)
 
-    def _duckduckgo_html(self, query: str) -> List[Dict[str, str]]:
+    def _duckduckgo_html(self, query: str, page: int = 1) -> List[Dict[str, str]]:
+        page = max(1, int(page or 1))
+        data: Dict[str, Any] = {"q": query, "b": ""}
+        if page > 1:
+            data["s"] = str(10 + (page - 2) * 15)
         with httpx.Client(timeout=20.0, follow_redirects=True, headers=HEADERS) as client:
-            res = client.post("https://html.duckduckgo.com/html/", data={"q": query})
+            res = client.post("https://html.duckduckgo.com/html/", data=data)
             res.raise_for_status()
         soup = BeautifulSoup(res.text, "html.parser")
         hits: List[Dict[str, str]] = []

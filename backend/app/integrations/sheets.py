@@ -313,6 +313,56 @@ def resolve_spreadsheet_id(spreadsheet_id: str | None = None) -> str:
     return (spreadsheet_id or "").strip()
 
 
+# Status values that mean an email was already sent from the leads sheet.
+SENT_LEAD_STATUSES = {
+    "contacted",
+    "replied",
+    "re-contact",
+    "meeting",
+    "won",
+    "denied",
+}
+
+
+def is_sent_sheet_status(status: str) -> bool:
+    return (status or "").strip().lower() in SENT_LEAD_STATUSES
+
+
+def sent_lead_emails(
+    spreadsheet_id: str = "",
+    *,
+    session: Session | None = None,
+    user: User | None = None,
+) -> set[str] | None:
+    """Emails already sent in the leads tabs. None when Sheets cannot be read."""
+    client = _get_client(session, user)
+    if client is None:
+        return None
+    sheet_id = resolve_spreadsheet_id(spreadsheet_id)
+    if not sheet_id:
+        return None
+    sh = client.open_by_key(sheet_id)
+    found: set[str] = set()
+    for ws in sh.worksheets():
+        title = (ws.title or "").strip()
+        if not title.endswith(" - Leads"):
+            continue
+        rows = ws.get_all_values()
+        if not rows:
+            continue
+        header = [str(cell or "").strip().lower() for cell in rows[0]]
+        email_i = header.index("email") if "email" in header else 3
+        status_i = header.index("status") if "status" in header else 10
+        for row in rows[1:]:
+            status = row[status_i] if len(row) > status_i else ""
+            if not is_sent_sheet_status(status):
+                continue
+            email = (row[email_i] if len(row) > email_i else "").strip().lower()
+            if "@" in email:
+                found.add(email)
+    return found
+
+
 def business_spreadsheet_id(business: Any | None) -> str:
     if business is None:
         return ""

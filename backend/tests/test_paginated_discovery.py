@@ -10,6 +10,15 @@ from app.services.paginated_discovery import (
 )
 
 
+def test_sheet_sent_status_skips_only_emailed_rows():
+    from app.integrations.sheets import is_sent_sheet_status
+
+    assert is_sent_sheet_status("Contacted") is True
+    assert is_sent_sheet_status("Replied") is True
+    assert is_sent_sheet_status("To contact") is False
+    assert is_sent_sheet_status("") is False
+
+
 def test_serper_out_of_credits_is_detected():
     from app.tools.web_search import serper_out_of_credits
 

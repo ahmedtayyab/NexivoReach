@@ -36,6 +36,7 @@ from app.config import settings
 from app.database.session import engine
 from app.models.schemas import (
     AgentRunRecord,
+    Business,
     DiscoveredCompany,
     DiscoveryJob,
     DiscoverySearchIntent,
@@ -372,7 +373,8 @@ _STOP_TEXT = {
     "no_more_results": "Google returned empty pages, so this search is finished.",
     "repeated_results": "Google kept returning the same page, so this search is finished.",
     "search_error": "Google rejected the search. The same page will be tried again.",
-    "backup_page": "Serper is out of credits, so only the first DuckDuckGo page was searched. The Google page is still open.",
+    "backup_page": "DuckDuckGo had no more new pages. The Google page is still open.",
+    "backup_budget": "Used this run's DuckDuckGo page budget. The Google page is still open.",
     "previously_exhausted": "Already finished on an earlier hunt. Start over to search it from page 1.",
     "blank_page": "This page was empty. The hunt continued.",
     "max_runtime": "Stopped because the hunt hit the time limit.",
@@ -857,6 +859,20 @@ async def run_paginated_discovery(
                 # Merge into existing prospect or create
                 existing = None
                 email_key = _norm_email(email)
+                if email_key and email_key in sent_sheet_emails:
+                    mem.processed = True
+                    mem.status = "skipped"
+                    mem.email = email
+                    mem.email_status = email_status
+                    session.add(mem)
+                    session.commit()
+                    stats.already_known_skips += 1
+                    _bump_funnel(stats, search_intent, "duplicates")
+                    _note(
+                        stats,
+                        f"Skipped {company_name} — {email} was already emailed in Google Sheets",
+                    )
+                    return {"prospect": None, "id": None, "skippedSheet": True}
                 prospects_here = list(
                     session.exec(
                         select(ProspectRecord).where(ProspectRecord.business_id == business_id)
@@ -998,8 +1014,35 @@ async def run_paginated_discovery(
                 front = prospect_to_frontend(pr)
                 return {"prospect": front, "id": prospect_id, "merged": False, "changed": True, "intent_id": intent_id}
 
+    sent_sheet_emails: set[str] = set()
+    try:
+        from app.integrations.sheets import is_configured, sent_lead_emails
+
+        with _db() as session:
+            biz = session.get(Business, business_id)
+            owner = None
+            sheet_id = ""
+            if biz is not None:
+                from app.integrations.sheets import business_spreadsheet_id, owner_user
+
+                sheet_id = business_spreadsheet_id(biz)
+                owner = owner_user(session, biz)
+            if not sheet_id or not is_configured(owner):
+                _note(stats, "Google Sheets is not connected, so already-sent emails were not checked.")
+            else:
+                loaded = sent_lead_emails(sheet_id, session=session, user=owner)
+                sent_sheet_emails = loaded or set()
+                _note(
+                    stats,
+                    f"Google Sheets has {len(sent_sheet_emails)} emailed addresses. Matching websites will be skipped.",
+                )
+    except Exception as exc:
+        log.warning("Could not read sent emails from Google Sheets: %s", exc)
+        _note(stats, f"Could not read sent emails from Google Sheets ({exc}).")
+
     # ---- Main fair pagination loop ----
     serper_credits_out = False
+    backup_pages: Dict[str, int] = {}
     while True:
         hit_reasons: List[str] = []
         if _budget_hit(hit_reasons):
@@ -1030,12 +1073,20 @@ async def run_paginated_discovery(
             pages_per_run=budget.max_pages_per_intent,
         ):
             intent.status = "quota"
-            intent.stop_reason = "pages_per_run"
-            stats.stop_reasons[intent.search_intent] = "pages_per_run"
-            _note(
-                stats,
-                f"“{intent.query}” used its {budget.max_pages_per_intent} new pages for this run. Next hunt starts at page {intent.current_page}.",
-            )
+            if serper_credits_out:
+                intent.stop_reason = "backup_budget"
+                stats.stop_reasons[intent.search_intent] = "backup_budget"
+                _note(
+                    stats,
+                    f"“{intent.query}” used its {budget.max_pages_per_intent} DuckDuckGo pages for this run. The Google page is still page {intent.current_page}.",
+                )
+            else:
+                intent.stop_reason = "pages_per_run"
+                stats.stop_reasons[intent.search_intent] = "pages_per_run"
+                _note(
+                    stats,
+                    f"“{intent.query}” used its {budget.max_pages_per_intent} new pages for this run. Next hunt starts at page {intent.current_page}.",
+                )
             _persist_intent(intent)
             continue
 
@@ -1056,9 +1107,10 @@ async def run_paginated_discovery(
         )
 
         fallback = False
+        fetch_page = backup_pages.get(intent_id, 1) if serper_credits_out else int(page or 1)
         try:
             if serper_credits_out:
-                report = await asyncio.to_thread(web.search_backup_page, intent.query)
+                report = await asyncio.to_thread(web.search_backup_page, intent.query, fetch_page)
                 fallback = True
             else:
                 report = await web.search_organic_page(
@@ -1084,9 +1136,10 @@ async def run_paginated_discovery(
             _note(stats, search_error)
             _note(
                 stats,
-                "Serper is out of credits. This run will use DuckDuckGo for the first page of each search. Google pages were not marked finished.",
+                "Serper is out of credits. This run will keep moving to the next DuckDuckGo page. Google pages were not marked finished.",
             )
-            report = await asyncio.to_thread(web.search_backup_page, intent.query)
+            fetch_page = backup_pages.get(intent_id, 1)
+            report = await asyncio.to_thread(web.search_backup_page, intent.query, fetch_page)
             organic = list(report.get("hits") or [])
             provider = str(report.get("provider") or "none")
             search_error = str(report.get("error") or "")
@@ -1098,13 +1151,25 @@ async def run_paginated_discovery(
             "duckduckgo": "DuckDuckGo, not Google",
         }.get(provider, "No search provider")
         if fallback:
-            notice = str(report.get("notice") or "")
-            _note(stats, notice or f"{provider_label}: {intent.query}")
+            _note(stats, f"DuckDuckGo, not Google — page {fetch_page}: {intent.query}")
             if search_error and not organic:
                 _note(stats, search_error)
                 _finish_backup_search(stats, intent, business_id, page)
                 continue
-            _note(stats, f"Returned {len(organic)} results for “{intent.query}”.")
+            if not organic:
+                streak = empty_streaks.get(intent_id, 0) + 1
+                empty_streaks[intent_id] = streak
+                if should_exhaust_after_gaps(streak, fetch_page):
+                    _note(stats, f"“{intent.query}” has no more DuckDuckGo results after page {fetch_page}.")
+                    _finish_backup_search(stats, intent, business_id, page)
+                else:
+                    backup_pages[intent_id] = fetch_page + 1
+                    _note(
+                        stats,
+                        f"DuckDuckGo page {fetch_page} for “{intent.query}” was empty. Continuing to the next page.",
+                    )
+                continue
+            _note(stats, f"Page {fetch_page} returned {len(organic)} results.")
         else:
             _note(stats, f"{provider_label} — page {page}: {intent.query}")
             stats.google_requests += 1
@@ -1319,10 +1384,19 @@ async def run_paginated_discovery(
             intent.results_processed += len(organic)
             intent.pages_processed += 1
             if fallback:
-                # DuckDuckGo has no later Google page. Do not move the cursor.
-                intent.status = "quota"
-                intent.stop_reason = "backup_page"
-                stats.stop_reasons[intent.search_intent] = "backup_page"
+                # Keep paging DuckDuckGo. Leave the Google cursor on its current page.
+                fp = _fingerprint(page_domains)
+                if fp and fp == intent.last_page_fingerprint:
+                    intent.status = "quota"
+                    intent.stop_reason = "backup_page"
+                    stats.stop_reasons[intent.search_intent] = "backup_page"
+                    _note(
+                        stats,
+                        f"“{intent.query}” DuckDuckGo page {fetch_page} repeated earlier results. This search is paused.",
+                    )
+                else:
+                    intent.last_page_fingerprint = fp
+                    backup_pages[intent_id] = fetch_page + 1
                 intent.updated_at = _now()
                 session.add(intent)
                 session.commit()
@@ -1375,6 +1449,8 @@ async def run_paginated_discovery(
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for res in results:
                 if isinstance(res, Exception) or not res:
+                    continue
+                if res.get("skippedSheet"):
                     continue
                 pid = res.get("id")
                 prospect = res.get("prospect")
