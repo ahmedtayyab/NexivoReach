@@ -313,6 +313,49 @@ class HuntStats:
     stop_reasons: Dict[str, str] = field(default_factory=dict)
     funnel: Dict[str, int] = field(default_factory=_empty_funnel)
     funnel_by_intent: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    logs: List[str] = field(default_factory=list)
+
+
+def _note(stats: HuntStats, message: str) -> None:
+    """One line in the hunt log shown in the app."""
+    line = f"{time.strftime('%H:%M:%S')}  {message}"
+    stats.logs.append(line)
+    if len(stats.logs) > 500:
+        del stats.logs[: len(stats.logs) - 500]
+    log.info("HUNT %s", message)
+
+
+_STOP_TEXT = {
+    "leads_per_run": "Reached the new-lead limit for this run.",
+    "pages_per_run": "Used this run's Google page budget. The next hunt continues on the following page.",
+    "no_more_results": "Google returned empty pages, so this search is finished.",
+    "repeated_results": "Google kept returning the same page, so this search is finished.",
+    "search_error": "The search request failed.",
+    "previously_exhausted": "Already finished on an earlier hunt. Start over to search it from page 1.",
+    "blank_page": "This page was empty. The hunt continued.",
+    "max_runtime": "Stopped because the hunt hit the time limit.",
+    "max_google_requests": "Stopped because the hunt hit the Google request limit.",
+    "max_total_pages": "Stopped because the hunt hit the page limit.",
+    "max_domains": "Stopped because the hunt hit the website limit.",
+    "max_enrichments": "Stopped because the hunt hit the website-open limit.",
+    "hunt_finished": "Every search in this run was processed.",
+}
+
+
+def _stop_summary(stats: HuntStats) -> str:
+    reasons = dict(stats.stop_reasons or {})
+    if not reasons and stats.google_requests == 0:
+        return "The hunt stopped before any search ran."
+    parts = []
+    for name, reason in reasons.items():
+        parts.append(f"{name}: {_STOP_TEXT.get(reason, reason)}")
+    if stats.leads_saved:
+        parts.append(f"Saved {stats.leads_saved} new leads.")
+    else:
+        parts.append("No new leads were saved.")
+    if stats.google_requests == 0:
+        parts.append("No search request was sent.")
+    return " ".join(parts)
 
 
 def _bump_funnel(stats: HuntStats, search_intent: str, key: str, n: int = 1) -> None:
@@ -512,6 +555,22 @@ async def run_paginated_discovery(
             intent_leads_this_run[row.id or ""] = 0
             if row.stop_reason == "previously_exhausted":
                 stats.stop_reasons[row.search_intent] = "previously_exhausted"
+                _note(
+                    stats,
+                    f"Not searching “{row.query}”. It was already finished on an earlier hunt. Start over to run it from page 1.",
+                )
+
+    if settings.SERPER_API_KEY:
+        _note(stats, "Google search is on (Serper).")
+    else:
+        _note(stats, "SERPER_API_KEY is missing. This hunt cannot search Google.")
+    _note(
+        stats,
+        f"Starting {len(intent_rows)} search(es). Limit {budget.leads_per_run} new leads, {budget.max_pages_per_intent} new Google pages per search.",
+    )
+    for row in intent_rows:
+        if row.status != "exhausted":
+            _note(stats, f"Will search: {row.query} (starting at Google page {row.current_page})")
 
     _update_job(
         job_id,
@@ -523,6 +582,7 @@ async def run_paginated_discovery(
         telemetry={
             "leadsPerRun": budget.leads_per_run,
             "searchIntents": len(intent_specs),
+            "huntLog": list(stats.logs),
         },
     )
 
@@ -823,6 +883,7 @@ async def run_paginated_discovery(
                     session.commit()
                     stats.already_known_skips += 1
                     _bump_funnel(stats, search_intent, "duplicates")
+                    _note(stats, f"Duplicate {company_name} — already a lead")
                     return {
                         "prospect": None,
                         "id": existing.id,
@@ -842,6 +903,7 @@ async def run_paginated_discovery(
                             session.commit()
                             stats.already_known_skips += 1
                             _bump_funnel(stats, search_intent, "duplicates")
+                            _note(stats, f"Duplicate {company_name} — already a lead")
                             return {
                                 "prospect": None,
                                 "id": pr.id,
@@ -888,6 +950,7 @@ async def run_paginated_discovery(
                 session.commit()
                 stats.leads_saved += 1
                 _bump_funnel(stats, search_intent, "leads_created")
+                _note(stats, f"Saved lead: {company_name} ({domain})")
                 if intent_id:
                     intent_leads_this_run[intent_id] = intent_leads_this_run.get(intent_id, 0) + 1
                 front = prospect_to_frontend(pr)
@@ -897,6 +960,8 @@ async def run_paginated_discovery(
     while True:
         hit_reasons: List[str] = []
         if _budget_hit(hit_reasons):
+            reason = hit_reasons[0] if hit_reasons else "budget"
+            _note(stats, _STOP_TEXT.get(reason, reason))
             for row in intent_rows:
                 if row.status == "active":
                     row.status = "budget"
@@ -906,6 +971,7 @@ async def run_paginated_discovery(
 
         active = [r for r in intent_rows if r.status == "active"]
         if not active:
+            _note(stats, "Every search has stopped.")
             break
 
         # Round-robin across searches. The 100-lead cap is hunt-wide, not per search.
@@ -923,6 +989,10 @@ async def run_paginated_discovery(
             intent.status = "quota"
             intent.stop_reason = "pages_per_run"
             stats.stop_reasons[intent.search_intent] = "pages_per_run"
+            _note(
+                stats,
+                f"“{intent.query}” used its {budget.max_pages_per_intent} new pages for this run. Next hunt starts at page {intent.current_page}.",
+            )
             _persist_intent(intent)
             continue
 
@@ -943,18 +1013,33 @@ async def run_paginated_discovery(
         )
 
         try:
-            organic = await web.search_organic_page(
+            report = await web.search_organic_page(
                 intent.query,
                 page=page,
                 num=budget.results_per_page,
             )
         except Exception as exc:
             log.warning("Search failed for %s page %s: %s", intent.query, page, exc)
+            _note(stats, f"Search crashed for “{intent.query}” page {page}: {exc}")
             intent.status = "error"
             intent.stop_reason = "search_error"
             stats.stop_reasons[intent.search_intent] = "search_error"
             _persist_intent(intent)
             continue
+
+        organic = list(report.get("hits") or [])
+        provider = str(report.get("provider") or "none")
+        search_error = str(report.get("error") or "")
+        provider_label = {
+            "serper": "Google via Serper",
+            "brave": "Brave, not Google",
+            "tavily": "Tavily, not Google",
+            "duckduckgo": "DuckDuckGo, not Google",
+        }.get(provider, "No search provider")
+        _note(stats, f"{provider_label} — page {page}: {intent.query}")
+        if search_error:
+            _note(stats, search_error)
+        _note(stats, f"Page {page} returned {len(organic)} results.")
 
         stats.google_requests += 1
         stats.google_pages += 1
@@ -982,10 +1067,12 @@ async def run_paginated_discovery(
                     intent.query,
                     streak,
                 )
+                _note(stats, f"Google page {page} for “{intent.query}” was empty. Continuing to the next page.")
                 continue
             intent.status = "exhausted"
             intent.stop_reason = "no_more_results"
             stats.stop_reasons[intent.search_intent] = "no_more_results"
+            _note(stats, f"“{intent.query}” has no more Google results after page {page}.")
             _persist_intent(intent)
             _save_cursor_page(
                 business_id=business_id,
@@ -1046,6 +1133,10 @@ async def run_paginated_discovery(
                 if classified.get("reject"):
                     session.add(serp)
                     _bump_funnel(stats, intent.search_intent, "junk_filtered")
+                    _note(
+                        stats,
+                        f"Skipped “{(title or domain or 'result')[:80]}” — {classified.get('reject_reason') or 'not a business'}",
+                    )
                     # Record as seen/irrelevant junk without enrich
                     if domain:
                         _touch_discovered(
@@ -1093,6 +1184,7 @@ async def run_paginated_discovery(
                     stats.previously_known += 1
                     stats.already_known_skips += 1
                     _bump_funnel(stats, intent.search_intent, "already_seen")
+                    _note(stats, f"Already opened {domain} on an earlier hunt — skipped")
                     # Still merge search intent memory; do NOT stop pagination
                     intents = list(mem.matched_search_intents or [])
                     if intent.search_intent and intent.search_intent not in intents:
@@ -1161,6 +1253,7 @@ async def run_paginated_discovery(
                     intent.status = "exhausted"
                     intent.stop_reason = "repeated_results"
                     stats.stop_reasons[intent.search_intent] = "repeated_results"
+                    _note(stats, f"“{intent.query}” page {page} repeated earlier results. This search is finished.")
                     _save_cursor_page(
                         business_id=business_id,
                         query=intent.query,
@@ -1313,34 +1406,15 @@ async def run_paginated_discovery(
         session.add(ar)
         session.commit()
 
+    summary = _stop_summary(stats)
+    _note(stats, summary)
     telemetry = _telemetry_payload(stats, intent_rows, "", budget)
     telemetry["durationMs"] = duration_ms
     telemetry["complete"] = True
+    telemetry["stopSummary"] = summary
+    telemetry["huntLog"] = list(stats.logs)
     log.info("Hunt funnel\n%s", funnel_report(stats))
-    reasons = {str(v) for v in (stats.stop_reasons or {}).values() if v}
-    if stats.leads_saved == 0 and stats.google_pages == 0 and reasons <= {"previously_exhausted"} and reasons:
-        done_phase = (
-            "These search lines already reached the end of Google results. "
-            "Start over to search them again from page 1."
-        )
-    elif stats.leads_saved == 0 and stats.google_pages == 0 and (
-        "no_results_page_1" in reasons or "search_error" in reasons
-    ):
-        done_phase = (
-            "Google did not return results for these lines. "
-            "Nothing was marked finished — run the hunt again."
-        )
-    else:
-        f = stats.funnel or {}
-        done_phase = (
-            f"Done · {stats.leads_saved}/{budget.leads_per_run} new leads · "
-            f"Google results {f.get('serp_results', 0)} · "
-            f"opened {f.get('fetch_ok', 0)} · "
-            f"already seen {f.get('already_seen', 0)} · "
-            f"junk {f.get('junk_filtered', 0)} · "
-            f"irrelevant {f.get('irrelevant', 0)} · "
-            f"duplicates {f.get('duplicates', 0)}"
-        )
+    done_phase = summary
 
     _update_job(
         job_id,
@@ -1479,6 +1553,8 @@ def _telemetry_payload(
         "emailsFound": stats.emails_found,
         "leadsSaved": stats.leads_saved,
         "alreadyKnown": stats.already_known_skips,
+        "huntLog": list(stats.logs),
+        "stopSummary": _stop_summary(stats),
         "intentStatus": [
             {
                 "searchIntent": r.search_intent,

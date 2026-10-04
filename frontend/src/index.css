@@ -2558,6 +2558,57 @@ input:focus, textarea:focus, select:focus {
   font-size: 12.5px;
   color: var(--text-muted);
 }
+.hunt-log-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: color-mix(in srgb, #000 45%, transparent);
+}
+.hunt-log {
+  width: min(42rem, 100%);
+  max-height: min(70vh, 36rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem 1.1rem;
+  border-radius: 12px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  box-shadow: 0 16px 40px color-mix(in srgb, #000 35%, transparent);
+}
+.hunt-log__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.hunt-log__head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.hunt-log__summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.hunt-log__lines {
+  margin: 0;
+  padding: 0.75rem 0.9rem 0.75rem 1.6rem;
+  overflow: auto;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 70%, var(--bg-panel));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.hunt-log__lines li + li {
+  margin-top: 0.35rem;
+}
 
 .nav-item-primary.is-workspace {
   background: var(--sidebar-active) !important;

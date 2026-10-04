@@ -235,6 +235,9 @@ export default function FindBuyersPanel({
   const [recentHunts, setRecentHunts] = useState<RecentHunt[]>([]);
   const [leadsPerRun, setLeadsPerRun] = useState(100);
   const [resettingMemory, setResettingMemory] = useState(false);
+  const [huntLog, setHuntLog] = useState<string[]>([]);
+  const [stopSummary, setStopSummary] = useState('');
+  const [logOpen, setLogOpen] = useState(false);
   const [sheetsOauthReady, setSheetsOauthReady] = useState(false);
   const [sheetsWorkbookLinked, setSheetsWorkbookLinked] = useState(false);
   const confirm = useConfirm();
@@ -321,6 +324,8 @@ export default function FindBuyersPanel({
         setStatusText(p.phase);
         setServerProgress(p.progress);
         if (p.telemetryHint) setTelemetryHint(p.telemetryHint);
+        if (p.huntLog?.length) setHuntLog(p.huntLog);
+        if (p.stopSummary) setStopSummary(p.stopSummary);
         const started = p.startedAt || Date.now();
         setElapsedSec(Math.max(0, Math.floor((Date.now() - started) / 1000)));
       },
@@ -330,12 +335,16 @@ export default function FindBuyersPanel({
         setServerPhase('');
         setTelemetryHint('');
         setLastFound(r.foundCount);
+        if (r.huntLog?.length) setHuntLog(r.huntLog);
+        if (r.stopSummary) setStopSummary(r.stopSummary);
         const sheetsNote = sheetsWorkbookLinked ? ' Synced to Sheets.' : '';
         setStatusText(
           r.foundCount
             ? `Added ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}${
                 r.skippedExisting ? ` (${r.skippedExisting} already researched)` : ''
               } — open Latest hunt on Leads to review new accounts.${sheetsNote}`
+            : r.stopSummary
+              ? r.stopSummary
             : r.phase
               ? r.phase
               : r.skippedExisting
@@ -659,6 +668,9 @@ export default function FindBuyersPanel({
             <div className="find-buyers__overlay-fill" style={{ width: `${progressPct}%` }} />
           </div>
           <p className="find-buyers__overlay-eta">{progressLabel}</p>
+          <button type="button" className="btn btn-secondary" onClick={() => setLogOpen(true)}>
+            Hunt log
+          </button>
         </div>
       )}
 
@@ -756,6 +768,15 @@ export default function FindBuyersPanel({
                   Start over
                 </>
               )}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setLogOpen(true)}
+              disabled={huntLog.length === 0}
+              title="What this hunt searched and why it stopped"
+            >
+              Hunt log
             </button>
           </div>
           <p className="find-buyers__cap" role="status">
@@ -929,6 +950,32 @@ export default function FindBuyersPanel({
           )}
         </div>
       </div>
+      {logOpen && (
+        <div className="hunt-log-backdrop" role="presentation" onClick={() => setLogOpen(false)}>
+          <div
+            className="hunt-log"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="hunt-log-title"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="hunt-log__head">
+              <h2 id="hunt-log-title">Hunt log</h2>
+              <button type="button" className="btn btn-secondary" onClick={() => setLogOpen(false)}>
+                Close
+              </button>
+            </div>
+            {stopSummary ? <p className="hunt-log__summary">{stopSummary}</p> : null}
+            <ol className="hunt-log__lines">
+              {huntLog.length ? (
+                huntLog.map((line, i) => <li key={`${i}-${line.slice(0, 24)}`}>{line}</li>)
+              ) : (
+                <li>No hunt has been logged yet.</li>
+              )}
+            </ol>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

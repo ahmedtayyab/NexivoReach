@@ -26,6 +26,8 @@ export type HuntTelemetry = {
   fetchFailed?: number;
   irrelevantRejected?: number;
   duplicates?: number;
+  huntLog?: string[];
+  stopSummary?: string;
 };
 
 export type HuntProgress = {
@@ -34,6 +36,8 @@ export type HuntProgress = {
   phase: string;
   progress: number;
   telemetryHint: string;
+  huntLog?: string[];
+  stopSummary?: string;
   startedAt: number;
   userPrompt: string;
 };
@@ -47,6 +51,8 @@ export type HuntResult = {
   error?: string | null;
   userPrompt: string;
   phase?: string;
+  huntLog?: string[];
+  stopSummary?: string;
 };
 
 type HuntListener = {
@@ -201,6 +207,8 @@ async function pollUntilDone(job: ActiveHunt): Promise<void> {
         phase: data.phase || 'Hunting buyers…',
         progress: typeof data.progress === 'number' ? data.progress : 4,
         telemetryHint: telemetryToHint(data.telemetry),
+        huntLog: Array.isArray(data.telemetry?.huntLog) ? data.telemetry.huntLog : [],
+        stopSummary: data.telemetry?.stopSummary || '',
         startedAt: job.startedAt,
         userPrompt: job.userPrompt,
       });
@@ -221,6 +229,8 @@ async function pollUntilDone(job: ActiveHunt): Promise<void> {
       error: null,
       userPrompt: job.userPrompt,
       phase: data.phase || '',
+      huntLog: Array.isArray(data.telemetry?.huntLog) ? data.telemetry.huntLog : [],
+      stopSummary: data.telemetry?.stopSummary || data.phase || '',
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Discovery failed';

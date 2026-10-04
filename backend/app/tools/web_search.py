@@ -503,23 +503,51 @@ class WebSearchTool:
         *,
         page: int = 1,
         num: int = 10,
-    ) -> List[Dict[str, str]]:
-        """Fetch one Google organic page. Serper supports page; others return page 1 only."""
+    ) -> Dict[str, Any]:
+        """One result page. Serper is Google. Other providers are labeled as not Google."""
         page = max(1, int(page or 1))
         num = max(1, min(int(num or 10), 100))
         return await asyncio.to_thread(self._search_sync_paged, query, page, num)
 
-    def _search_sync_paged(self, query: str, page: int, num: int) -> List[Dict[str, str]]:
-        if settings.SERPER_API_KEY:
-            try:
-                hits = self._serper(query, page=page, num=num)
+    def _search_sync_paged(self, query: str, page: int, num: int) -> Dict[str, Any]:
+        if not settings.SERPER_API_KEY:
+            if page > 1:
+                return {
+                    "hits": [],
+                    "provider": "none",
+                    "error": "No Serper key, so this Google page was not searched.",
+                }
+            for name, fn in (
+                ("Brave", self._brave),
+                ("Tavily", self._tavily),
+                ("DuckDuckGo", self._duckduckgo),
+            ):
+                try:
+                    hits = fn(query) or []
+                except Exception as exc:
+                    log.warning("%s search failed: %s", name, exc)
+                    continue
                 if hits:
-                    return hits
-            except Exception as exc:
-                log.warning("Serper search failed page %s: %s", page, exc)
-        if page > 1:
-            return []
-        return self._search_sync(query, page=1)
+                    return {
+                        "hits": hits,
+                        "provider": name.lower(),
+                        "error": "SERPER_API_KEY is not set. This was not a Google search.",
+                    }
+            return {
+                "hits": [],
+                "provider": "none",
+                "error": "SERPER_API_KEY is not set, and no backup search returned results.",
+            }
+        try:
+            hits = self._serper(query, page=page, num=num)
+            return {"hits": hits or [], "provider": "serper", "error": ""}
+        except Exception as exc:
+            log.warning("Serper search failed page %s: %s", page, exc)
+            return {
+                "hits": [],
+                "provider": "serper",
+                "error": f"Serper Google search failed: {exc}",
+            }
 
     def _serper(self, query: str, page: int = 1, num: int = 20) -> List[Dict[str, str]]:
         if not settings.SERPER_API_KEY:

@@ -842,14 +842,15 @@ export default function App() {
           pushToast(
             'ok',
             `Hunt finished — ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}`,
-            'Open Leads → Latest hunt to review.',
+            'Open Leads → Latest hunt to review.' +
+              (r.stopSummary ? ` ${r.stopSummary}` : ''),
           );
           setPreferLatestHunt(true);
         } else {
           pushToast(
             'info',
             'Hunt finished',
-            r.phase || 'No new leads this round.',
+            r.phase || r.stopSummary || 'No new leads this round.',
           );
         }
       },
