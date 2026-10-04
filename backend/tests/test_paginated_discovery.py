@@ -32,6 +32,19 @@ def test_duckduckgo_more_results_form_is_kept():
     assert parsed["next_form"]["s"] == "10"
 
 
+def test_backup_ladder_shortens_an_empty_search():
+    from app.services.paginated_discovery import backup_query_ladder
+
+    knee = backup_query_ladder("fitness knee sleeves importers Ohio", "Ohio")
+    assert knee[0] == "fitness knee sleeves importers Ohio"
+    assert "fitness knee sleeves importers" in knee
+    assert "knee sleeves importers" in knee
+    assert "knee sleeves importer" in knee
+    wraps = backup_query_ladder("wrist wraps weightlifting distributors Ohio", "Ohio")
+    assert "wrist wraps weightlifting distributors" in wraps
+    assert "wraps weightlifting distributors" not in [item.lower() for item in wraps]
+
+
 def test_saved_more_results_cursor_resumes_the_next_batch():
     from app.services.paginated_discovery import _ddg_cursor_json, _parse_ddg_cursor
 

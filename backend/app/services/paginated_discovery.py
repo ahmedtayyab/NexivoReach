@@ -385,7 +385,7 @@ def _halt_searches_on_error(
 
 def _parse_ddg_cursor(raw: str) -> Dict[str, Any]:
     """Saved More results button. Batch 1 with no fields means start at the first results."""
-    blank = {"fields": None, "batch": 1, "exhausted": False}
+    blank = {"fields": None, "batch": 1, "exhausted": False, "active_query": ""}
     if not (raw or "").strip():
         return blank
     try:
@@ -399,11 +399,72 @@ def _parse_ddg_cursor(raw: str) -> Dict[str, Any]:
         "fields": fields,
         "batch": max(1, int(data.get("batch") or 1)),
         "exhausted": bool(data.get("exhausted")),
+        "active_query": str(data.get("active_query") or ""),
     }
 
 
-def _ddg_cursor_json(*, fields: Optional[Dict[str, str]], batch: int, exhausted: bool = False) -> str:
-    return json.dumps({"fields": fields, "batch": int(batch or 1), "exhausted": exhausted})
+def _ddg_cursor_json(
+    *,
+    fields: Optional[Dict[str, str]],
+    batch: int,
+    exhausted: bool = False,
+    active_query: str = "",
+) -> str:
+    return json.dumps({
+        "fields": fields,
+        "batch": int(batch or 1),
+        "exhausted": exhausted,
+        "active_query": active_query or "",
+    })
+
+
+_BACKUP_LEADING_WORDS = {
+    "fitness",
+    "gym",
+    "strength",
+    "training",
+    "weightlifting",
+    "athletic",
+    "sports",
+    "powerlifting",
+}
+
+
+def backup_query_ladder(query: str, place: str) -> List[str]:
+    """Exact search first, then shorter wording when that search has no pages left."""
+    from app.agents.geo import _VOLUME_ROLE_SHORT
+
+    def _clean(text: str) -> str:
+        return re.sub(r"\s+", " ", (text or "").strip())
+
+    ladder: List[str] = []
+
+    def _add(text: str) -> None:
+        qn = _clean(text)
+        if qn and qn.lower() not in {item.lower() for item in ladder}:
+            ladder.append(qn)
+
+    full = _clean(query)
+    _add(full)
+    place_clean = _clean(place)
+    if place_clean and full.lower().endswith(" " + place_clean.lower()):
+        _add(full[: -(len(place_clean) + 1)])
+    seeds = list(ladder)
+    for seed in seeds:
+        words = seed.split()
+        if not words:
+            continue
+        short = _VOLUME_ROLE_SHORT.get(words[-1].lower(), "")
+        if short and short != words[-1].lower():
+            _add(" ".join(words[:-1] + [short]))
+    for seed in list(ladder):
+        words = seed.split()
+        while len(words) > 3 and words[0].lower() in _BACKUP_LEADING_WORDS:
+            words = words[1:]
+            if place_clean and words and words[-1].lower() == place_clean.lower():
+                words = words[:-1]
+            _add(" ".join(words))
+    return ladder
 
 
 def should_stop_backup_after_empty(*, had_results: bool, page: int) -> bool:
@@ -1127,10 +1188,22 @@ async def run_paginated_discovery(
     ddg_html_noted = False
     backup_states: Dict[str, Dict[str, Any]] = {}
     for row in intent_rows:
-        backup_states[row.id or ""] = ddg_resume_by_query.get(
+        parsed = ddg_resume_by_query.get(
             _query_key(row.query),
-            {"fields": None, "batch": 1, "exhausted": False},
+            {"fields": None, "batch": 1, "exhausted": False, "active_query": ""},
         )
+        ladder = backup_query_ladder(row.query, row.location)
+        active = str(parsed.get("active_query") or "").strip()
+        index = 0
+        for n, item in enumerate(ladder):
+            if active and item.lower() == active.lower():
+                index = n
+                break
+        parsed["ladder"] = ladder
+        parsed["ladder_i"] = index
+        parsed["active_query"] = ladder[index] if ladder else row.query
+        parsed["retried"] = False
+        backup_states[row.id or ""] = parsed
 
     async def _backup_report(query: str, intent_key: str) -> Dict[str, Any]:
         state = backup_states.get(intent_key) or {"fields": None, "batch": 1, "exhausted": False}
@@ -1143,12 +1216,15 @@ async def run_paginated_discovery(
                 "provider": "duckduckgo",
                 "batch": state.get("batch") or 1,
                 "already_finished": True,
+                "searched_query": state.get("active_query") or query,
             }
+        search_query = str(state.get("active_query") or query)
         report = await asyncio.to_thread(
-            web.search_backup_page, query, 1, state.get("fields"),
+            web.search_backup_page, search_query, 1, state.get("fields"),
         )
         report["batch"] = int(state.get("batch") or 1)
         report["already_finished"] = False
+        report["searched_query"] = search_query
         return report
     while True:
         hit_reasons: List[str] = []
@@ -1271,9 +1347,10 @@ async def run_paginated_discovery(
                 )
                 _finish_backup_search(stats, intent, business_id, page)
                 continue
-            label = "first results" if ddg_batch <= 1 and not (backup_states.get(intent_id) or {}).get("fields") else f"More results {ddg_batch}"
+            searched = str(report.get("searched_query") or intent.query)
+            label = "first results" if ddg_batch <= 1 else f"More results {ddg_batch}"
             engine_name = {"duckduckgo": "DuckDuckGo", "yahoo": "Yahoo"}.get(provider, provider or "Search")
-            _note(stats, f"{engine_name}, not Google — {label}: {intent.query}")
+            _note(stats, f"{engine_name}, not Google — {label}: {searched}")
             if provider == "yahoo" and not ddg_html_noted:
                 ddg_html_noted = True
                 _note(stats, "DuckDuckGo did not answer. This run uses Yahoo instead. It is not Google.")
@@ -1302,16 +1379,29 @@ async def run_paginated_discovery(
                 continue
             ddg_fail_streak = 0
             if not organic:
-                if ddg_next_form or (backup_states.get(intent_id) or {}).get("fields"):
-                    _note(
-                        stats,
-                        f"DuckDuckGo More results for “{intent.query}” returned nothing. The next hunt tries that same button again.",
-                    )
-                    _finish_backup_search(stats, intent, business_id, page, "backup_retry")
-                else:
-                    who = "Yahoo" if provider == "yahoo" else "DuckDuckGo"
-                    _note(stats, f"{who} returned no results for “{intent.query}”.")
-                    _finish_backup_search(stats, intent, business_id, page)
+                state = backup_states.get(intent_id) or {}
+                searched = str(report.get("searched_query") or state.get("active_query") or intent.query)
+                if not state.get("retried"):
+                    state["retried"] = True
+                    backup_states[intent_id] = state
+                    _note(stats, f"“{searched}” came back empty. Trying that search once more.")
+                    continue
+                ladder = list(state.get("ladder") or backup_query_ladder(intent.query, intent.location))
+                index = int(state.get("ladder_i") or 0) + 1
+                if index < len(ladder):
+                    state["ladder"] = ladder
+                    state["ladder_i"] = index
+                    state["active_query"] = ladder[index]
+                    state["fields"] = {"engine": "yahoo", "page": "1"}
+                    state["batch"] = 1
+                    state["retried"] = False
+                    state["exhausted"] = False
+                    backup_states[intent_id] = state
+                    intent.last_page_fingerprint = ""
+                    _note(stats, f"No further results for “{searched}”. Searching “{ladder[index]}”.")
+                    continue
+                _note(stats, f"No further results for “{searched}”.")
+                _finish_backup_search(stats, intent, business_id, page)
                 continue
             _note(stats, f"Batch {ddg_batch} returned {len(organic)} results.")
         else:
@@ -1542,19 +1632,37 @@ async def run_paginated_discovery(
                 else:
                     intent.last_page_fingerprint = fp
                 if ddg_next_form and not repeated:
+                    prev = backup_states.get(intent_id) or {}
                     backup_states[intent_id] = {
                         "fields": ddg_next_form,
                         "batch": ddg_batch + 1,
                         "exhausted": False,
+                        "active_query": prev.get("active_query") or intent.query,
+                        "ladder": prev.get("ladder") or [],
+                        "ladder_i": prev.get("ladder_i") or 0,
+                        "retried": False,
                     }
-                    ddg_to_store = _ddg_cursor_json(fields=ddg_next_form, batch=ddg_batch + 1)
+                    ddg_to_store = _ddg_cursor_json(
+                        fields=ddg_next_form,
+                        batch=ddg_batch + 1,
+                        active_query=str(prev.get("active_query") or ""),
+                    )
                 elif ddg_next_form and repeated:
+                    prev = backup_states.get(intent_id) or {}
                     backup_states[intent_id] = {
                         "fields": ddg_next_form,
                         "batch": ddg_batch + 1,
                         "exhausted": False,
+                        "active_query": prev.get("active_query") or intent.query,
+                        "ladder": prev.get("ladder") or [],
+                        "ladder_i": prev.get("ladder_i") or 0,
+                        "retried": False,
                     }
-                    ddg_to_store = _ddg_cursor_json(fields=ddg_next_form, batch=ddg_batch + 1)
+                    ddg_to_store = _ddg_cursor_json(
+                        fields=ddg_next_form,
+                        batch=ddg_batch + 1,
+                        active_query=str(prev.get("active_query") or ""),
+                    )
                 else:
                     intent.status = "quota"
                     intent.stop_reason = "backup_page"
