@@ -152,6 +152,17 @@ def test_united_states_only_does_not_match_new_york():
     assert (v["business_location"] or "").strip().lower() != "new york"
 
 
+def test_newark_counts_as_new_jersey():
+    v = verify_business_location(
+        requested_places=["New Jersey", "United States"],
+        site_text="Warehouse at 50 Broad Street, Newark. Sports bag wholesale.",
+        title="Garden State Bag Co",
+        snippet="Wholesale distributor",
+    )
+    assert v["location_verdict"] == "MATCH"
+    assert v["should_reject"] is False
+
+
 def test_los_angeles_united_states_is_wrong_location():
     v = verify_business_location(
         requested_places=NY,
