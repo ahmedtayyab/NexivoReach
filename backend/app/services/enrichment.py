@@ -106,14 +106,18 @@ async def enrich_website(
         if page.get("emails") and not email:
             email = (page.get("emails") or [""])[0] or email
 
+    homepage_html = (page.get("html") or "")[:400000] if isinstance(page, dict) else ""
+    if isinstance(page, dict):
+        page.pop("html", None)
     found = await discover_contacts(
         website=website,
-        homepage_html=(page.get("html") or "")[:400000] if isinstance(page, dict) else "",
+        homepage_html=homepage_html,
         homepage_text=site_text,
         homepage_url=(page.get("url") if isinstance(page, dict) else None) or website,
         seed_phone=phone,
         seed_emails=list((page.get("emails") or []) if isinstance(page, dict) else []),
     )
+    homepage_html = ""
     if found.get("email"):
         email = found["email"]
         sources.append("site")

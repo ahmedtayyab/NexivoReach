@@ -919,7 +919,9 @@ async def discover_contacts(
             except Exception:
                 return None
 
-        results = await asyncio.gather(*[_fetch_contact(u) for u in extra])
+        results = []
+        for url in extra:
+            results.append(await _fetch_contact(url))
         for result in results:
             if not result:
                 continue

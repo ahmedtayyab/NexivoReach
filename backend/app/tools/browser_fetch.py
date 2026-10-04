@@ -216,6 +216,8 @@ async def fetch_rendered(
                     await _close_browser()
             else:
                 await _schedule_idle_close()
+            import gc
+            gc.collect()
 
 
 async def _try_open_mobile_menu(page) -> None:

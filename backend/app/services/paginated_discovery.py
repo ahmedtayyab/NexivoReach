@@ -10,6 +10,7 @@ runs out. The next hunt resumes at the next page.
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import logging
 import re
@@ -82,6 +83,31 @@ def _legal_name_key(name: str) -> str:
 
 def _norm_email(value: str) -> str:
     return (value or "").strip().lower()
+
+
+class _LeadRef:
+    """Just enough of a saved lead to detect a duplicate without loading the row."""
+
+    def __init__(self, id: str, website: str, email: str, company_name: str, contacts: Any) -> None:
+        self.id = id
+        self.website = website or ""
+        self.email = email or ""
+        self.company_name = company_name or ""
+        self.contacts = contacts or []
+
+
+def _remember_lead(index: Dict[str, Dict[str, str]], pr: Any) -> None:
+    pid = getattr(pr, "id", None) or ""
+    if not pid:
+        return
+    dom = _domain(getattr(pr, "website", "") or "")
+    if dom:
+        index["domain"].setdefault(dom, pid)
+    for em in _prospect_emails(pr):
+        index["email"].setdefault(em, pid)
+    name_key = _legal_name_key(getattr(pr, "company_name", "") or "")
+    if name_key:
+        index["name"].setdefault(name_key, pid)
 
 
 def _prospect_emails(pr: Any) -> set[str]:
@@ -518,6 +544,9 @@ async def run_paginated_discovery(
             budget.enrich_concurrency = 3
     except Exception:
         pass
+    # This hunt runs inside the web process. One site at a time still opens
+    # every result; it just does not hold two sites and a browser at once.
+    budget.enrich_concurrency = 1
     start = time.time()
     stats = HuntStats()
     web = WebSearchTool()
@@ -658,6 +687,23 @@ async def run_paginated_discovery(
             reason_holder.append("max_enrichments")
             return True
         return False
+
+    lead_index: Dict[str, Dict[str, str]] = {"domain": {}, "email": {}, "name": {}}
+    with _db() as session:
+        rows = session.exec(
+            select(
+                ProspectRecord.id,
+                ProspectRecord.website,
+                ProspectRecord.email,
+                ProspectRecord.company_name,
+                ProspectRecord.contacts,
+            ).where(ProspectRecord.business_id == business_id)
+        ).all()
+        for row in rows:
+            _remember_lead(
+                lead_index,
+                _LeadRef(row[0] or "", row[1] or "", row[2] or "", row[3] or "", row[4]),
+            )
 
     enrich_sem = asyncio.Semaphore(budget.enrich_concurrency)
 
@@ -873,27 +919,15 @@ async def run_paginated_discovery(
                         f"Skipped {company_name} — {email} was already emailed in Google Sheets",
                     )
                     return {"prospect": None, "id": None, "skippedSheet": True}
-                prospects_here = list(
-                    session.exec(
-                        select(ProspectRecord).where(ProspectRecord.business_id == business_id)
-                    ).all()
-                )
+                existing_id = ""
                 if domain:
-                    for pr in prospects_here:
-                        if _domain(pr.website) == domain:
-                            existing = pr
-                            break
-                if not existing and email_key and "@" in email_key:
-                    for pr in prospects_here:
-                        if email_key in _prospect_emails(pr):
-                            existing = pr
-                            break
-                if not existing and company_name:
-                    name_key = _legal_name_key(company_name)
-                    for pr in prospects_here:
-                        if _legal_name_key(pr.company_name) == name_key:
-                            existing = pr
-                            break
+                    existing_id = lead_index["domain"].get(domain) or ""
+                if not existing_id and email_key and "@" in email_key:
+                    existing_id = lead_index["email"].get(email_key) or ""
+                if not existing_id and company_name:
+                    existing_id = lead_index["name"].get(_legal_name_key(company_name)) or ""
+                if existing_id:
+                    existing = session.get(ProspectRecord, existing_id)
 
                 timeline = [
                     {"time": time.strftime("%H:%M"), "action": f"Discovered via Google ({search_intent})"},
@@ -939,6 +973,7 @@ async def run_paginated_discovery(
                     mem.prospect_id = existing.id
                     session.add(mem)
                     session.commit()
+                    _remember_lead(lead_index, existing)
                     stats.already_known_skips += 1
                     _bump_funnel(stats, search_intent, "duplicates")
                     _note(stats, f"Duplicate {company_name} — already a lead")
@@ -952,24 +987,25 @@ async def run_paginated_discovery(
                     }
 
                 # Email already on another lead → do not create a second row
-                if email_key and "@" in email_key:
-                    for pr in prospects_here:
-                        if email_key in _prospect_emails(pr):
-                            mem.status = "saved"
-                            mem.prospect_id = pr.id
-                            session.add(mem)
-                            session.commit()
-                            stats.already_known_skips += 1
-                            _bump_funnel(stats, search_intent, "duplicates")
-                            _note(stats, f"Duplicate {company_name} — already a lead")
-                            return {
-                                "prospect": None,
-                                "id": pr.id,
-                                "merged": True,
-                                "changed": False,
-                                "duplicate": True,
-                                "duplicateReason": "email",
-                            }
+                other_id = lead_index["email"].get(email_key) if email_key and "@" in email_key else ""
+                if other_id:
+                    pr = session.get(ProspectRecord, other_id)
+                    if pr:
+                        mem.status = "saved"
+                        mem.prospect_id = pr.id
+                        session.add(mem)
+                        session.commit()
+                        stats.already_known_skips += 1
+                        _bump_funnel(stats, search_intent, "duplicates")
+                        _note(stats, f"Duplicate {company_name} — already a lead")
+                        return {
+                            "prospect": None,
+                            "id": pr.id,
+                            "merged": True,
+                            "changed": False,
+                            "duplicate": True,
+                            "duplicateReason": "email",
+                        }
 
                 prospect_id = f"prospect-{uuid4().hex[:10]}"
                 pr = ProspectRecord(
@@ -1006,6 +1042,7 @@ async def run_paginated_discovery(
                 mem.prospect_id = prospect_id
                 session.add(mem)
                 session.commit()
+                _remember_lead(lead_index, pr)
                 stats.leads_saved += 1
                 _bump_funnel(stats, search_intent, "leads_created")
                 _note(stats, f"Saved lead: {company_name} ({domain})")
@@ -1447,6 +1484,7 @@ async def run_paginated_discovery(
                 for job in enrich_jobs
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
+            gc.collect()
             for res in results:
                 if isinstance(res, Exception) or not res:
                     continue

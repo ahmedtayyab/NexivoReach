@@ -58,6 +58,6 @@ services:
       - key: CONTACT_BROWSER_MAX_CONCURRENT
         value: "1"
       - key: HUNT_ENRICH_CONCURRENCY
-        value: "2"
+        value: "1"
       - key: GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON
         sync: false

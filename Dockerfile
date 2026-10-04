@@ -17,10 +17,11 @@ COPY backend/ ./
 COPY --from=frontend-build /app/frontend/dist ./static
 ENV PYTHONPATH=/app
 ENV STATIC_DIR=/app/static
+ENV MALLOC_ARENA_MAX=2
 ENV CONTACT_BROWSER_ENABLED=true
 ENV CONTACT_BROWSER_EPHEMERAL=true
 ENV CONTACT_BROWSER_MAX_CONCURRENT=1
-ENV HUNT_ENRICH_CONCURRENCY=2
+ENV HUNT_ENRICH_CONCURRENCY=1
 RUN test -f /app/static/index.html
 EXPOSE 10000
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
