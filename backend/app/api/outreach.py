@@ -138,7 +138,12 @@ def _sync_leads_to_sheets(session: Session, business_id: str, rows: List[Prospec
         if dirty:
             session.commit()
         sheets_mod.sync_leads(
-            seller, payload, spreadsheet_id=sheet_id, session=session, user=owner
+            seller,
+            payload,
+            spreadsheet_id=sheet_id,
+            session=session,
+            user=owner,
+            append_existing=True,
         )
     except Exception as exc:
         log.warning("Sheets sync after outreach failed: %s", exc)

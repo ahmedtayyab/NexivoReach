@@ -306,6 +306,6 @@ def _maybe_sync_prospect(record: ProspectRecord):
                 "contact_again": bool(getattr(record, "contact_again", True)),
                 "reply_summary": getattr(record, "reply_summary", None) or "",
                 "seller_name": seller,
-            }], spreadsheet_id=sheet_id, session=session, user=owner)
+            }], spreadsheet_id=sheet_id, session=session, user=owner, append_existing=True)
     except Exception as exc:
         log.warning("Sheets prospect sync failed: %s", exc)

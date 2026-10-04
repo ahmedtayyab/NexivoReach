@@ -328,6 +328,92 @@ def is_sent_sheet_status(status: str) -> bool:
     return (status or "").strip().lower() in SENT_LEAD_STATUSES
 
 
+def known_sheet_leads(
+    spreadsheet_id: str = "",
+    *,
+    session: Session | None = None,
+    user: User | None = None,
+) -> dict[str, Any] | None:
+    """Every company already listed on a Leads tab. None when Sheets cannot be read."""
+    client = _get_client(session, user)
+    if client is None:
+        return None
+    sheet_id = resolve_spreadsheet_id(spreadsheet_id)
+    if not sheet_id:
+        return None
+    sh = client.open_by_key(sheet_id)
+    domains: set[str] = set()
+    names: set[str] = set()
+    emails: set[str] = set()
+    count = 0
+    for ws in sh.worksheets():
+        title = (ws.title or "").strip()
+        if not title.endswith(" - Leads"):
+            continue
+        rows = ws.get_all_values()
+        if not rows:
+            continue
+        header = [str(cell or "").strip().lower() for cell in rows[0]]
+        name_i = header.index("lead name") if "lead name" in header else 1
+        web_i = header.index("website") if "website" in header else 2
+        email_i = header.index("email") if "email" in header else 3
+        for row in rows[1:]:
+            name = (row[name_i] if len(row) > name_i else "").strip()
+            if not name:
+                continue
+            count += 1
+            names.add(name.lower())
+            domain = _registrable_domain(row[web_i] if len(row) > web_i else "")
+            if domain:
+                domains.add(domain)
+            email = (row[email_i] if len(row) > email_i else "").strip().lower()
+            if "@" in email:
+                emails.add(email)
+    return {"domains": domains, "names": names, "emails": emails, "count": count}
+
+
+_STATUS_RANK = {
+    "to contact": 1,
+    "contacted": 2,
+    "replied": 3,
+    "re-contact": 3,
+    "meeting": 4,
+    "won": 5,
+    "denied": 6,
+    "avoid": 6,
+}
+
+
+def _prefer_sheet_status(previous: str, fresh: str) -> str:
+    if not (fresh or "").strip():
+        return previous
+    if not (previous or "").strip():
+        return fresh
+    old_rank = _STATUS_RANK.get(previous.strip().lower(), 0)
+    new_rank = _STATUS_RANK.get(fresh.strip().lower(), 0)
+    return previous if old_rank >= new_rank else fresh
+
+
+def merge_existing_lead_row(existing: list[str], incoming: list[str]) -> list[str]:
+    """Add new details onto a sheet row without moving a lead backwards."""
+    width = max(len(LEAD_HEADERS), len(existing), len(incoming))
+    old = list(existing) + [""] * (width - len(existing))
+    new = list(incoming) + [""] * (width - len(incoming))
+    merged = []
+    for i in range(width):
+        previous = (old[i] or "").strip()
+        fresh = (new[i] or "").strip()
+        if i == 10:
+            merged.append(_prefer_sheet_status(old[i], new[i]))
+        elif i in (11, 12, 17, 18) and previous:
+            merged.append(old[i])
+        elif i == 19:
+            merged.append(fresh or previous)
+        else:
+            merged.append(fresh or previous)
+    return merged[: len(LEAD_HEADERS)]
+
+
 def sent_lead_emails(
     spreadsheet_id: str = "",
     *,
@@ -749,6 +835,7 @@ def sync_leads(
     *,
     session: Session | None = None,
     user: User | None = None,
+    append_existing: bool = False,
 ) -> dict:
     """
     Upsert leads onto a per-seller tab: '<Seller> - Leads'.
@@ -790,6 +877,7 @@ def sync_leads(
 
     updates: list[tuple[str, list]] = []
     appends: list[list] = []
+    existing_names: list[str] = []
     for p in prospects:
         name = (p.get("company_name") or p.get("companyName") or "").strip()
         website = (p.get("website") or "").strip()
@@ -841,7 +929,11 @@ def sync_leads(
             match = index_by_name.get(name.lower())
         end_col = _col_letter(len(LEAD_HEADERS))
         if match:
-            updates.append((f"A{match}:{end_col}{match}", row_data))
+            if not append_existing:
+                existing_names.append(name)
+                continue
+            current = existing[match - 1] if match - 1 < len(existing) else []
+            updates.append((f"A{match}:{end_col}{match}", merge_existing_lead_row(current, row_data)))
         else:
             appends.append(row_data)
 
@@ -864,7 +956,12 @@ def sync_leads(
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
     written = len(updates) + len(appends)
     log.info("Synced %s leads to %s", written, tab_name)
-    return {"written": written, "url": url, "tab": tab_name}
+    return {
+        "written": written,
+        "url": url,
+        "tab": tab_name,
+        "existingNames": list(dict.fromkeys(existing_names)),
+    }
 
 
 def list_restore_tabs(

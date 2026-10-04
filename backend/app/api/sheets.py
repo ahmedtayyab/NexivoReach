@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -245,8 +245,13 @@ def disconnect_spreadsheet(request: Request, user: AuthUser = Depends(get_curren
 
 
 @router.post("/sync-leads")
-def sync_leads_now(request: Request, user: AuthUser = Depends(get_current_user)):
+def sync_leads_now(
+    request: Request,
+    user: AuthUser = Depends(get_current_user),
+    payload: Dict[str, Any] | None = Body(default=None),
+):
     """Push all company leads to Sheets and re-apply status row colors."""
+    append_existing = bool((payload or {}).get("appendExisting"))
     with Session(engine) as session:
         db_user = _db_user(session, user)
         _require_sheets_oauth(db_user)
@@ -302,7 +307,12 @@ def sync_leads_now(request: Request, user: AuthUser = Depends(get_current_user))
             return {"ok": True, "written": 0, "message": "No leads to sync"}
         try:
             result = sheets_mod.sync_leads(
-                seller, payload, spreadsheet_id=sheet_id, session=session, user=db_user
+                seller,
+                payload,
+                spreadsheet_id=sheet_id,
+                session=session,
+                user=db_user,
+                append_existing=append_existing,
             )
         except Exception as exc:
             log.warning("Manual Sheets lead sync failed: %s", exc)
@@ -314,6 +324,7 @@ def sync_leads_now(request: Request, user: AuthUser = Depends(get_current_user))
             "written": result.get("written") or 0,
             "tab": result.get("tab") or "",
             "url": result.get("url") or "",
+            "existingNames": result.get("existingNames") or [],
         }
 
 

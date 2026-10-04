@@ -63,6 +63,29 @@ def test_duckduckgo_stops_after_the_first_empty_later_page():
     assert should_stop_backup_after_empty(had_results=False, page=1) is False
 
 
+def test_sheet_company_is_skipped_and_new_details_stay_on_that_row():
+    from app.integrations.sheets import merge_existing_lead_row
+    from app.services.paginated_discovery import lead_already_in_sheet
+
+    assert lead_already_in_sheet("gymreapers.com", "Other Co", {"gymreapers.com"}, set())
+    assert lead_already_in_sheet("", "Acme Inc.", set(), {"acme"})
+    assert lead_already_in_sheet("new-wholesale.com", "New Wholesale", {"gymreapers.com"}, {"acme"}) is False
+
+    existing = [""] * 20
+    existing[1] = "Acme"
+    existing[10] = "Contacted"
+    existing[17] = "said no"
+    incoming = [""] * 20
+    incoming[1] = "Acme"
+    incoming[3] = "buyer@acme.com"
+    incoming[10] = "To contact"
+    incoming[19] = "2026-10-04"
+    merged = merge_existing_lead_row(existing, incoming)
+    assert merged[3] == "buyer@acme.com"
+    assert merged[10] == "Contacted"
+    assert merged[17] == "said no"
+
+
 def test_sheet_sent_status_skips_only_emailed_rows():
     from app.integrations.sheets import is_sent_sheet_status
 

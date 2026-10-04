@@ -72,6 +72,17 @@ def _domain(url: str) -> str:
     return host
 
 
+def lead_already_in_sheet(domain: str, company_name: str, domains: set[str], names: set[str]) -> bool:
+    """True when this company is already a row in Google Sheets."""
+    host = (domain or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host and host in domains:
+        return True
+    key = _legal_name_key(company_name)
+    return bool(key) and len(key) >= 4 and key in names
+
+
 def _legal_name_key(name: str) -> str:
     raw = (name or "").lower().replace(",", " ")
     for suffix in (
@@ -1021,7 +1032,7 @@ async def run_paginated_discovery(
                     _bump_funnel(stats, search_intent, "duplicates")
                     _note(
                         stats,
-                        f"Skipped {company_name} — {email} was already emailed in Google Sheets",
+                        f"Skipped {company_name} — {email} is already in Google Sheets",
                     )
                     return {"prospect": None, "id": None, "skippedSheet": True}
                 existing_id = ""
@@ -1157,8 +1168,10 @@ async def run_paginated_discovery(
                 return {"prospect": front, "id": prospect_id, "merged": False, "changed": True, "intent_id": intent_id}
 
     sent_sheet_emails: set[str] = set()
+    sheet_domains: set[str] = set()
+    sheet_names: set[str] = set()
     try:
-        from app.integrations.sheets import is_configured, sent_lead_emails
+        from app.integrations.sheets import is_configured, known_sheet_leads
 
         with _db() as session:
             biz = session.get(Business, business_id)
@@ -1170,17 +1183,22 @@ async def run_paginated_discovery(
                 sheet_id = business_spreadsheet_id(biz)
                 owner = owner_user(session, biz)
             if not sheet_id or not is_configured(owner):
-                _note(stats, "Google Sheets is not connected, so already-sent emails were not checked.")
+                _note(stats, "Google Sheets is not connected, so companies already in the sheet were not skipped.")
             else:
-                loaded = sent_lead_emails(sheet_id, session=session, user=owner)
-                sent_sheet_emails = loaded or set()
-                _note(
-                    stats,
-                    f"Google Sheets has {len(sent_sheet_emails)} emailed addresses. Matching websites will be skipped.",
-                )
+                loaded = known_sheet_leads(sheet_id, session=session, user=owner)
+                if loaded is None:
+                    _note(stats, "Google Sheets could not be read, so companies already in the sheet were not skipped.")
+                else:
+                    sent_sheet_emails = set(loaded.get("emails") or [])
+                    sheet_domains = set(loaded.get("domains") or [])
+                    sheet_names = {_legal_name_key(name) for name in (loaded.get("names") or []) if name}
+                    _note(
+                        stats,
+                        f"Google Sheets already has {int(loaded.get('count') or 0)} companies. This hunt skips them and looks for newer ones.",
+                    )
     except Exception as exc:
-        log.warning("Could not read sent emails from Google Sheets: %s", exc)
-        _note(stats, f"Could not read sent emails from Google Sheets ({exc}).")
+        log.warning("Could not read leads from Google Sheets: %s", exc)
+        _note(stats, f"Could not read leads from Google Sheets ({exc}).")
 
     # ---- Main fair pagination loop ----
     serper_credits_out = False
@@ -1540,6 +1558,32 @@ async def run_paginated_discovery(
                 )
                 if triage.get("verdict") == "reject":
                     _bump_funnel(stats, intent.search_intent, "triage_rejected")
+
+                sheet_name = classified.get("company_name") or ""
+                if lead_already_in_sheet(domain, sheet_name, sheet_domains, sheet_names):
+                    session.add(serp)
+                    stats.already_known_skips += 1
+                    _bump_funnel(stats, intent.search_intent, "already_seen")
+                    _note(
+                        stats,
+                        f"Skipped {sheet_name or domain} — already in Google Sheets",
+                    )
+                    if domain:
+                        _touch_discovered(
+                            session,
+                            business_id=business_id,
+                            domain=domain,
+                            company_name=sheet_name or title,
+                            website=url,
+                            search_intent=intent.search_intent,
+                            status="skipped",
+                            processed=True,
+                        )
+                        if domain not in seen_domains_this_hunt:
+                            _bump_funnel(stats, intent.search_intent, "unique_domains")
+                        seen_domains_this_hunt.add(domain)
+                        stats.unique_domains = len(seen_domains_this_hunt)
+                    continue
 
                 already = False
                 mem = None

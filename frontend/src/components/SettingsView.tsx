@@ -1367,12 +1367,38 @@ function IntegrationsSection({
                   setSyncingLeads(true);
                   setSyncLeadsMsg('');
                   try {
-                    const resp = await apiFetch('/api/sheets/sync-leads', { method: 'POST' });
+                    const resp = await apiFetch('/api/sheets/sync-leads', {
+                      method: 'POST',
+                      body: JSON.stringify({ appendExisting: false }),
+                    });
                     if (!resp.ok) throw new Error(await apiErrorMessage(resp, 'Sync failed'));
                     const data = await resp.json();
+                    const existing = Array.isArray(data.existingNames) ? data.existingNames as string[] : [];
+                    let written = data.written || 0;
+                    let tab = data.tab || '';
+                    if (existing.length) {
+                      const preview = existing.slice(0, 8).join(', ');
+                      const extra = existing.length > 8 ? ` and ${existing.length - 8} more` : '';
+                      const ok = await confirm({
+                        title: 'Some companies are already in the sheet',
+                        body: `${preview}${extra}. Add any missing details onto those rows?`,
+                        confirmLabel: 'Add to those rows',
+                        cancelLabel: 'Leave them',
+                      });
+                      if (ok) {
+                        const again = await apiFetch('/api/sheets/sync-leads', {
+                          method: 'POST',
+                          body: JSON.stringify({ appendExisting: true }),
+                        });
+                        if (!again.ok) throw new Error(await apiErrorMessage(again, 'Sync failed'));
+                        const added = await again.json();
+                        written = added.written || written;
+                        tab = added.tab || tab;
+                      }
+                    }
                     setSyncLeadsMsg(
-                      `Synced ${data.written || 0} lead(s)`
-                      + (data.tab ? ` to “${data.tab}”` : '')
+                      `Synced ${written} lead(s)`
+                      + (tab ? ` to “${tab}”` : '')
                       + '.',
                     );
                   } catch (e) {
