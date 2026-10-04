@@ -846,7 +846,11 @@ export default function App() {
           );
           setPreferLatestHunt(true);
         } else {
-          pushToast('info', 'Hunt finished', 'No new leads this round.');
+          pushToast(
+            'info',
+            'Hunt finished',
+            r.phase || 'No new leads this round.',
+          );
         }
       },
       onError: message => {

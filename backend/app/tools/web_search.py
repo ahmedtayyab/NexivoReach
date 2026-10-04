@@ -486,8 +486,8 @@ class WebSearchTool:
                 hits = self._serper(query, page=page, num=num)
                 if hits:
                     return hits
-            except Exception:
-                pass
+            except Exception as exc:
+                log.warning("Serper search failed page %s: %s", page, exc)
         if page > 1:
             return []
         return self._search_sync(query, page=1)

@@ -39,6 +39,7 @@ export type HuntResult = {
   agentLog?: AgentRunLog | null;
   error?: string | null;
   userPrompt: string;
+  phase?: string;
 };
 
 type HuntListener = {
@@ -206,6 +207,7 @@ async function pollUntilDone(job: ActiveHunt): Promise<void> {
       agentLog: data.agent_log || null,
       error: null,
       userPrompt: job.userPrompt,
+      phase: data.phase || '',
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Discovery failed';

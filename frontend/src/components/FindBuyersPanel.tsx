@@ -336,7 +336,9 @@ export default function FindBuyersPanel({
             ? `Added ${r.foundCount} lead${r.foundCount === 1 ? '' : 's'}${
                 r.skippedExisting ? ` (${r.skippedExisting} already researched)` : ''
               } — open Latest hunt on Leads to review new accounts.${sheetsNote}`
-            : r.skippedExisting
+            : r.phase
+              ? r.phase
+              : r.skippedExisting
               ? `All matches were already researched (${r.skippedExisting}). Use Start over to rediscover them, or try a different hunt.`
               : 'No accounts this round — try more specific hunt lines or another location.',
         );

@@ -420,6 +420,13 @@ async def run_paginated_discovery(
                 query=spec["query"],
             )
             start_page = max(1, int(cursor.next_page or 1))
+            # An empty first page used to mark the line exhausted forever, so the
+            # next click finished in a couple of seconds with zero Google requests.
+            # Page 1 "exhausted" is a miss, not the end of results — search it again.
+            if cursor.status == "exhausted" and start_page <= 1:
+                cursor.status = "active"
+                cursor.updated_at = _now()
+                session.add(cursor)
             initial_status = "exhausted" if cursor.status == "exhausted" else "active"
             row = DiscoverySearchIntent(
                 id=f"intent-{uuid4().hex[:12]}",
@@ -945,8 +952,8 @@ async def run_paginated_discovery(
         except Exception as exc:
             log.warning("Search failed for %s page %s: %s", intent.query, page, exc)
             intent.status = "error"
-            intent.stop_reason = f"search_error:{exc}"
-            stats.stop_reasons[intent.search_intent] = intent.stop_reason
+            intent.stop_reason = "search_error"
+            stats.stop_reasons[intent.search_intent] = "search_error"
             _persist_intent(intent)
             continue
 
@@ -955,6 +962,14 @@ async def run_paginated_discovery(
         stats.raw_results += len(organic)
 
         if not organic:
+            # Page 1 with no hits is usually a provider miss. Do not brick the cursor.
+            if page <= 1:
+                intent.status = "error"
+                intent.stop_reason = "no_results_page_1"
+                stats.stop_reasons[intent.search_intent] = "no_results_page_1"
+                _persist_intent(intent)
+                log.warning("No Google results for %s page 1 — cursor left active", intent.query)
+                continue
             intent.status = "exhausted"
             intent.stop_reason = "no_more_results"
             stats.stop_reasons[intent.search_intent] = "no_more_results"
@@ -1294,15 +1309,30 @@ async def run_paginated_discovery(
     telemetry = _telemetry_payload(stats, intent_rows, "", budget, per_intent_cap)
     telemetry["durationMs"] = duration_ms
     telemetry["complete"] = True
+    reasons = {str(v) for v in (stats.stop_reasons or {}).values() if v}
+    if stats.leads_saved == 0 and stats.google_pages == 0 and reasons <= {"previously_exhausted"} and reasons:
+        done_phase = (
+            "These search lines already reached the end of Google results. "
+            "Start over to search them again from page 1."
+        )
+    elif stats.leads_saved == 0 and stats.google_pages == 0 and (
+        "no_results_page_1" in reasons or "search_error" in reasons
+    ):
+        done_phase = (
+            "Google did not return results for these lines. "
+            "Nothing was marked finished — run the hunt again."
+        )
+    else:
+        done_phase = (
+            f"Done · {stats.leads_saved}/{budget.leads_per_run} leads · "
+            f"{stats.google_pages} Google pages · {stats.emails_found} emails "
+            f"(next run resumes deeper pages)"
+        )
 
     _update_job(
         job_id,
         status="completed",
-        phase=(
-            f"Done · {stats.leads_saved}/{budget.leads_per_run} leads · "
-            f"{stats.google_pages} Google pages · {stats.emails_found} emails "
-            f"(next run resumes deeper pages)"
-        ),
+        phase=done_phase,
         progress=100,
         found_count=stats.leads_saved,
         skipped_existing=stats.already_known_skips,
