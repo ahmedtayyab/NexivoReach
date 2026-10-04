@@ -7,36 +7,16 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 
-DIRECTORY_HOSTS = (
-    "yelp.com", "yellowpages.com", "kompass.com", "thomasnet.com",
-    "indiamart.com", "alibaba.com", "made-in-china.com", "europages.com",
-    "zoominfo.com", "crunchbase.com", "dnb.com", "bloomberg.com",
-    "clutch.co", "sortlist.com", "goodfirms.co", "trustpilot.com",
-)
-MARKETPLACE_HOSTS = (
-    "amazon.com", "amazon.co", "ebay.com", "etsy.com", "walmart.com",
-    "aliexpress.com", "shopify.com",
-)
-JOB_HOSTS = (
-    "indeed.com", "glassdoor.com", "lever.co", "greenhouse.io",
-    "workable.com", "ziprecruiter.com", "linkedin.com",
-)
-NEWS_HOSTS = (
-    "reuters.com", "bloomberg.com", "techcrunch.com", "forbes.com",
+ARTICLE_HOSTS = (
+    "wikipedia.org", "medium.com", "quora.com",
+    "reuters.com", "techcrunch.com", "forbes.com",
     "businessinsider.com", "prnewswire.com", "globenewswire.com",
 )
-SKIP_HOSTS = (
-    "wikipedia.org", "youtube.com", "facebook.com", "instagram.com",
-    "twitter.com", "x.com", "reddit.com", "pinterest.com", "tiktok.com",
-    "medium.com", "quora.com", "google.com", "duckduckgo.com",
+SEARCH_HOSTS = (
+    "google.com", "duckduckgo.com",
 )
-
-JUNK_TITLE = re.compile(
-    r"\b("
-    r"top\s+\d+|best \d+|complete guide|how to|what is|directory|list of|"
-    r"buyers?\s*&\s*importers?|importers?\s*&\s*buyers?|"
-    r"buyers?\s+and\s+importers?|importers?\s+and\s+buyers?"
-    r")\b",
+ARTICLE_TITLE = re.compile(
+    r"\b(top\s+\d+|best\s+\d+|complete guide|how to|what is)\b",
     re.I,
 )
 MFR_RE = re.compile(
@@ -84,20 +64,17 @@ def classify_serp_row(
     if not host and not (row.get("company_name") and row.get("source") == "maps"):
         reject, entity, reason = True, "unknown", "No website or Maps identity"
 
-    elif _endswith_any(host, SKIP_HOSTS):
-        reject, entity, reason = True, "skip_domain", "Social/wiki/search host"
+    elif _endswith_any(host, SEARCH_HOSTS):
+        reject, entity, reason = True, "skip_domain", "Search engine page"
 
-    elif _endswith_any(host, JOB_HOSTS) or "/jobs" in url.lower() or re.search(r"\b(hiring|we're hiring|careers)\b", title, re.I):
-        reject, entity, reason = True, "jobs", "Job listing"
+    elif _endswith_any(host, ARTICLE_HOSTS) or "/wiki" in url.lower():
+        reject, entity, reason = True, "article", "Article or wiki page"
 
-    elif _endswith_any(host, DIRECTORY_HOSTS) or JUNK_TITLE.search(title):
-        reject, entity, reason = True, "directory", "Directory or listicle — not a prospect"
+    elif ARTICLE_TITLE.search(title):
+        reject, entity, reason = True, "article", "Article or listicle title"
 
-    elif _endswith_any(host, MARKETPLACE_HOSTS):
-        reject, entity, reason = True, "marketplace", "Marketplace listing"
-
-    elif _endswith_any(host, NEWS_HOSTS) or re.search(r"/(news|press|article)/", url.lower()):
-        reject, entity, reason = True, "news", "News article — not the company"
+    elif re.search(r"/(news|press|article|wiki)(/|$)", url.lower()):
+        reject, entity, reason = True, "article", "Article URL"
 
     elif hunting_buyers and MFR_RE.search(blob) and not BUYER_RE.search(blob):
         # Tag only — do not drop organic Google companies that look like factories
@@ -106,12 +83,7 @@ def classify_serp_row(
     elif hunting_buyers and MFR_RE.search(blob):
         entity, reason = "manufacturer", "Manufacturer language present"
 
-    path = (urlparse(url).path or "").lower()
-    if "/wiki/" in path and not reject:
-        reject, entity, reason = True, "article", "Wiki URL"
-
-    # Directories, jobs, news, social, and marketplaces are not the business.
-    # A company site from this Google query is still a lead, including its blog or shop pages.
+    # Google already chose this result. Articles and wiki pages are the only skips.
 
     geo_source = (location or "").strip() or blob
     geo_ok = places_mentioned(geo_source, target_places) if target_places else None

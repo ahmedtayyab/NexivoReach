@@ -791,7 +791,7 @@ def test_maps_ma_kept_when_hunting_massachusetts():
     assert row["geo_mentioned"] is True
 
 
-def test_directory_buyers_importers_title_rejected():
+def test_buyers_importers_page_is_kept():
     row = classify_serp_row(
         {
             "company_name": "Martial Arts Belts Buyers & Importers",
@@ -803,8 +803,34 @@ def test_directory_buyers_importers_title_rejected():
         target_places=["Massachusetts"],
         strict_geo=True,
     )
-    assert row["reject"] is True
-    assert row["entity_type"] == "directory"
+    assert row["reject"] is False
+
+
+def test_wiki_and_how_to_articles_are_skipped():
+    from app.agents.serp_classifier import classify_serp_row
+
+    wiki = classify_serp_row(
+        {
+            "company_name": "Duffel bag",
+            "website": "https://en.wikipedia.org/wiki/Duffel_bag",
+            "title": "Duffel bag",
+            "snippet": "A duffel bag is a large bag",
+        },
+        hunting_buyers=True,
+        target_places=["New Jersey"],
+    )
+    assert wiki["reject"] is True
+    guide = classify_serp_row(
+        {
+            "company_name": "How to find sports bag distributors",
+            "website": "https://example.com/guides/bags",
+            "title": "How to find sports bag distributors",
+            "snippet": "A guide",
+        },
+        hunting_buyers=True,
+        target_places=["New Jersey"],
+    )
+    assert guide["reject"] is True
 
 
 def test_multi_product_offer_terms():
