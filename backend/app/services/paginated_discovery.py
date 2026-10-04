@@ -724,13 +724,8 @@ async def run_paginated_discovery(
                 mem.processed = True
                 mem.email = email or mem.email or ""
                 mem.email_status = email_status
-                if not relevant:
-                    mem.status = "irrelevant"
-                    stats.irrelevant += 1
-                    _bump_funnel(stats, search_intent, "irrelevant")
-                    session.add(mem)
-                    session.commit()
-                    return None
+                # The Google query already selected this company website.
+                # Product-word checks are stored on the lead. They do not drop it.
 
                 q = qualify_from_fast_decision(
                     row=row,
@@ -739,16 +734,9 @@ async def run_paginated_discovery(
                     triage=triage,
                     site_text=site_text or f"{title}\n{snippet}",
                 )
-                if not q.get("shouldPersist"):
-                    mem.status = "irrelevant"
-                    stats.irrelevant += 1
-                    if loc_check.get("should_reject"):
-                        pass
-                    else:
-                        _bump_funnel(stats, search_intent, "irrelevant")
-                    session.add(mem)
-                    session.commit()
-                    return None
+                if not relevant or not q.get("shouldPersist"):
+                    _bump_funnel(stats, search_intent, "irrelevant")
+                    q["shouldPersist"] = True
 
                 stats.relevant += 1
 
@@ -1088,24 +1076,7 @@ async def run_paginated_discovery(
                     buyers=profile.buyers,
                 )
                 if triage.get("verdict") == "reject":
-                    session.add(serp)
                     _bump_funnel(stats, intent.search_intent, "triage_rejected")
-                    if domain:
-                        _touch_discovered(
-                            session,
-                            business_id=business_id,
-                            domain=domain,
-                            company_name=classified.get("company_name") or title,
-                            website=url,
-                            search_intent=intent.search_intent,
-                            status="irrelevant",
-                            processed=True,
-                        )
-                        if domain not in seen_domains_this_hunt:
-                            _bump_funnel(stats, intent.search_intent, "unique_domains")
-                        seen_domains_this_hunt.add(domain)
-                        stats.unique_domains = len(seen_domains_this_hunt)
-                    continue
 
                 already = False
                 mem = None

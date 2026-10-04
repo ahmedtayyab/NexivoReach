@@ -107,11 +107,11 @@ def classify_serp_row(
         entity, reason = "manufacturer", "Manufacturer language present"
 
     path = (urlparse(url).path or "").lower()
-    if any(h in path for h in ("/blog", "/wiki", "/guide")) and not reject:
-        reject, entity, reason = True, "article", "Article URL"
+    if "/wiki/" in path and not reject:
+        reject, entity, reason = True, "article", "Wiki URL"
 
     # Directories, jobs, news, social, and marketplaces are not the business.
-    # A company shop page from this Google query is still a lead.
+    # A company site from this Google query is still a lead, including its blog or shop pages.
 
     geo_source = (location or "").strip() or blob
     geo_ok = places_mentioned(geo_source, target_places) if target_places else None

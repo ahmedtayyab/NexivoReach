@@ -584,6 +584,23 @@ def test_keeps_shopify_product_page_as_business():
     assert row["entity_type"] == "company"
 
 
+def test_company_blog_page_is_still_the_business():
+    from app.agents.serp_classifier import classify_serp_row
+
+    row = classify_serp_row(
+        {
+            "company_name": "Gallant Bag",
+            "website": "https://www.gallantbag.com/blog/sports-bags",
+            "title": "Pro Pickleball & Sports Bags",
+            "snippet": "Custom sports bags. Request a sample.",
+            "discovery_query": "sports bags distributors New Jersey",
+        },
+        hunting_buyers=True,
+        target_places=["New Jersey"],
+    )
+    assert row["reject"] is False
+
+
 def test_accepts_lifting_straps_serp():
     from app.agents.serp_classifier import classify_serp_row
 
