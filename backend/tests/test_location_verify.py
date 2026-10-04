@@ -125,7 +125,7 @@ def test_pass_pakistan_hq_with_new_york_office():
     assert v["match"] is True
 
 
-def test_phone_alone_is_uncertain_and_not_saved_for_city_hunt():
+def test_phone_alone_is_uncertain_but_kept():
     v = verify_business_location(
         requested_places=NY,
         site_text="Wholesale fitness accessories. Contact us for catalogs.",
@@ -134,12 +134,12 @@ def test_phone_alone_is_uncertain_and_not_saved_for_city_hunt():
         phones=["+92 300 1234567"],
     )
     assert v["location_verdict"] == "UNCERTAIN"
-    assert v["should_reject"] is True
+    assert v["should_reject"] is False
     assert v["match"] is None
     assert "new york" not in (v["business_location"] or "").lower()
 
 
-def test_united_states_only_does_not_match_new_york():
+def test_united_states_only_is_not_a_new_york_match():
     v = verify_business_location(
         requested_places=NY,
         site_text="National sports bag wholesaler. Address: United States.",
@@ -147,9 +147,20 @@ def test_united_states_only_does_not_match_new_york():
         snippet="Distributor based in the United States",
     )
     assert v["location_verdict"] == "UNCERTAIN"
-    assert v["should_reject"] is True
+    assert v["should_reject"] is False
     assert v["match"] is not True
     assert (v["business_location"] or "").strip().lower() != "new york"
+
+
+def test_manhattan_counts_as_new_york():
+    v = verify_business_location(
+        requested_places=NY,
+        site_text="Showroom at 450 West 33rd Street, Manhattan. Sports bag distributor.",
+        title="Hudson Bag Supply",
+        snippet="Wholesale distributor",
+    )
+    assert v["location_verdict"] == "MATCH"
+    assert v["should_reject"] is False
 
 
 def test_newark_counts_as_new_jersey():

@@ -122,6 +122,14 @@ def should_fetch_intent_page(*, pages_processed_this_run: int, pages_per_run: in
     return int(pages_processed_this_run or 0) < max(1, int(pages_per_run or 1))
 
 
+def should_exhaust_after_gaps(consecutive: int, page: int = 1) -> bool:
+    """Blank or repeated pages only end a line after page 8, three times in a row.
+
+    Google page 10 still has businesses. One empty page 2 must not finish the search.
+    """
+    return int(consecutive or 0) >= 3 and int(page or 1) >= 8
+
+
 def _load_or_create_cursor(
     session: Session,
     *,
@@ -420,10 +428,9 @@ async def run_paginated_discovery(
                 query=spec["query"],
             )
             start_page = max(1, int(cursor.next_page or 1))
-            # An empty first page used to mark the line exhausted forever, so the
-            # next click finished in a couple of seconds with zero Google requests.
-            # Page 1 "exhausted" is a miss, not the end of results — search it again.
-            if cursor.status == "exhausted" and start_page <= 1:
+            # A line marked finished after page 2 never reaches the leads that
+            # are still on Google pages 3–10. Reopen those and keep going.
+            if cursor.status == "exhausted" and start_page <= 3:
                 cursor.status = "active"
                 cursor.updated_at = _now()
                 session.add(cursor)
@@ -473,6 +480,8 @@ async def run_paginated_discovery(
     saved_ids: List[str] = []
     saved_front: List[Dict[str, Any]] = []
     seen_domains_this_hunt: set[str] = set()
+    empty_streaks: Dict[str, int] = {}
+    repeat_streaks: Dict[str, int] = {}
     rr_index = 0
 
     def _budget_hit(reason_holder: List[str]) -> bool:
@@ -962,13 +971,26 @@ async def run_paginated_discovery(
         stats.raw_results += len(organic)
 
         if not organic:
-            # Page 1 with no hits is usually a provider miss. Do not brick the cursor.
-            if page <= 1:
-                intent.status = "error"
-                intent.stop_reason = "no_results_page_1"
-                stats.stop_reasons[intent.search_intent] = "no_results_page_1"
+            streak = empty_streaks.get(intent_id, 0) + 1
+            empty_streaks[intent_id] = streak
+            if page <= 1 or not should_exhaust_after_gaps(streak, page):
+                # Skip this blank page and ask for the next one. Do not finish the line.
+                intent.current_page = page + 1
+                intent.stop_reason = "blank_page"
+                stats.stop_reasons.pop(intent.search_intent, None)
                 _persist_intent(intent)
-                log.warning("No Google results for %s page 1 — cursor left active", intent.query)
+                _save_cursor_page(
+                    business_id=business_id,
+                    query=intent.query,
+                    next_page=intent.current_page,
+                    status="active",
+                )
+                log.warning(
+                    "Blank Google page %s for %s (%s in a row) — continuing",
+                    page,
+                    intent.query,
+                    streak,
+                )
                 continue
             intent.status = "exhausted"
             intent.stop_reason = "no_more_results"
@@ -981,6 +1003,8 @@ async def run_paginated_discovery(
                 status="exhausted",
             )
             continue
+
+        empty_streaks[intent_id] = 0
 
         page_domains: List[str] = []
         enrich_jobs: List[Dict[str, Any]] = []
@@ -1149,17 +1173,25 @@ async def run_paginated_discovery(
             intent.pages_processed += 1
             fp = _fingerprint(page_domains)
             if fp and fp == intent.last_page_fingerprint:
-                intent.status = "exhausted"
-                intent.stop_reason = "repeated_results"
-                stats.stop_reasons[intent.search_intent] = "repeated_results"
-                _save_cursor_page(
-                    business_id=business_id,
-                    query=intent.query,
-                    next_page=page,
-                    status="exhausted",
-                    session=session,
-                )
+                repeats = repeat_streaks.get(intent_id, 0) + 1
+                repeat_streaks[intent_id] = repeats
+                if should_exhaust_after_gaps(repeats, page):
+                    intent.status = "exhausted"
+                    intent.stop_reason = "repeated_results"
+                    stats.stop_reasons[intent.search_intent] = "repeated_results"
+                    _save_cursor_page(
+                        business_id=business_id,
+                        query=intent.query,
+                        next_page=page,
+                        status="exhausted",
+                        session=session,
+                    )
+                else:
+                    # Same results once is not the end of Google. Request the next page.
+                    intent.current_page = page + 1
+                    pending_cursor = intent.current_page
             else:
+                repeat_streaks[intent_id] = 0
                 intent.last_page_fingerprint = fp
                 intent.current_page = page + 1
                 intent.new_domains += len(enrich_jobs)

@@ -422,8 +422,9 @@ def verify_business_location(
         result["location_verdict"] = "UNCERTAIN"
         result["reject_reason"] = reason
         result["confidence"] = "low"
-        # City hunts do not save leads without a real city/office match.
-        result["should_reject"] = bool(city_hunt)
+        # No proof of the city is not the same as the wrong city.
+        # Keep the business and do not copy the hunt place onto it.
+        result["should_reject"] = False
         return result
 
     # --- Match decision ---
@@ -454,6 +455,7 @@ def verify_business_location(
 
     target_countries = _target_countries(places)
     foreign_phones = [c for c in dial_countries if c.lower() not in target_countries]
+    local_phones = [c for c in dial_countries if c.lower() in target_countries]
 
     if foreign_phones and not local_phones and not business_loc:
         result["business_location"] = foreign_phones[0][:80]

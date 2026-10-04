@@ -78,6 +78,14 @@ def test_page_budget_is_per_run_not_absolute_page_number():
     assert should_fetch_intent_page(pages_processed_this_run=4, pages_per_run=5) is True
 
 
+def test_one_blank_page_does_not_finish_the_search():
+    from app.services.paginated_discovery import should_exhaust_after_gaps
+
+    assert should_exhaust_after_gaps(1, 2) is False
+    assert should_exhaust_after_gaps(3, 4) is False
+    assert should_exhaust_after_gaps(3, 8) is True
+
+
 def test_leads_split_evenly_across_hunt_lines():
     from app.services.app_settings import leads_per_intent_share
 
