@@ -2590,6 +2590,16 @@ input:focus, textarea:focus, select:focus {
   margin: 0;
   font-size: 1.05rem;
 }
+.hunt-log__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.hunt-log__actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
 .hunt-log__summary {
   margin: 0;
   font-size: 13px;

@@ -325,12 +325,39 @@ def _note(stats: HuntStats, message: str) -> None:
     log.info("HUNT %s", message)
 
 
+def _halt_searches_on_error(
+    stats: HuntStats,
+    intent_rows: List[Any],
+    business_id: str,
+    detail: str,
+) -> None:
+    """A failed Google call is not an empty page. Keep every cursor where it is."""
+    _note(stats, detail)
+    _note(
+        stats,
+        "Stopped the hunt. Google rejected the search, so these pages were not marked finished. The next run retries the same page.",
+    )
+    for row in intent_rows:
+        if row.status != "active":
+            continue
+        row.status = "error"
+        row.stop_reason = "search_error"
+        stats.stop_reasons[row.search_intent] = "search_error"
+        _persist_intent(row)
+        _save_cursor_page(
+            business_id=business_id,
+            query=row.query,
+            next_page=int(row.current_page or 1),
+            status="active",
+        )
+
+
 _STOP_TEXT = {
     "leads_per_run": "Reached the new-lead limit for this run.",
     "pages_per_run": "Used this run's Google page budget. The next hunt continues on the following page.",
     "no_more_results": "Google returned empty pages, so this search is finished.",
     "repeated_results": "Google kept returning the same page, so this search is finished.",
-    "search_error": "The search request failed.",
+    "search_error": "Google rejected the search. The same page will be tried again.",
     "previously_exhausted": "Already finished on an earlier hunt. Start over to search it from page 1.",
     "blank_page": "This page was empty. The hunt continued.",
     "max_runtime": "Stopped because the hunt hit the time limit.",
@@ -1020,12 +1047,13 @@ async def run_paginated_discovery(
             )
         except Exception as exc:
             log.warning("Search failed for %s page %s: %s", intent.query, page, exc)
-            _note(stats, f"Search crashed for “{intent.query}” page {page}: {exc}")
-            intent.status = "error"
-            intent.stop_reason = "search_error"
-            stats.stop_reasons[intent.search_intent] = "search_error"
-            _persist_intent(intent)
-            continue
+            _halt_searches_on_error(
+                stats,
+                intent_rows,
+                business_id,
+                f"Search crashed for “{intent.query}” page {page}: {exc}",
+            )
+            break
 
         organic = list(report.get("hits") or [])
         provider = str(report.get("provider") or "none")
@@ -1037,11 +1065,14 @@ async def run_paginated_discovery(
             "duckduckgo": "DuckDuckGo, not Google",
         }.get(provider, "No search provider")
         _note(stats, f"{provider_label} — page {page}: {intent.query}")
+        stats.google_requests += 1
         if search_error:
-            _note(stats, search_error)
+            # A failed request is not an empty Google page. Leave the cursor
+            # on this page and stop, instead of walking later pages.
+            _halt_searches_on_error(stats, intent_rows, business_id, search_error)
+            break
         _note(stats, f"Page {page} returned {len(organic)} results.")
 
-        stats.google_requests += 1
         stats.google_pages += 1
         stats.raw_results += len(organic)
         _bump_funnel(stats, intent.search_intent, "serp_results", len(organic))

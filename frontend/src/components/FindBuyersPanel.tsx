@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product } from '../types';
-import { Check, FileSpreadsheet, Loader2, RotateCcw, Search, X } from 'lucide-react';
+import { Check, Copy, FileSpreadsheet, Loader2, RotateCcw, Search, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { useConfirm } from './ConfirmDialog';
 import {
@@ -238,6 +238,7 @@ export default function FindBuyersPanel({
   const [huntLog, setHuntLog] = useState<string[]>([]);
   const [stopSummary, setStopSummary] = useState('');
   const [logOpen, setLogOpen] = useState(false);
+  const [logCopied, setLogCopied] = useState(false);
   const [sheetsOauthReady, setSheetsOauthReady] = useState(false);
   const [sheetsWorkbookLinked, setSheetsWorkbookLinked] = useState(false);
   const confirm = useConfirm();
@@ -961,9 +962,29 @@ export default function FindBuyersPanel({
           >
             <div className="hunt-log__head">
               <h2 id="hunt-log-title">Hunt log</h2>
-              <button type="button" className="btn btn-secondary" onClick={() => setLogOpen(false)}>
-                Close
-              </button>
+              <div className="hunt-log__actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={huntLog.length === 0 && !stopSummary}
+                  onClick={async () => {
+                    const text = [stopSummary, ...huntLog].filter(Boolean).join('\n');
+                    try {
+                      await navigator.clipboard.writeText(text);
+                      setLogCopied(true);
+                      window.setTimeout(() => setLogCopied(false), 2000);
+                    } catch {
+                      setLogCopied(false);
+                    }
+                  }}
+                >
+                  <Copy size={14} />
+                  {logCopied ? 'Copied' : 'Copy log'}
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={() => setLogOpen(false)}>
+                  Close
+                </button>
+              </div>
             </div>
             {stopSummary ? <p className="hunt-log__summary">{stopSummary}</p> : null}
             <ol className="hunt-log__lines">

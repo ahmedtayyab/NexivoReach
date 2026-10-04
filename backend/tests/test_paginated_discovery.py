@@ -10,6 +10,14 @@ from app.services.paginated_discovery import (
 )
 
 
+def test_serper_failure_includes_response_message():
+    from app.tools.web_search import serper_failure_message
+
+    msg = serper_failure_message(400, '{"message":"Not enough credits","statusCode":400}')
+    assert "Not enough credits" in msg
+    assert msg.startswith("Serper 400:")
+
+
 def test_serper_includes_sponsored_businesses():
     from app.tools.web_search import serper_hits
 

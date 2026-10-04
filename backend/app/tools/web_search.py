@@ -1,6 +1,7 @@
 import asyncio
 import gzip
 import html as html_lib
+import json
 import logging
 import re
 import time
@@ -287,6 +288,23 @@ def serper_hits(payload: Dict[str, Any]) -> List[Dict[str, str]]:
     return rows
 
 
+def serper_failure_message(status_code: int, body: str) -> str:
+    """Serper's own message, not only the HTTP status line."""
+    detail = ""
+    raw = body or ""
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        detail = str(payload.get("message") or payload)[:400]
+    elif payload is not None:
+        detail = str(payload)[:400]
+    else:
+        detail = raw[:400]
+    return f"Serper {status_code}: {detail}".strip()
+
+
 class WebSearchTool:
     def __init__(self) -> None:
         # Set by scrape_shop_catalog so callers can tell "site unreachable" from "no products".
@@ -558,7 +576,8 @@ class WebSearchTool:
                 headers={"X-API-KEY": settings.SERPER_API_KEY, "Content-Type": "application/json"},
                 json={"q": query, "num": max(1, min(num, 100)), "page": max(1, page)},
             )
-            res.raise_for_status()
+            if res.status_code >= 400:
+                raise RuntimeError(serper_failure_message(res.status_code, res.text))
             return serper_hits(res.json())
 
     def _brave(self, query: str) -> List[Dict[str, str]]:
