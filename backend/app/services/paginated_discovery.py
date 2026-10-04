@@ -1,10 +1,10 @@
 """
 Persistent paginated Google research for Find Buyers.
 
-Each hunt line is an independent search intent with a page cursor that
-persists across runs. A fair scheduler walks pages across intents, saves
-leads incrementally, and stops when the per-run lead cap is reached
-(split evenly across hunt lines). The next hunt resumes at the next page.
+Each hunt row is an independent Google search with a page cursor that
+persists across runs. A fair scheduler walks pages across those searches
+and saves leads until the hunt-wide lead cap, the page budget, or Google
+runs out. The next hunt resumes at the next page.
 """
 
 from __future__ import annotations
@@ -46,7 +46,6 @@ from app.models.schemas import (
 from app.services.app_settings import (
     hunt_leads_per_run,
     hunt_max_pages_per_intent,
-    leads_per_intent_share,
 )
 from app.services.enrichment import enrich_website
 from app.tools.web_search import WebSearchTool
@@ -272,6 +271,29 @@ class HuntBudget:
     )
 
 
+FUNNEL_KEYS = (
+    "serp_results",
+    "unique_domains",
+    "junk_filtered",
+    "triage_rejected",
+    "already_seen",
+    "queued",
+    "fetch_ok",
+    "fetch_failed",
+    "irrelevant",
+    "location_match",
+    "location_uncertain",
+    "location_wrong",
+    "location_rejected",
+    "duplicates",
+    "leads_created",
+)
+
+
+def _empty_funnel() -> Dict[str, int]:
+    return {key: 0 for key in FUNNEL_KEYS}
+
+
 @dataclass
 class HuntStats:
     search_intents: int = 0
@@ -289,6 +311,36 @@ class HuntStats:
     already_known_skips: int = 0
     enrichments: int = 0
     stop_reasons: Dict[str, str] = field(default_factory=dict)
+    funnel: Dict[str, int] = field(default_factory=_empty_funnel)
+    funnel_by_intent: Dict[str, Dict[str, int]] = field(default_factory=dict)
+
+
+def _bump_funnel(stats: HuntStats, search_intent: str, key: str, n: int = 1) -> None:
+    stats.funnel[key] = int(stats.funnel.get(key) or 0) + n
+    bucket = stats.funnel_by_intent.setdefault(search_intent or "", _empty_funnel())
+    bucket[key] = int(bucket.get(key) or 0) + n
+
+
+def funnel_report(stats: HuntStats) -> str:
+    """One block of counts from Google results down to new leads."""
+    f = stats.funnel or {}
+    return "\n".join([
+        f"Google results: {f.get('serp_results', 0)}",
+        f"Unique domains: {f.get('unique_domains', 0)}",
+        f"Filtered directories/marketplaces/news: {f.get('junk_filtered', 0)}",
+        f"Rejected before opening (unrelated): {f.get('triage_rejected', 0)}",
+        f"Already seen: {f.get('already_seen', 0)}",
+        f"Queued for inspection: {f.get('queued', 0)}",
+        f"Websites opened: {f.get('fetch_ok', 0)}",
+        f"Website fetch failures: {f.get('fetch_failed', 0)}",
+        f"Rejected as irrelevant: {f.get('irrelevant', 0)}",
+        f"Location match: {f.get('location_match', 0)}",
+        f"Uncertain location: {f.get('location_uncertain', 0)}",
+        f"Wrong location: {f.get('location_wrong', 0)}",
+        f"Rejected for location: {f.get('location_rejected', 0)}",
+        f"Existing leads: {f.get('duplicates', 0)}",
+        f"New leads created: {f.get('leads_created', 0)}",
+    ])
 
 
 def _phase_from_stats(
@@ -401,7 +453,6 @@ async def run_paginated_discovery(
 
     intent_specs = _build_intents_from_prompt(user_prompt, place)
     stats.search_intents = len(intent_specs)
-    per_intent_cap = leads_per_intent_share(budget.leads_per_run, len(intent_specs) or 1)
     intent_leads_this_run: Dict[str, int] = {}
 
     if not intent_specs:
@@ -465,14 +516,12 @@ async def run_paginated_discovery(
     _update_job(
         job_id,
         phase=(
-            f"Cap {budget.leads_per_run} leads this run "
-            f"(~{per_intent_cap}/line across {len(intent_specs)} searches) · "
+            f"Cap {budget.leads_per_run} new leads this run across all searches · "
             f"resuming saved Google pages"
         ),
         progress=6,
         telemetry={
             "leadsPerRun": budget.leads_per_run,
-            "perIntentCap": per_intent_cap,
             "searchIntents": len(intent_specs),
         },
     )
@@ -525,8 +574,6 @@ async def run_paginated_discovery(
         async with enrich_sem:
             if stats.leads_saved >= budget.leads_per_run:
                 return None
-            if intent_id and intent_leads_this_run.get(intent_id, 0) >= per_intent_cap:
-                return None
             if stats.enrichments >= budget.max_enrichments:
                 return None
             stats.enrichments += 1
@@ -549,6 +596,12 @@ async def run_paginated_discovery(
                 )
             except Exception:
                 found = {"email": "", "phone": "", "contacts": [], "site_text": "", "sources": []}
+                _bump_funnel(stats, search_intent, "fetch_failed")
+            else:
+                if (found.get("site_text") or "").strip():
+                    _bump_funnel(stats, search_intent, "fetch_ok")
+                else:
+                    _bump_funnel(stats, search_intent, "fetch_failed")
             stats.websites_inspected += 1
             site_text = (found.get("site_text") or "")[:8000]
             phone = found.get("phone") or ""
@@ -566,6 +619,15 @@ async def run_paginated_discovery(
                 phones=[phone] if phone else [],
                 website=website,
             )
+            verdict = str(loc_check.get("location_verdict") or "UNCERTAIN")
+            if verdict == "MATCH":
+                _bump_funnel(stats, search_intent, "location_match")
+            elif verdict == "WRONG_LOCATION":
+                _bump_funnel(stats, search_intent, "location_wrong")
+            else:
+                _bump_funnel(stats, search_intent, "location_uncertain")
+            if loc_check.get("should_reject"):
+                _bump_funnel(stats, search_intent, "location_rejected")
 
             # Hunter after the page is read — location is recorded, not a save gate.
             email = ""
@@ -665,6 +727,7 @@ async def run_paginated_discovery(
                 if not relevant:
                     mem.status = "irrelevant"
                     stats.irrelevant += 1
+                    _bump_funnel(stats, search_intent, "irrelevant")
                     session.add(mem)
                     session.commit()
                     return None
@@ -679,6 +742,10 @@ async def run_paginated_discovery(
                 if not q.get("shouldPersist"):
                     mem.status = "irrelevant"
                     stats.irrelevant += 1
+                    if loc_check.get("should_reject"):
+                        pass
+                    else:
+                        _bump_funnel(stats, search_intent, "irrelevant")
                     session.add(mem)
                     session.commit()
                     return None
@@ -767,6 +834,7 @@ async def run_paginated_discovery(
                     session.add(mem)
                     session.commit()
                     stats.already_known_skips += 1
+                    _bump_funnel(stats, search_intent, "duplicates")
                     return {
                         "prospect": None,
                         "id": existing.id,
@@ -785,6 +853,7 @@ async def run_paginated_discovery(
                             session.add(mem)
                             session.commit()
                             stats.already_known_skips += 1
+                            _bump_funnel(stats, search_intent, "duplicates")
                             return {
                                 "prospect": None,
                                 "id": pr.id,
@@ -830,6 +899,7 @@ async def run_paginated_discovery(
                 session.add(mem)
                 session.commit()
                 stats.leads_saved += 1
+                _bump_funnel(stats, search_intent, "leads_created")
                 if intent_id:
                     intent_leads_this_run[intent_id] = intent_leads_this_run.get(intent_id, 0) + 1
                 front = prospect_to_frontend(pr)
@@ -850,28 +920,8 @@ async def run_paginated_discovery(
         if not active:
             break
 
-        # Prefer intents still under their per-line share
-        under_quota = [
-            r for r in active
-            if intent_leads_this_run.get(r.id or "", 0) < per_intent_cap
-        ]
-        if not under_quota:
-            # All active intents hit their share — stop run (pages resume next time)
-            for row in active:
-                row.status = "quota"
-                row.stop_reason = "per_intent_lead_cap"
-                stats.stop_reasons[row.search_intent] = "per_intent_lead_cap"
-                _persist_intent(row)
-                _save_cursor_page(
-                    business_id=business_id,
-                    query=row.query,
-                    next_page=row.current_page,
-                    status="active",
-                )
-            break
-
-        # Fair round-robin among intents still needing leads
-        intent = under_quota[rr_index % len(under_quota)]
+        # Round-robin across searches. The 100-lead cap is hunt-wide, not per search.
+        intent = active[rr_index % len(active)]
         rr_index += 1
         intent_id = intent.id or ""
 
@@ -901,7 +951,7 @@ async def run_paginated_discovery(
             found_count=stats.leads_saved,
             skipped_existing=stats.already_known_skips,
             result_prospect_ids=saved_ids[-200:],
-            telemetry=_telemetry_payload(stats, intent_rows, current_q, budget, per_intent_cap),
+            telemetry=_telemetry_payload(stats, intent_rows, current_q, budget),
         )
 
         try:
@@ -921,6 +971,7 @@ async def run_paginated_discovery(
         stats.google_requests += 1
         stats.google_pages += 1
         stats.raw_results += len(organic)
+        _bump_funnel(stats, intent.search_intent, "serp_results", len(organic))
 
         if not organic:
             streak = empty_streaks.get(intent_id, 0) + 1
@@ -1006,6 +1057,7 @@ async def run_paginated_discovery(
                 )
                 if classified.get("reject"):
                     session.add(serp)
+                    _bump_funnel(stats, intent.search_intent, "junk_filtered")
                     # Record as seen/irrelevant junk without enrich
                     if domain:
                         _touch_discovered(
@@ -1018,6 +1070,8 @@ async def run_paginated_discovery(
                             status="irrelevant",
                             processed=True,
                         )
+                        if domain not in seen_domains_this_hunt:
+                            _bump_funnel(stats, intent.search_intent, "unique_domains")
                         seen_domains_this_hunt.add(domain)
                         stats.unique_domains = len(seen_domains_this_hunt)
                     continue
@@ -1035,6 +1089,7 @@ async def run_paginated_discovery(
                 )
                 if triage.get("verdict") == "reject":
                     session.add(serp)
+                    _bump_funnel(stats, intent.search_intent, "triage_rejected")
                     if domain:
                         _touch_discovered(
                             session,
@@ -1046,6 +1101,8 @@ async def run_paginated_discovery(
                             status="irrelevant",
                             processed=True,
                         )
+                        if domain not in seen_domains_this_hunt:
+                            _bump_funnel(stats, intent.search_intent, "unique_domains")
                         seen_domains_this_hunt.add(domain)
                         stats.unique_domains = len(seen_domains_this_hunt)
                     continue
@@ -1064,6 +1121,7 @@ async def run_paginated_discovery(
                     serp.already_known = True
                     stats.previously_known += 1
                     stats.already_known_skips += 1
+                    _bump_funnel(stats, intent.search_intent, "already_seen")
                     # Still merge search intent memory; do NOT stop pagination
                     intents = list(mem.matched_search_intents or [])
                     if intent.search_intent and intent.search_intent not in intents:
@@ -1097,6 +1155,8 @@ async def run_paginated_discovery(
 
                 session.add(serp)
                 if domain:
+                    if domain not in seen_domains_this_hunt:
+                        _bump_funnel(stats, intent.search_intent, "unique_domains")
                     seen_domains_this_hunt.add(domain)
                     stats.unique_domains = len(seen_domains_this_hunt)
 
@@ -1106,8 +1166,7 @@ async def run_paginated_discovery(
                     continue
                 if stats.leads_saved >= budget.leads_per_run:
                     continue
-                if intent_leads_this_run.get(intent.id or "", 0) >= per_intent_cap:
-                    continue
+                _bump_funnel(stats, intent.search_intent, "queued")
                 enrich_jobs.append({
                     "domain": domain,
                     "website": url,
@@ -1188,13 +1247,6 @@ async def run_paginated_discovery(
                         session.add(it)
                         session.commit()
 
-            # Stop this intent for the run once its share is filled (resume later pages next hunt)
-            if intent_leads_this_run.get(intent_id, 0) >= per_intent_cap and intent.status == "active":
-                intent.status = "quota"
-                intent.stop_reason = "per_intent_lead_cap"
-                stats.stop_reasons[intent.search_intent] = "per_intent_lead_cap"
-                _persist_intent(intent)
-
             if stats.leads_saved >= budget.leads_per_run:
                 for row in intent_rows:
                     if row.status == "active":
@@ -1227,7 +1279,7 @@ async def run_paginated_discovery(
                 found_count=stats.leads_saved,
                 skipped_existing=stats.already_known_skips,
                 result_prospect_ids=saved_ids[-200:],
-                telemetry=_telemetry_payload(stats, intent_rows, current_q, budget, per_intent_cap),
+                telemetry=_telemetry_payload(stats, intent_rows, current_q, budget),
             )
 
         if pending_cursor is not None:
@@ -1259,13 +1311,13 @@ async def run_paginated_discovery(
         "step": 1,
         "observation": (
             f"HUNT COMPLETE — leads={stats.leads_saved}/{budget.leads_per_run} "
-            f"(~{per_intent_cap}/line) intents={stats.search_intents} pages={stats.google_pages} "
+            f"intents={stats.search_intents} pages={stats.google_pages} "
             f"raw={stats.raw_results} unique={stats.unique_domains} known={stats.previously_known} "
             f"new={stats.new_domains} inspected={stats.websites_inspected} "
-            f"emails={stats.emails_found}"
+            f"emails={stats.emails_found}\n{funnel_report(stats)}"
         ),
         "decision": (
-            "Per-run lead cap split across hunt lines; Google page cursors saved for the next hunt."
+            "Hunt-wide lead cap; Google page cursors saved for the next hunt."
         ),
         "toolCalled": "PaginatedDiscovery",
         "toolResultSnippet": str(stats.stop_reasons)[:500],
@@ -1290,9 +1342,10 @@ async def run_paginated_discovery(
         session.add(ar)
         session.commit()
 
-    telemetry = _telemetry_payload(stats, intent_rows, "", budget, per_intent_cap)
+    telemetry = _telemetry_payload(stats, intent_rows, "", budget)
     telemetry["durationMs"] = duration_ms
     telemetry["complete"] = True
+    log.info("Hunt funnel\n%s", funnel_report(stats))
     reasons = {str(v) for v in (stats.stop_reasons or {}).values() if v}
     if stats.leads_saved == 0 and stats.google_pages == 0 and reasons <= {"previously_exhausted"} and reasons:
         done_phase = (
@@ -1307,10 +1360,15 @@ async def run_paginated_discovery(
             "Nothing was marked finished — run the hunt again."
         )
     else:
+        f = stats.funnel or {}
         done_phase = (
-            f"Done · {stats.leads_saved}/{budget.leads_per_run} leads · "
-            f"{stats.google_pages} Google pages · {stats.emails_found} emails "
-            f"(next run resumes deeper pages)"
+            f"Done · {stats.leads_saved}/{budget.leads_per_run} new leads · "
+            f"Google results {f.get('serp_results', 0)} · "
+            f"opened {f.get('fetch_ok', 0)} · "
+            f"already seen {f.get('already_seen', 0)} · "
+            f"junk {f.get('junk_filtered', 0)} · "
+            f"irrelevant {f.get('irrelevant', 0)} · "
+            f"duplicates {f.get('duplicates', 0)}"
         )
 
     _update_job(
@@ -1414,13 +1472,28 @@ def _telemetry_payload(
     intent_rows: List[DiscoverySearchIntent],
     current_query: str,
     budget: Optional[HuntBudget] = None,
-    per_intent_cap: int = 0,
 ) -> Dict[str, Any]:
     leads_cap = budget.leads_per_run if budget else hunt_leads_per_run()
+    funnel = dict(stats.funnel or {})
     return {
         "leadsPerRun": leads_cap,
-        "perIntentCap": per_intent_cap,
         "searchIntents": stats.search_intents,
+        "funnel": funnel,
+        "funnelByIntent": {
+            name: dict(bucket) for name, bucket in (stats.funnel_by_intent or {}).items()
+        },
+        "serpResults": funnel.get("serp_results", 0),
+        "junkFiltered": funnel.get("junk_filtered", 0),
+        "triageRejected": funnel.get("triage_rejected", 0),
+        "alreadySeen": funnel.get("already_seen", 0),
+        "queued": funnel.get("queued", 0),
+        "fetchOk": funnel.get("fetch_ok", 0),
+        "fetchFailed": funnel.get("fetch_failed", 0),
+        "irrelevantRejected": funnel.get("irrelevant", 0),
+        "locationUncertain": funnel.get("location_uncertain", 0),
+        "locationWrong": funnel.get("location_wrong", 0),
+        "locationRejected": funnel.get("location_rejected", 0),
+        "duplicates": funnel.get("duplicates", 0),
         "completedIntents": sum(1 for r in intent_rows if r.status != "active"),
         "currentQuery": current_query,
         "googlePages": stats.google_pages,

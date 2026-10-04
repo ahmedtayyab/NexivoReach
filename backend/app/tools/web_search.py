@@ -258,6 +258,35 @@ class _CatalogBudget:
         return max(0, self.max_products - self.product_count)
 
 
+def serper_hits(payload: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Regular Google results plus the sponsored businesses on the same page."""
+    rows: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    blocks: List[Any] = []
+    for key in ("organic", "ads", "topAds", "bottomAds"):
+        block = payload.get(key) or []
+        if isinstance(block, list):
+            blocks.extend(block)
+    for raw in blocks:
+        if not isinstance(raw, dict):
+            continue
+        link = str(raw.get("link") or raw.get("url") or "").strip()
+        if not link:
+            continue
+        dedupe = link.split("#", 1)[0].rstrip("/").lower()
+        if dedupe in seen:
+            continue
+        seen.add(dedupe)
+        rows.append(
+            {
+                "title": str(raw.get("title") or ""),
+                "href": link,
+                "body": str(raw.get("snippet") or raw.get("description") or ""),
+            }
+        )
+    return rows
+
+
 class WebSearchTool:
     def __init__(self) -> None:
         # Set by scrape_shop_catalog so callers can tell "site unreachable" from "no products".
@@ -502,11 +531,7 @@ class WebSearchTool:
                 json={"q": query, "num": max(1, min(num, 100)), "page": max(1, page)},
             )
             res.raise_for_status()
-            organic = res.json().get("organic") or []
-            return [
-                {"title": r.get("title", ""), "href": r.get("link", ""), "body": r.get("snippet", "")}
-                for r in organic
-            ]
+            return serper_hits(res.json())
 
     def _brave(self, query: str) -> List[Dict[str, str]]:
         if not settings.BRAVE_SEARCH_API_KEY:

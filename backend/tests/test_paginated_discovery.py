@@ -10,6 +10,38 @@ from app.services.paginated_discovery import (
 )
 
 
+def test_serper_includes_sponsored_businesses():
+    from app.tools.web_search import serper_hits
+
+    hits = serper_hits(
+        {
+            "organic": [
+                {
+                    "title": "Martin Sports Wholesale",
+                    "link": "https://www.martinsports.com/",
+                    "snippet": "Team and equipment bags",
+                }
+            ],
+            "ads": [
+                {
+                    "title": "Wholesale and B2B – Zumer Sport",
+                    "link": "https://www.zumersport.com/",
+                    "snippet": "Bulk orders for resale",
+                },
+                {
+                    "title": "Martin Sports again",
+                    "link": "https://www.martinsports.com",
+                    "snippet": "duplicate of organic",
+                },
+            ],
+        }
+    )
+    hrefs = [h["href"] for h in hits]
+    assert "https://www.martinsports.com/" in hrefs
+    assert "https://www.zumersport.com/" in hrefs
+    assert len(hits) == 2
+
+
 def test_build_intents_one_per_hunt_line_with_location():
     prompt = (
         "Target location: Dallas, United States\n\n"
@@ -84,6 +116,22 @@ def test_one_blank_page_does_not_finish_the_search():
     assert should_exhaust_after_gaps(1, 2) is False
     assert should_exhaust_after_gaps(3, 4) is False
     assert should_exhaust_after_gaps(3, 8) is True
+
+
+def test_funnel_counts_each_drop():
+    from app.services.paginated_discovery import HuntStats, _bump_funnel, funnel_report
+
+    stats = HuntStats()
+    _bump_funnel(stats, "sports bags distributors", "serp_results", 10)
+    _bump_funnel(stats, "sports bags distributors", "junk_filtered", 2)
+    _bump_funnel(stats, "sports bags distributors", "already_seen", 3)
+    _bump_funnel(stats, "sports bags distributors", "leads_created", 4)
+    report = funnel_report(stats)
+    assert "Google results: 10" in report
+    assert "Filtered directories/marketplaces/news: 2" in report
+    assert "Already seen: 3" in report
+    assert "New leads created: 4" in report
+    assert stats.funnel_by_intent["sports bags distributors"]["leads_created"] == 4
 
 
 def test_leads_split_evenly_across_hunt_lines():

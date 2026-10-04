@@ -47,15 +47,6 @@ BUYER_RE = re.compile(
     r"\b(brand|retailer|distributor|importer|wholesaler|boutique|stockist|clinic|hospital|gym)\b",
     re.I,
 )
-RETAIL_URL_RE = re.compile(r"/(products?|collections?|cart|checkout)(/|$|\?)", re.I)
-RETAIL_SNIPPET_RE = re.compile(
-    r"\b(add to cart|buy now|shop now)\b",
-    re.I,
-)
-WHOLESALE_SIGNAL_RE = re.compile(
-    r"\b(distributor|distributors|wholesale|wholesaler|importer|importers|dealer|b2b|bulk orders?|trade only)\b",
-    re.I,
-)
 
 
 def _host(url: str) -> str:
@@ -119,24 +110,8 @@ def classify_serp_row(
     if any(h in path for h in ("/blog", "/wiki", "/guide")) and not reject:
         reject, entity, reason = True, "article", "Article URL"
 
-    # Cheap rejects only: directories, jobs, news, social, marketplaces, retail PDPs.
-    # Product/industry relevance is light triage later — trust Google organic ranking.
-
-    # When hunting distributors/wholesalers/importers, skip DTC product pages & shopfront noise
-    if not reject and hunting_buyers:
-        dq = (row.get("discovery_query") or "").lower()
-        channel_hunt = bool(
-            re.search(r"\b(distributor|wholesaler|importer|dealer)s?\b", dq)
-        )
-        if channel_hunt and (
-            RETAIL_URL_RE.search(url)
-            or (RETAIL_SNIPPET_RE.search(blob) and not WHOLESALE_SIGNAL_RE.search(blob))
-        ):
-            reject, entity, reason = (
-                True,
-                "retail_storefront",
-                "Looks like a retail product page, not a channel buyer",
-            )
+    # Directories, jobs, news, social, and marketplaces are not the business.
+    # A company shop page from this Google query is still a lead.
 
     geo_source = (location or "").strip() or blob
     geo_ok = places_mentioned(geo_source, target_places) if target_places else None

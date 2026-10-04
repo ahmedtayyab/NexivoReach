@@ -759,10 +759,7 @@ export default function FindBuyersPanel({
             </button>
           </div>
           <p className="find-buyers__cap" role="status">
-            Up to <strong>{leadsPerRun}</strong> leads per run
-            {lineCount > 0
-              ? ` · ~${Math.max(1, Math.ceil(leadsPerRun / lineCount))} per search line`
-              : ''}
+            Up to <strong>{leadsPerRun}</strong> new leads per run, shared across every search
             {' · '}
             est. {formatEtaRange(huntEta.low, huntEta.high)}
           </p>

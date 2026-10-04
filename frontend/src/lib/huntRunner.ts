@@ -19,6 +19,13 @@ export type HuntTelemetry = {
   perIntentCap?: number;
   alreadyKnown?: number;
   currentQuery?: string;
+  serpResults?: number;
+  junkFiltered?: number;
+  alreadySeen?: number;
+  fetchOk?: number;
+  fetchFailed?: number;
+  irrelevantRejected?: number;
+  duplicates?: number;
 };
 
 export type HuntProgress = {
@@ -115,8 +122,14 @@ function telemetryToHint(t: HuntTelemetry | undefined): string {
     t.perIntentCap != null ? `~${t.perIntentCap}/line` : null,
     t.searchIntents != null ? `Intents ${t.completedIntents ?? 0}/${t.searchIntents}` : null,
     t.googlePages != null ? `Pages ${t.googlePages}` : null,
+    t.serpResults != null ? `Results ${t.serpResults}` : null,
+    t.junkFiltered != null ? `Junk ${t.junkFiltered}` : null,
+    t.alreadySeen != null ? `Seen ${t.alreadySeen}` : null,
+    t.fetchOk != null ? `Opened ${t.fetchOk}` : null,
+    t.fetchFailed ? `Failed ${t.fetchFailed}` : null,
+    t.irrelevantRejected != null ? `Irrelevant ${t.irrelevantRejected}` : null,
+    t.duplicates != null ? `Duplicates ${t.duplicates}` : null,
     t.emailsFound != null ? `Emails ${t.emailsFound}` : null,
-    t.alreadyKnown ? `Known ${t.alreadyKnown}` : null,
   ].filter(Boolean);
   return bits.join(' · ');
 }

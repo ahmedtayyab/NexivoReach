@@ -531,7 +531,7 @@ def test_keeps_lead_when_homepage_omits_hunt_city():
     assert q["shouldPersist"] is True
 
 
-def test_rejects_shopify_product_page_for_distributor_hunt():
+def test_keeps_shopify_product_page_as_business():
     from app.agents.serp_classifier import classify_serp_row
 
     row = classify_serp_row(
@@ -547,8 +547,8 @@ def test_rejects_shopify_product_page_for_distributor_hunt():
         target_places=["California"],
         offer_categories=["weightlifting straps"],
     )
-    assert row["reject"] is True
-    assert row["entity_type"] == "retail_storefront"
+    assert row["reject"] is False
+    assert row["entity_type"] == "company"
 
 
 def test_accepts_lifting_straps_serp():
