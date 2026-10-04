@@ -131,6 +131,41 @@ def has_local_office_presence(text: str, places: List[str]) -> bool:
     return False
 
 
+def _is_country_place(place: str) -> bool:
+    """True for country names/aliases, not for a US state or city."""
+    low = (place or "").strip().lower()
+    if not low:
+        return False
+    if low in US_STATE_ALIASES:
+        return False
+    for _state, aliases in US_STATE_ALIASES.items():
+        if low == _state or low in aliases:
+            return False
+    if low in COUNTRY_ALIASES:
+        return True
+    for aliases in COUNTRY_ALIASES.values():
+        if low in aliases:
+            return True
+    return False
+
+
+def _locality_places(places: List[str]) -> List[str]:
+    """City/state tokens. Drops parent countries like United States."""
+    return [p.strip() for p in (places or []) if p and str(p).strip() and not _is_country_place(str(p))]
+
+
+def _strip_parent_countries(location: str, places: List[str]) -> str:
+    """Remove hunt-country words so 'Los Angeles, United States' still conflicts with New York."""
+    text = location or ""
+    for country in _target_countries(places):
+        tokens = [country, *COUNTRY_ALIASES.get(country, ())]
+        for token in tokens:
+            if len(token) < 3:
+                continue
+            text = re.sub(rf"(?<![a-z]){re.escape(token)}(?![a-z])", " ", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip(" ,")
+
+
 def _target_countries(places: List[str]) -> set[str]:
     out: set[str] = set()
     for p in places or []:
@@ -257,6 +292,8 @@ def verify_business_location(
     requested = _requested_label(places)
     phone_list = [str(p) for p in (phones or []) if p]
 
+    localities = _locality_places(places)
+    city_hunt = bool(localities)
     result: Dict[str, Any] = {
         "match": None,
         "should_reject": False,
@@ -265,6 +302,7 @@ def verify_business_location(
         "confidence": "low",
         "evidence": [],
         "reject_reason": "",
+        "location_verdict": "UNCERTAIN",
     }
 
     if not places:
@@ -275,6 +313,7 @@ def verify_business_location(
         loc = format_location_display(blob, prefer_places=None)
         result["business_location"] = loc
         result["match"] = True
+        result["location_verdict"] = "MATCH"
         result["confidence"] = "medium" if loc else "low"
         return result
 
@@ -290,11 +329,13 @@ def verify_business_location(
     text_for_extract = strip_service_area_language(
         "\n".join([title or "", snippet or "", site_text or ""])
     )
+    # City hunts: office evidence must name the city/state, not only the country.
+    office_places = localities if city_hunt else places
     # Detect local office on stripped copy so "ships to New York" is not counted as HQ.
-    local_office = has_local_office_presence(text_for_extract, places)
+    local_office = has_local_office_presence(text_for_extract, office_places)
     # Explicit "New York Office" phrases; also check raw for office/HQ labels.
     if not local_office:
-        aliases = [a for p in places for a in place_aliases(p) if len(a) > 2]
+        aliases = [a for p in office_places for a in place_aliases(p) if len(a) > 2]
         if aliases:
             local_office = bool(
                 re.search(
@@ -338,81 +379,97 @@ def verify_business_location(
     for c in dial_countries:
         evidence.append(f"phone:{c}")
 
+    claimed_locality = ""
+    if local_office and city_hunt:
+        for place in localities:
+            if places_mentioned(text_for_extract, [place]) is True:
+                claimed_locality = place
+                break
     if local_office:
         evidence.append("local_office_claimed")
-        # Prefer displaying the requested place when they claim a local office
-        if places_mentioned(business_loc or "", places) is not True:
-            # Keep foreign HQ visible but note local office — display target city
-            office_label = requested.split(",")[0].strip() or requested
-            if business_loc and location_conflicts_with_targets(business_loc, places):
+        # Name the office from text that actually mentions it. Do not copy the hunt place.
+        if city_hunt and claimed_locality and places_mentioned(business_loc or "", localities) is not True:
+            if business_loc:
+                business_loc = f"{claimed_locality} office ({business_loc})"[:120]
+            else:
+                business_loc = claimed_locality[:120]
+        elif not city_hunt and places_mentioned(business_loc or "", places) is not True and business_loc:
+            if location_conflicts_with_targets(business_loc, places):
+                office_label = requested.split(",")[0].strip() or requested
                 business_loc = f"{office_label} office ({business_loc})"[:120]
-            elif not business_loc:
-                business_loc = office_label[:120]
 
     result["business_location"] = business_loc
     result["evidence"] = evidence[:8]
 
-    # --- Match decision ---
-    if local_office:
+    def _match(confidence: str) -> Dict[str, Any]:
         result["match"] = True
         result["should_reject"] = False
-        result["confidence"] = "high"
+        result["location_verdict"] = "MATCH"
+        result["confidence"] = confidence
+        result["reject_reason"] = ""
         return result
 
-    if business_loc and location_conflicts_with_targets(business_loc, places):
-        # Serving-area only: target appears in raw but not in stripped presence text
-        serving_only = (
-            places_mentioned(raw_blob, places) is True
-            and places_mentioned(text_for_extract, places) is not True
-        )
-        reason = _classify_mismatch(business_loc, places, serving_only=serving_only)
+    def _wrong(reason: str) -> Dict[str, Any]:
         result["match"] = False
         result["should_reject"] = True
+        result["location_verdict"] = "WRONG_LOCATION"
         result["reject_reason"] = reason
         result["confidence"] = "high"
         return result
 
-    # Country from phones only (no address) — signal, not sole reject
+    def _uncertain(reason: str = "uncertain_location") -> Dict[str, Any]:
+        result["match"] = None
+        result["location_verdict"] = "UNCERTAIN"
+        result["reject_reason"] = reason
+        result["confidence"] = "low"
+        # City hunts do not save leads without a real city/office match.
+        result["should_reject"] = bool(city_hunt)
+        return result
+
+    # --- Match decision ---
+    if local_office and (not city_hunt or claimed_locality or places_mentioned(business_loc or "", localities) is True):
+        return _match("high")
+
+    if city_hunt:
+        if business_loc and places_mentioned(business_loc, localities) is True:
+            return _match("high" if maps_loc else "medium")
+        geo_for_conflict = _strip_parent_countries(business_loc, places) if business_loc else ""
+        if geo_for_conflict and location_conflicts_with_targets(geo_for_conflict, localities):
+            serving_only = (
+                places_mentioned(raw_blob, localities) is True
+                and places_mentioned(text_for_extract, localities) is not True
+            )
+            return _wrong(_classify_mismatch(business_loc, localities, serving_only=serving_only))
+        if business_loc and places_mentioned(business_loc, places) is True:
+            # Country words only (United States) do not satisfy a city hunt.
+            return _uncertain("country_only")
+        return _uncertain("uncertain_location" if not business_loc else "city_not_confirmed")
+
+    if business_loc and location_conflicts_with_targets(business_loc, places):
+        serving_only = (
+            places_mentioned(raw_blob, places) is True
+            and places_mentioned(text_for_extract, places) is not True
+        )
+        return _wrong(_classify_mismatch(business_loc, places, serving_only=serving_only))
+
     target_countries = _target_countries(places)
-    foreign_phones = [
-        c for c in dial_countries
-        if c.lower() not in target_countries
-        and not (target_countries & {c.lower()})
-    ]
-    # Normalize: dial returns "Pakistan", target set has "pakistan"
-    foreign_phones = [
-        c for c in dial_countries
-        if c.lower() not in target_countries
-    ]
-    local_phones = [c for c in dial_countries if c.lower() in target_countries]
+    foreign_phones = [c for c in dial_countries if c.lower() not in target_countries]
 
     if foreign_phones and not local_phones and not business_loc:
-        # Phone alone → deeper uncertainty, do not hard-reject
-        result["match"] = None
-        result["confidence"] = "low"
-        result["reject_reason"] = ""
         result["business_location"] = foreign_phones[0][:80]
         evidence.append("phone_only_foreign")
         result["evidence"] = evidence[:8]
-        return result
-
-    if foreign_phones and not local_phones and business_loc:
-        # Address already handled above if conflicting; if business_loc doesn't
-        # conflict but phones are foreign, keep with medium confidence
-        if places_mentioned(business_loc, places) is True:
-            result["match"] = True
-            result["confidence"] = "medium"
-            return result
+        return _uncertain("uncertain_location")
 
     if business_loc and places_mentioned(business_loc, places) is True:
-        result["match"] = True
-        result["confidence"] = "high" if maps_loc else "medium"
-        return result
+        return _match("high" if maps_loc else "medium")
 
-    # Uncertain — do not stamp hunt place; keep lead
+    # Country-only hunts still keep uncertain leads (no city was requested).
     result["match"] = None
+    result["location_verdict"] = "UNCERTAIN"
     result["confidence"] = "low"
     result["reject_reason"] = "uncertain_location" if not business_loc else ""
+    result["should_reject"] = False
     return result
 
 
@@ -428,6 +485,7 @@ def apply_location_verification(
     fb["requestedLocation"] = verification.get("requested_location") or ""
     fb["businessLocation"] = verification.get("business_location") or ""
     fb["locationMatch"] = verification.get("match")
+    fb["locationVerdict"] = verification.get("location_verdict") or ""
     fb["locationConfidence"] = verification.get("confidence") or "low"
     fb["locationEvidence"] = list(verification.get("evidence") or [])
     if verification.get("reject_reason"):

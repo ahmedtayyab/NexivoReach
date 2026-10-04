@@ -1213,7 +1213,7 @@ export default function AdminView({ onToast }: Props) {
                 />
               </label>
               <label className="admin-filter-bar__field">
-                <span>Max pages / search line</span>
+                <span>New pages per run / line</span>
                 <input
                   type="number"
                   min={1}

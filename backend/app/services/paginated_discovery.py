@@ -113,6 +113,15 @@ def _query_key(query: str) -> str:
     return re.sub(r"\s+", " ", (query or "").strip().lower())
 
 
+def should_fetch_intent_page(*, pages_processed_this_run: int, pages_per_run: int) -> bool:
+    """True while this run still has new pages left.
+
+    pages_per_run is a budget of new Google pages, not an absolute page number.
+    A cursor sitting on page 11 is still fetched when this run has processed 0 pages.
+    """
+    return int(pages_processed_this_run or 0) < max(1, int(pages_per_run or 1))
+
+
 def _load_or_create_cursor(
     session: Session,
     *,
@@ -546,7 +555,9 @@ async def run_paginated_discovery(
                 phones=[],
                 website=website,
             )
-            if pre_loc.get("should_reject"):
+            # Skip a deep crawl only for a clear wrong city/country.
+            # UNCERTAIN snippets still get inspected — the site may show the city.
+            if pre_loc.get("location_verdict") == "WRONG_LOCATION":
                 _mark_irrelevant()
                 return None
 
@@ -897,17 +908,16 @@ async def run_paginated_discovery(
         intent_id = intent.id or ""
 
         page = intent.current_page
-        if page > budget.max_pages_per_intent:
-            intent.status = "completed"
-            intent.stop_reason = "max_pages_per_intent"
-            stats.stop_reasons[intent.search_intent] = "max_pages_per_intent"
+        # Budget is new pages this run. next_page=11 is not exhausted just because
+        # the setting is 10.
+        if not should_fetch_intent_page(
+            pages_processed_this_run=int(intent.pages_processed or 0),
+            pages_per_run=budget.max_pages_per_intent,
+        ):
+            intent.status = "quota"
+            intent.stop_reason = "pages_per_run"
+            stats.stop_reasons[intent.search_intent] = "pages_per_run"
             _persist_intent(intent)
-            _save_cursor_page(
-                business_id=business_id,
-                query=intent.query,
-                next_page=page,
-                status="active",
-            )
             continue
 
         current_q = intent.query
@@ -959,6 +969,8 @@ async def run_paginated_discovery(
 
         page_domains: List[str] = []
         enrich_jobs: List[Dict[str, Any]] = []
+        # Advance the cross-run cursor only after this page is fully handled.
+        pending_cursor: Optional[int] = None
 
         with _db() as session:
             for pos, hit in enumerate(organic, start=1):
@@ -1136,13 +1148,7 @@ async def run_paginated_discovery(
                 intent.last_page_fingerprint = fp
                 intent.current_page = page + 1
                 intent.new_domains += len(enrich_jobs)
-                _save_cursor_page(
-                    business_id=business_id,
-                    query=intent.query,
-                    next_page=intent.current_page,
-                    status="active",
-                    session=session,
-                )
+                pending_cursor = intent.current_page
             intent.updated_at = _now()
             session.add(intent)
             session.commit()
@@ -1225,12 +1231,13 @@ async def run_paginated_discovery(
                 telemetry=_telemetry_payload(stats, intent_rows, current_q, budget, per_intent_cap),
             )
 
-        # Mark intent completed if page cap reached after this page
-        if intent.status == "active" and intent.current_page > budget.max_pages_per_intent:
-            intent.status = "completed"
-            intent.stop_reason = "max_pages_per_intent"
-            stats.stop_reasons[intent.search_intent] = "max_pages_per_intent"
-            _persist_intent(intent)
+        if pending_cursor is not None:
+            _save_cursor_page(
+                business_id=business_id,
+                query=intent.query,
+                next_page=pending_cursor,
+                status="active",
+            )
 
     # Finalize remaining active intents — keep cursors for next run
     for row in intent_rows:

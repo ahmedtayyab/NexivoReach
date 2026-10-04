@@ -125,7 +125,7 @@ def test_pass_pakistan_hq_with_new_york_office():
     assert v["match"] is True
 
 
-def test_phone_alone_does_not_hard_reject():
+def test_phone_alone_is_uncertain_and_not_saved_for_city_hunt():
     v = verify_business_location(
         requested_places=NY,
         site_text="Wholesale fitness accessories. Contact us for catalogs.",
@@ -133,8 +133,35 @@ def test_phone_alone_does_not_hard_reject():
         snippet="B2B gym gear",
         phones=["+92 300 1234567"],
     )
-    assert v["should_reject"] is False
+    assert v["location_verdict"] == "UNCERTAIN"
+    assert v["should_reject"] is True
     assert v["match"] is None
+    assert "new york" not in (v["business_location"] or "").lower()
+
+
+def test_united_states_only_does_not_match_new_york():
+    v = verify_business_location(
+        requested_places=NY,
+        site_text="National sports bag wholesaler. Address: United States.",
+        title="USA Bag Supply",
+        snippet="Distributor based in the United States",
+    )
+    assert v["location_verdict"] == "UNCERTAIN"
+    assert v["should_reject"] is True
+    assert v["match"] is not True
+    assert (v["business_location"] or "").strip().lower() != "new york"
+
+
+def test_los_angeles_united_states_is_wrong_location():
+    v = verify_business_location(
+        requested_places=NY,
+        site_text="Showroom: 100 Market St, Los Angeles, United States.",
+        title="Pacific Bag Co",
+        snippet="Los Angeles, United States wholesaler",
+    )
+    assert v["location_verdict"] == "WRONG_LOCATION"
+    assert v["should_reject"] is True
+    assert "los angeles" in (v["business_location"] or "").lower()
 
 
 def test_qualify_rejects_stamped_pakistan_lead():

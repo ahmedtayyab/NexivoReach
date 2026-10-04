@@ -6,6 +6,7 @@ from app.services.paginated_discovery import (
     HuntBudget,
     _build_intents_from_prompt,
     _fingerprint,
+    should_fetch_intent_page,
 )
 
 
@@ -66,6 +67,15 @@ def test_hunt_budget_defaults_are_safety_not_lead_caps():
     assert b.max_pages_per_intent >= 5
     assert b.max_total_pages >= 50
     assert b.leads_per_run >= 5
+
+
+def test_page_budget_is_per_run_not_absolute_page_number():
+    # Cursor already at page 11, this run has not fetched yet → still fetch.
+    assert should_fetch_intent_page(pages_processed_this_run=0, pages_per_run=10) is True
+    assert should_fetch_intent_page(pages_processed_this_run=0, pages_per_run=5) is True
+    # Five new pages consumed this run (e.g. 11–15) → stop until the next hunt.
+    assert should_fetch_intent_page(pages_processed_this_run=5, pages_per_run=5) is False
+    assert should_fetch_intent_page(pages_processed_this_run=4, pages_per_run=5) is True
 
 
 def test_leads_split_evenly_across_hunt_lines():
