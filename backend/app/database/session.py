@@ -35,6 +35,7 @@ def init_db():
     _ensure_support_ticket_attachments_column()
     _ensure_user_billing_columns()
     _ensure_discovery_job_telemetry_column()
+    _ensure_hunt_cursor_ddg_column()
     if _backend == "sqlite":
         _ensure_sqlite_columns()
         _migrate_multi_company()
@@ -44,6 +45,16 @@ def init_db():
         ensure_hunt_setting_defaults()
     except Exception:
         pass
+
+
+def _ensure_hunt_cursor_ddg_column():
+    """Saved More results form so a later hunt does not restart DuckDuckGo at batch 1."""
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE hunt_search_cursor ADD COLUMN ddg_next TEXT"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
 
 
 def _ensure_discovery_job_telemetry_column():

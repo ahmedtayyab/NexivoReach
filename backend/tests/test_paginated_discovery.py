@@ -10,6 +10,38 @@ from app.services.paginated_discovery import (
 )
 
 
+def test_duckduckgo_more_results_form_is_kept():
+    from app.tools.web_search import parse_duckduckgo_html
+
+    html = """
+    <div class="result">
+      <a class="result__a" href="https://duckduckgo.com/l/?uddg=https%3A%2F%2Fmidwestsportsupply.com%2Fknee">Midwest</a>
+      <a class="result__snippet">Knee sleeves</a>
+    </div>
+    <form action="/html/" method="post">
+      <input type="hidden" name="q" value="knee sleeves ohio">
+      <input type="hidden" name="s" value="10">
+      <input type="hidden" name="dc" value="11">
+      <input type="hidden" name="vqd" value="4-token">
+      <input type="submit" value="More results">
+    </form>
+    """
+    parsed = parse_duckduckgo_html(html)
+    assert parsed["hits"][0]["href"] == "https://midwestsportsupply.com/knee"
+    assert parsed["next_form"]["vqd"] == "4-token"
+    assert parsed["next_form"]["s"] == "10"
+
+
+def test_saved_more_results_cursor_resumes_the_next_batch():
+    from app.services.paginated_discovery import _ddg_cursor_json, _parse_ddg_cursor
+
+    raw = _ddg_cursor_json(fields={"q": "knee", "vqd": "4-token", "s": "10"}, batch=2)
+    state = _parse_ddg_cursor(raw)
+    assert state["batch"] == 2
+    assert state["fields"]["vqd"] == "4-token"
+    assert state["exhausted"] is False
+
+
 def test_duckduckgo_stops_after_the_first_empty_later_page():
     from app.services.paginated_discovery import should_stop_backup_after_empty
 

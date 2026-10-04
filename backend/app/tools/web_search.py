@@ -7,7 +7,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Any, Optional
-from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -286,6 +286,53 @@ def serper_hits(payload: Dict[str, Any]) -> List[Dict[str, str]]:
             }
         )
     return rows
+
+
+def duckduckgo_result_url(href: str) -> str:
+    """Turn DuckDuckGo's redirect link into the company website."""
+    raw = (href or "").strip()
+    if raw.startswith("//"):
+        raw = "https:" + raw
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").lower()
+    if "duckduckgo.com" in host:
+        target = (parse_qs(parsed.query).get("uddg") or [""])[0]
+        if target:
+            return unquote(target)
+    return raw
+
+
+def parse_duckduckgo_html(html: str) -> Dict[str, Any]:
+    """Results on this page, plus the More results form that loads the next batch."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    hits: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for block in soup.select(".result"):
+        link = block.select_one("a.result__a") or block.select_one("a[href]")
+        if not link or not link.get("href"):
+            continue
+        href = duckduckgo_result_url(str(link.get("href")))
+        if not href.startswith("http"):
+            continue
+        key = href.split("#", 1)[0].rstrip("/").lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        snippet_el = block.select_one(".result__snippet")
+        hits.append({
+            "title": link.get_text(" ", strip=True),
+            "href": href,
+            "body": snippet_el.get_text(" ", strip=True) if snippet_el else "",
+        })
+    next_form = None
+    for form in soup.select("form"):
+        fields: Dict[str, str] = {}
+        for inp in form.select("input[name]"):
+            fields[str(inp.get("name"))] = str(inp.get("value") or "")
+        if fields.get("vqd") and (fields.get("s") or fields.get("dc")):
+            next_form = fields
+            break
+    return {"hits": hits, "next_form": next_form}
 
 
 def serper_out_of_credits(message: str) -> bool:
@@ -573,23 +620,55 @@ class WebSearchTool:
                 "out_of_credits": serper_out_of_credits(message),
             }
 
-    def search_backup_page(self, query: str, page: int = 1) -> Dict[str, Any]:
-        """One DuckDuckGo page when Serper has no credits. Not Google."""
-        page = max(1, int(page or 1))
+    def search_backup_page(
+        self,
+        query: str,
+        page: int = 1,
+        form: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """DuckDuckGo batch. `form` is the More results button from the previous batch."""
+        del page  # More results uses the saved form, not a page number.
+        return self._duckduckgo_more(query, form=form)
+
+    def _duckduckgo_more(self, query: str, form: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        data = dict(form) if form else {"q": query, "b": "", "kl": "us-en"}
+        if form:
+            time.sleep(1.2)
         try:
-            hits = self._duckduckgo(query, page=page) or []
+            with httpx.Client(timeout=20.0, follow_redirects=True, headers={
+                **HEADERS,
+                "Referer": "https://html.duckduckgo.com/",
+            }) as client:
+                res = client.post("https://html.duckduckgo.com/html/", data=data)
+                res.raise_for_status()
+            parsed = parse_duckduckgo_html(res.text)
+            if parsed["hits"] or form:
+                return {
+                    "hits": parsed["hits"],
+                    "next_form": parsed["next_form"],
+                    "provider": "duckduckgo",
+                    "error": "",
+                    "fallback": True,
+                }
         except Exception as exc:
-            log.warning("DuckDuckGo backup search failed page %s: %s", page, exc)
+            log.warning("DuckDuckGo more-results failed: %s", exc)
             return {
                 "hits": [],
+                "next_form": form,
                 "provider": "duckduckgo",
                 "error": f"DuckDuckGo search failed: {exc}",
                 "fallback": True,
             }
+        try:
+            hits = self._duckduckgo(query, page=1) or []
+        except Exception as exc:
+            log.warning("DuckDuckGo page 1 fallback failed: %s", exc)
+            hits = []
         return {
             "hits": hits,
+            "next_form": None,
             "provider": "duckduckgo",
-            "error": "",
+            "error": "" if hits else "DuckDuckGo returned no results.",
             "fallback": True,
         }
 

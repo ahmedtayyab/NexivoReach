@@ -259,6 +259,8 @@ class HuntSearchCursor(SQLModel, table=True):
     query: str = ""
     next_page: int = 1
     status: str = "active"  # active | exhausted
+    # JSON for DuckDuckGo's More results button, so the next hunt resumes that batch.
+    ddg_next: str = ""
     updated_at: str = ""
 
 

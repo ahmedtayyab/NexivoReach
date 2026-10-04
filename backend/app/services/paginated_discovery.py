@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import hashlib
+import json
 import logging
 import re
 import time
@@ -197,6 +198,7 @@ def _save_cursor_page(
     search_intent: str = "",
     location: str = "",
     session: Optional[Session] = None,
+    ddg_next: Any = None,
 ) -> None:
     """Persist cross-run page cursor. Uses caller's session when provided (avoids SQLite locks)."""
     key = _query_key(query)
@@ -232,6 +234,8 @@ def _save_cursor_page(
             if location and not row.location:
                 row.location = location
             row.updated_at = _now()
+        if ddg_next is not None:
+            row.ddg_next = ddg_next if isinstance(ddg_next, str) else json.dumps(ddg_next)
         sess.add(row)
 
     if session is not None:
@@ -379,6 +383,29 @@ def _halt_searches_on_error(
         )
 
 
+def _parse_ddg_cursor(raw: str) -> Dict[str, Any]:
+    """Saved More results button. Batch 1 with no fields means start at the first results."""
+    blank = {"fields": None, "batch": 1, "exhausted": False}
+    if not (raw or "").strip():
+        return blank
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return blank
+    if not isinstance(data, dict):
+        return blank
+    fields = data.get("fields") if isinstance(data.get("fields"), dict) else None
+    return {
+        "fields": fields,
+        "batch": max(1, int(data.get("batch") or 1)),
+        "exhausted": bool(data.get("exhausted")),
+    }
+
+
+def _ddg_cursor_json(*, fields: Optional[Dict[str, str]], batch: int, exhausted: bool = False) -> str:
+    return json.dumps({"fields": fields, "batch": int(batch or 1), "exhausted": exhausted})
+
+
 def should_stop_backup_after_empty(*, had_results: bool, page: int) -> bool:
     """DuckDuckGo's next page is empty almost immediately when there is nothing further."""
     return had_results or int(page or 1) > 1
@@ -412,6 +439,7 @@ _STOP_TEXT = {
     "search_error": "Google rejected the search. The same page will be tried again.",
     "backup_page": "DuckDuckGo had no more new pages. The Google page is still open.",
     "backup_timeout": "DuckDuckGo timed out, so later pages were not searched. The Google page is still open.",
+    "backup_retry": "DuckDuckGo More results did not load. The next hunt tries that same button again.",
     "backup_budget": "Used this run's DuckDuckGo page budget. The Google page is still open.",
     "previously_exhausted": "Already finished on an earlier hunt. Start over to search it from page 1.",
     "blank_page": "This page was empty. The hunt continued.",
@@ -597,6 +625,7 @@ async def run_paginated_discovery(
 
     # Persist intent cursors — resume next_page from workspace HuntSearchCursor
     intent_rows: List[DiscoverySearchIntent] = []
+    ddg_resume_by_query: Dict[str, Dict[str, Any]] = {}
     with _db() as session:
         for spec in intent_specs:
             cursor = _load_or_create_cursor(
@@ -607,6 +636,9 @@ async def run_paginated_discovery(
                 query=spec["query"],
             )
             start_page = max(1, int(cursor.next_page or 1))
+            ddg_resume_by_query[_query_key(spec["query"])] = _parse_ddg_cursor(
+                getattr(cursor, "ddg_next", "") or ""
+            )
             # A line marked finished after page 2 never reaches the leads that
             # are still on Google pages 3–10. Reopen those and keep going.
             if cursor.status == "exhausted" and start_page <= 3:
@@ -1091,8 +1123,31 @@ async def run_paginated_discovery(
 
     # ---- Main fair pagination loop ----
     serper_credits_out = False
-    backup_pages: Dict[str, int] = {}
-    backup_had_hits: Dict[str, bool] = {}
+    backup_states: Dict[str, Dict[str, Any]] = {}
+    for row in intent_rows:
+        backup_states[row.id or ""] = ddg_resume_by_query.get(
+            _query_key(row.query),
+            {"fields": None, "batch": 1, "exhausted": False},
+        )
+
+    async def _backup_report(query: str, intent_key: str) -> Dict[str, Any]:
+        state = backup_states.get(intent_key) or {"fields": None, "batch": 1, "exhausted": False}
+        if state.get("exhausted"):
+            return {
+                "hits": [],
+                "next_form": None,
+                "error": "",
+                "fallback": True,
+                "provider": "duckduckgo",
+                "batch": state.get("batch") or 1,
+                "already_finished": True,
+            }
+        report = await asyncio.to_thread(
+            web.search_backup_page, query, 1, state.get("fields"),
+        )
+        report["batch"] = int(state.get("batch") or 1)
+        report["already_finished"] = False
+        return report
     while True:
         hit_reasons: List[str] = []
         if _budget_hit(hit_reasons):
@@ -1157,11 +1212,14 @@ async def run_paginated_discovery(
         )
 
         fallback = False
-        fetch_page = backup_pages.get(intent_id, 1) if serper_credits_out else int(page or 1)
+        ddg_batch = 1
+        ddg_next_form = None
+        ddg_to_store = None
         try:
             if serper_credits_out:
-                report = await asyncio.to_thread(web.search_backup_page, intent.query, fetch_page)
+                report = await _backup_report(intent.query, intent_id)
                 fallback = True
+                ddg_batch = int(report.get("batch") or 1)
             else:
                 report = await web.search_organic_page(
                     intent.query,
@@ -1187,10 +1245,10 @@ async def run_paginated_discovery(
             _note(stats, search_error)
             _note(
                 stats,
-                "Serper is out of credits. This run will keep moving to the next DuckDuckGo page. Google pages were not marked finished.",
+                "Serper is out of credits. This run follows DuckDuckGo's More results button, and the next hunt continues from that button. Google pages were not marked finished.",
             )
-            fetch_page = backup_pages.get(intent_id, 1)
-            report = await asyncio.to_thread(web.search_backup_page, intent.query, fetch_page)
+            report = await _backup_report(intent.query, intent_id)
+            ddg_batch = int(report.get("batch") or 1)
             organic = list(report.get("hits") or [])
             provider = str(report.get("provider") or "none")
             search_error = str(report.get("error") or "")
@@ -1203,12 +1261,21 @@ async def run_paginated_discovery(
         }.get(provider, "No search provider")
         if fallback:
             stats.google_requests += 1
-            _note(stats, f"DuckDuckGo, not Google — page {fetch_page}: {intent.query}")
+            ddg_next_form = report.get("next_form") if isinstance(report.get("next_form"), dict) else None
+            if report.get("already_finished"):
+                _note(
+                    stats,
+                    f"DuckDuckGo More results for “{intent.query}” already reached the end. Google page {page} is still open.",
+                )
+                _finish_backup_search(stats, intent, business_id, page)
+                continue
+            label = "first results" if ddg_batch <= 1 and not (backup_states.get(intent_id) or {}).get("fields") else f"More results {ddg_batch}"
+            _note(stats, f"DuckDuckGo, not Google — {label}: {intent.query}")
             if search_error and not organic:
                 _note(stats, search_error)
                 _note(
                     stats,
-                    "DuckDuckGo timed out. Later pages were not searched. Google pages were not marked finished.",
+                    "DuckDuckGo timed out. Later pages were not searched. The same More results button will be tried on the next hunt.",
                 )
                 for row in intent_rows:
                     if row.status == "active":
@@ -1217,21 +1284,17 @@ async def run_paginated_discovery(
                         )
                 break
             if not organic:
-                if should_stop_backup_after_empty(
-                    had_results=bool(backup_had_hits.get(intent_id)),
-                    page=fetch_page,
-                ):
-                    _note(stats, f"“{intent.query}” has no more DuckDuckGo results after page {fetch_page}.")
-                    _finish_backup_search(stats, intent, business_id, page)
-                else:
-                    backup_pages[intent_id] = fetch_page + 1
+                if ddg_next_form or (backup_states.get(intent_id) or {}).get("fields"):
                     _note(
                         stats,
-                        f"DuckDuckGo page {fetch_page} for “{intent.query}” was empty. Continuing to the next page.",
+                        f"DuckDuckGo More results for “{intent.query}” returned nothing. The next hunt tries that same button again.",
                     )
+                    _finish_backup_search(stats, intent, business_id, page, "backup_retry")
+                else:
+                    _note(stats, f"DuckDuckGo returned no results for “{intent.query}”.")
+                    _finish_backup_search(stats, intent, business_id, page)
                 continue
-            backup_had_hits[intent_id] = True
-            _note(stats, f"Page {fetch_page} returned {len(organic)} results.")
+            _note(stats, f"Batch {ddg_batch} returned {len(organic)} results.")
         else:
             _note(stats, f"{provider_label} — page {page}: {intent.query}")
             stats.google_requests += 1
@@ -1446,19 +1509,44 @@ async def run_paginated_discovery(
             intent.results_processed += len(organic)
             intent.pages_processed += 1
             if fallback:
-                # Keep paging DuckDuckGo. Leave the Google cursor on its current page.
+                # Follow More results. Leave the Google page number where it is.
                 fp = _fingerprint(page_domains)
-                if fp and fp == intent.last_page_fingerprint:
+                repeated = bool(fp and fp == intent.last_page_fingerprint)
+                if repeated:
                     intent.status = "quota"
                     intent.stop_reason = "backup_page"
                     stats.stop_reasons[intent.search_intent] = "backup_page"
                     _note(
                         stats,
-                        f"“{intent.query}” DuckDuckGo page {fetch_page} repeated earlier results. This search is paused.",
+                        f"“{intent.query}” DuckDuckGo batch {ddg_batch} repeated earlier results. The next hunt uses the following More results button.",
                     )
                 else:
                     intent.last_page_fingerprint = fp
-                    backup_pages[intent_id] = fetch_page + 1
+                if ddg_next_form and not repeated:
+                    backup_states[intent_id] = {
+                        "fields": ddg_next_form,
+                        "batch": ddg_batch + 1,
+                        "exhausted": False,
+                    }
+                    ddg_to_store = _ddg_cursor_json(fields=ddg_next_form, batch=ddg_batch + 1)
+                elif ddg_next_form and repeated:
+                    backup_states[intent_id] = {
+                        "fields": ddg_next_form,
+                        "batch": ddg_batch + 1,
+                        "exhausted": False,
+                    }
+                    ddg_to_store = _ddg_cursor_json(fields=ddg_next_form, batch=ddg_batch + 1)
+                else:
+                    intent.status = "quota"
+                    intent.stop_reason = "backup_page"
+                    stats.stop_reasons[intent.search_intent] = "backup_page"
+                    backup_states[intent_id] = {
+                        "fields": None,
+                        "batch": ddg_batch,
+                        "exhausted": True,
+                    }
+                    ddg_to_store = _ddg_cursor_json(fields=None, batch=ddg_batch, exhausted=True)
+                    _note(stats, f"“{intent.query}” has no More results button after batch {ddg_batch}.")
                 intent.updated_at = _now()
                 session.add(intent)
                 session.commit()
@@ -1584,6 +1672,7 @@ async def run_paginated_discovery(
                 query=intent.query,
                 next_page=page,
                 status="active",
+                ddg_next=ddg_to_store,
             )
 
     # Finalize remaining active intents — keep cursors for next run
