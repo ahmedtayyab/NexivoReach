@@ -631,46 +631,77 @@ class WebSearchTool:
         return self._duckduckgo_more(query, form=form)
 
     def _duckduckgo_more(self, query: str, form: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        data = dict(form) if form else {"q": query, "b": "", "kl": "us-en"}
+        # A saved More results button has to be posted. The first batch uses the
+        # library path that already returned leads, then tries the HTML page for
+        # the button. A timeout on that page must not throw away the leads.
         if form:
             time.sleep(1.2)
-        try:
-            with httpx.Client(timeout=20.0, follow_redirects=True, headers={
-                **HEADERS,
-                "Referer": "https://html.duckduckgo.com/",
-            }) as client:
-                res = client.post("https://html.duckduckgo.com/html/", data=data)
-                res.raise_for_status()
-            parsed = parse_duckduckgo_html(res.text)
-            if parsed["hits"] or form:
+            try:
+                parsed = self._duckduckgo_html_batch(query, form, timeout=12.0)
                 return {
                     "hits": parsed["hits"],
-                    "next_form": parsed["next_form"],
+                    "next_form": parsed["next_form"] or form,
                     "provider": "duckduckgo",
                     "error": "",
                     "fallback": True,
+                    "html_down": False,
                 }
-        except Exception as exc:
-            log.warning("DuckDuckGo more-results failed: %s", exc)
-            return {
-                "hits": [],
-                "next_form": form,
-                "provider": "duckduckgo",
-                "error": f"DuckDuckGo search failed: {exc}",
-                "fallback": True,
-            }
+            except Exception as exc:
+                log.warning("DuckDuckGo more-results failed: %s", exc)
+                return {
+                    "hits": [],
+                    "next_form": form,
+                    "provider": "duckduckgo",
+                    "error": f"DuckDuckGo search failed: {exc}",
+                    "fallback": True,
+                    "html_down": True,
+                }
+
+        hits: List[Dict[str, str]] = []
+        error = ""
         try:
-            hits = self._duckduckgo(query, page=1) or []
+            hits = self._duckduckgo(query, page=1, allow_html=False) or []
         except Exception as exc:
-            log.warning("DuckDuckGo page 1 fallback failed: %s", exc)
-            hits = []
+            error = f"DuckDuckGo search failed: {exc}"
+        next_form = None
+        html_down = bool(getattr(self, "_ddg_html_down", False))
+        if not html_down:
+            try:
+                parsed = self._duckduckgo_html_batch(query, None, timeout=8.0)
+                if parsed["hits"] and not hits:
+                    hits = parsed["hits"]
+                next_form = parsed.get("next_form")
+            except Exception as exc:
+                self._ddg_html_down = True
+                html_down = True
+                log.warning("DuckDuckGo more-results page failed: %s", exc)
+                if not hits:
+                    error = error or f"DuckDuckGo search failed: {exc}"
+        if hits:
+            error = ""
         return {
             "hits": hits,
-            "next_form": None,
+            "next_form": next_form,
             "provider": "duckduckgo",
-            "error": "" if hits else "DuckDuckGo returned no results.",
+            "error": error,
             "fallback": True,
+            "html_down": html_down,
         }
+
+    def _duckduckgo_html_batch(
+        self,
+        query: str,
+        form: Optional[Dict[str, str]],
+        timeout: float,
+    ) -> Dict[str, Any]:
+        data = dict(form) if form else {"q": query, "b": "", "kl": "us-en"}
+        with httpx.Client(timeout=timeout, follow_redirects=True, headers={
+            **HEADERS,
+            "Referer": "https://html.duckduckgo.com/",
+        }) as client:
+            res = client.post("https://html.duckduckgo.com/html/", data=data)
+            res.raise_for_status()
+        return parse_duckduckgo_html(res.text)
 
     def _serper(self, query: str, page: int = 1, num: int = 20) -> List[Dict[str, str]]:
         if not settings.SERPER_API_KEY:
@@ -715,7 +746,7 @@ class WebSearchTool:
                 for r in res.json().get("results") or []
             ]
 
-    def _duckduckgo(self, query: str, page: int = 1) -> List[Dict[str, str]]:
+    def _duckduckgo(self, query: str, page: int = 1, allow_html: bool = True) -> List[Dict[str, str]]:
         page = max(1, int(page or 1))
         try:
             from ddgs import DDGS
@@ -737,6 +768,8 @@ class WebSearchTool:
                 ]
         except Exception:
             pass
+        if not allow_html:
+            return []
         return self._duckduckgo_html(query, page=page)
 
     def _duckduckgo_html(self, query: str, page: int = 1) -> List[Dict[str, str]]:

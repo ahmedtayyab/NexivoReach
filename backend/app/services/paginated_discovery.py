@@ -1123,6 +1123,8 @@ async def run_paginated_discovery(
 
     # ---- Main fair pagination loop ----
     serper_credits_out = False
+    ddg_fail_streak = 0
+    ddg_html_noted = False
     backup_states: Dict[str, Dict[str, Any]] = {}
     for row in intent_rows:
         backup_states[row.id or ""] = ddg_resume_by_query.get(
@@ -1271,18 +1273,30 @@ async def run_paginated_discovery(
                 continue
             label = "first results" if ddg_batch <= 1 and not (backup_states.get(intent_id) or {}).get("fields") else f"More results {ddg_batch}"
             _note(stats, f"DuckDuckGo, not Google — {label}: {intent.query}")
-            if search_error and not organic:
-                _note(stats, search_error)
+            if report.get("html_down") and not ddg_html_noted:
+                ddg_html_noted = True
                 _note(
                     stats,
-                    "DuckDuckGo timed out. Later pages were not searched. The same More results button will be tried on the next hunt.",
+                    "DuckDuckGo's More results page did not answer. This run still uses the first batch of each search.",
                 )
-                for row in intent_rows:
-                    if row.status == "active":
-                        _finish_backup_search(
-                            stats, row, business_id, int(row.current_page or 1), "backup_timeout",
-                        )
-                break
+            if search_error and not organic:
+                _note(stats, search_error)
+                ddg_fail_streak += 1
+                _finish_backup_search(stats, intent, business_id, page, "backup_retry")
+                if ddg_fail_streak >= 2:
+                    _note(
+                        stats,
+                        "DuckDuckGo timed out twice. The remaining searches were not run. The next hunt tries them again.",
+                    )
+                    for row in intent_rows:
+                        if row.status == "active":
+                            _finish_backup_search(
+                                stats, row, business_id, int(row.current_page or 1), "backup_timeout",
+                            )
+                    break
+                _note(stats, "This search timed out. The next search will still run.")
+                continue
+            ddg_fail_streak = 0
             if not organic:
                 if ddg_next_form or (backup_states.get(intent_id) or {}).get("fields"):
                     _note(
