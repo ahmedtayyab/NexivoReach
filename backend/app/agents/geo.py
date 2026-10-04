@@ -886,7 +886,6 @@ UNRELATED_INDUSTRY_RE = re.compile(
     r"real estate|realtor|mortgage|property management|"
     r"insurance|law firm|attorneys?|accounting|"
     r"anime|hobby shop|toys?|collectibles|comics?|"
-    r"fulfil+ment|3pl|freight forward\w*|logistics|"
     r"cosmetics?|beauty supply|salon|spa|"
     r"furniture|flooring|kitchen cabinets?|"
     r"software|saas|it services|web design"
@@ -1391,7 +1390,9 @@ def page_matches_specific_products(blob: str, categories: List[str]) -> str:
         head, mods = words[-1], words[:-1]
         mod_hit = any(re.search(rf"\b{re.escape(m)}\b", text) for m in mods)
         head_hit = bool(re.search(rf"\b{re.escape(head)}\b", text))
-        if head in AMBIGUOUS_PRODUCT_HEADS:
+        # "bag/bags" is the product, not a truck/crane collision.
+        # Bare "straps" or "hooks" with no fitness context is the collision.
+        if head in AMBIGUOUS_PRODUCT_HEADS and head not in {"bag", "bags"}:
             if head_hit and mod_hit:
                 return "high"
             if head_hit and ctx:

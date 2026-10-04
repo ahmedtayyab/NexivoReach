@@ -374,6 +374,39 @@ def test_rejects_obviously_unrelated_business_serp():
     assert sports_ai["relevant"] is True
 
 
+def test_wholesale_bags_are_a_business_not_a_wrong_industry():
+    from app.agents.geo import looks_unrelated_business, page_matches_specific_products
+    from app.agents.relevance import serp_triage, website_relevance
+
+    snippet = "Wholesale bags for teams and schools. Custom duffel bags. New Jersey distributor."
+    assert page_matches_specific_products(snippet, ["sports bags"]) != "low"
+    triage = serp_triage(
+        {
+            "company_name": "Garden State Bag Co",
+            "title": "Garden State Bag Co",
+            "snippet": snippet,
+            "discovery_query": "sports bags distributors New Jersey, United States",
+        },
+        categories=["sports bags"],
+    )
+    assert triage["verdict"] == "keep"
+    site = (
+        "Garden State Bag Co supplies duffel bags and team bags. "
+        "Logistics and fulfillment for retailers in Newark."
+    )
+    assert looks_unrelated_business(site, ["sports bags"]) is False
+    graded = website_relevance(
+        product="sports bags",
+        buyer_type="distributors",
+        company_name="Garden State Bag Co",
+        title="Garden State Bag Co",
+        snippet=snippet,
+        site_text=site,
+        categories=["sports bags"],
+    )
+    assert graded["relevant"] is True
+
+
 def test_rejects_rigging_supplier_for_gym_lifting_hooks():
     """Industrial rigging is not rejected at SERP — AI/heuristic relevance rejects it."""
     from app.agents.serp_classifier import classify_serp_row
