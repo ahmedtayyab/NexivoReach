@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from typing import Any, Dict
 from uuid import uuid4
@@ -12,9 +12,41 @@ from app.tools.contact_finder import resolve_lead_email
 import csv
 import io
 import logging
+import re
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/prospects", tags=["prospects"])
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_EMAIL_TYPES = {"email", "mail", "e-mail", ""}
+
+
+def normalize_manual_email(raw: str) -> str:
+    text = (raw or "").strip()
+    if text.lower().startswith("mailto:"):
+        text = text.split(":", 1)[1].split("?", 1)[0].strip()
+    return text
+
+
+def apply_manual_lead_email(record: ProspectRecord, email: str) -> None:
+    """Set the address used for this lead. A blank value clears it."""
+    record.email = email
+    kept = []
+    for item in record.contacts or []:
+        if not isinstance(item, dict):
+            kept.append(item)
+            continue
+        kind = str(item.get("type") or "").strip().lower()
+        value = str(item.get("value") or "")
+        if kind in _EMAIL_TYPES and "@" in value:
+            continue
+        kept.append(item)
+    if email:
+        kept.insert(0, {"type": "email", "value": email, "source": "manual", "label": "Added by you"})
+    record.contacts = kept
+    draft = record.outreach_draft
+    if isinstance(draft, dict):
+        record.outreach_draft = {**draft, "toEmail": email}
 
 
 @router.get("/export.csv")
@@ -138,6 +170,29 @@ def delete_prospect(prospect_id: str, request: Request, user: AuthUser = Depends
         session.delete(row)
         session.commit()
         return {"ok": True, "deleted": 1}
+
+
+@router.patch("/{prospect_id}/email")
+def update_prospect_email(
+    prospect_id: str,
+    payload: Dict[str, Any],
+    request: Request,
+    user: AuthUser = Depends(get_current_user),
+):
+    email = normalize_manual_email(str((payload or {}).get("email") or ""))
+    if email and not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Enter a full email address")
+    with Session(engine) as session:
+        business_id = resolve_business_id(request, user, session)
+        record = session.get(ProspectRecord, prospect_id)
+        if not record or record.business_id != business_id:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        apply_manual_lead_email(record, email)
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        _maybe_sync_prospect(record)
+        return prospect_to_frontend(record)
 
 
 @router.post("/save")

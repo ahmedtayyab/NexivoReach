@@ -872,6 +872,25 @@ export default function App() {
     );
   };
 
+  const handleUpdateEmail = async (prospectId: string, email: string) => {
+    const resp = await apiFetch(`/api/prospects/${prospectId}/email`, {
+      method: 'PATCH',
+      body: JSON.stringify({ email }),
+    });
+    if (!resp.ok) {
+      let message = 'Could not save that email';
+      try {
+        const body = await resp.json();
+        if (typeof body?.detail === 'string') message = body.detail;
+      } catch {
+        /* response was not JSON */
+      }
+      throw new Error(message);
+    }
+    const updated = (await resp.json()) as Prospect;
+    setProspects(prev => prev.map(p => (p.id === prospectId ? updated : p)));
+  };
+
   const handleClearLeads = async () => {
     const resp = await apiFetch('/api/prospects/clear', { method: 'DELETE' });
     if (!resp.ok) {
@@ -1066,6 +1085,7 @@ export default function App() {
             onSendAllReady={() => handleSendAllReady('ready')}
             onSendSelected={handleSendSelected}
             onRefreshContacts={handleRefreshContacts}
+            onUpdateEmail={handleUpdateEmail}
             gmailConnected={gmailCanSend(user)}
             onGoWorkspace={() => navigate(preferredWorkspaceRoute(businessInfo))}
             templateCount={outreachTemplates.length}
@@ -1209,6 +1229,7 @@ export default function App() {
         onPrepareOutreach={id => handlePrepareOutreach(id)}
         onPrepareFollowUp={handlePrepareFollowUp}
         onRefreshContacts={handleRefreshContacts}
+        onUpdateEmail={handleUpdateEmail}
         gmailConnected={gmailCanSend(user)}
       />
     </div>

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { recipientEmail } from '../../lib/leadTone';
 import LeadRationaleChips from './LeadRationaleChips';
 import LeadBrief from './LeadBrief';
+import LeadEmailField from './LeadEmailField';
 
 interface Props {
   prospect: Prospect | null;
@@ -19,6 +20,7 @@ interface Props {
   onPrepareOutreach?: (id: string) => void;
   onPrepareFollowUp?: (id: string) => void;
   onRefreshContacts?: (id: string) => Promise<void> | void;
+  onUpdateEmail?: (id: string, email: string) => Promise<void> | void;
   gmailConnected?: boolean;
 }
 
@@ -33,6 +35,7 @@ export default function ReviewDrawer({
   onPrepareOutreach,
   onPrepareFollowUp,
   onRefreshContacts,
+  onUpdateEmail,
   gmailConnected = false,
 }: Props) {
   const [draftBody, setDraftBody] = useState('');
@@ -200,6 +203,11 @@ export default function ReviewDrawer({
           <section>
             <h2 className="section-label mb-2.5">Contacts</h2>
             <div className="h-px bg-muted mb-4" />
+            {onUpdateEmail && (
+              <div className="mb-4">
+                <LeadEmailField prospect={prospect} onSave={onUpdateEmail} />
+              </div>
+            )}
             {(() => {
               const seen = new Set<string>();
               const emails: string[] = [];

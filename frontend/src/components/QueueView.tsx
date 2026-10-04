@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Prospect, AgentRunLog } from '../types';
-import { ArrowDown, ArrowUp, Loader2, Mail, MailWarning } from 'lucide-react';
+import { ArrowDown, ArrowUp } from 'lucide-react';
 import { apiFetch } from '../lib/api';
-import { leadRowToneClass, recipientEmail } from '../lib/leadTone';
+import { leadRowToneClass } from '../lib/leadTone';
 import { computeOutcomes, hasEmail } from '../lib/outcomes';
 import { brandAssets } from '../lib/brandAssets';
 import { FitScoreBadge } from './FitScoreBadge';
 import { useConfirm } from './ConfirmDialog';
 import PageAmbient from './brand/PageAmbient';
 import TemplatesCta from './TemplatesCta';
+import LeadEmailField from './prospects/LeadEmailField';
 
 const EMPTY_QUEUE_IMG = brandAssets.emptyQueue;
 
@@ -33,6 +34,7 @@ interface Props {
   onSendAllReady?: () => void | Promise<void>;
   onSendSelected?: (ids: string[]) => Promise<void> | void;
   onRefreshContacts?: (id: string) => Promise<void> | void;
+  onUpdateEmail?: (id: string, email: string) => Promise<void> | void;
   gmailConnected?: boolean;
   onGoWorkspace?: () => void;
   templateCount?: number;
@@ -59,6 +61,7 @@ export default function QueueView({
   onSendAllReady,
   onSendSelected,
   onRefreshContacts,
+  onUpdateEmail,
   gmailConnected = false,
   onGoWorkspace,
   templateCount = 0,
@@ -188,37 +191,18 @@ export default function QueueView({
     }
   };
 
-  const emailCell = (prospect: Prospect) => {
-    const email = recipientEmail(prospect);
-    if (email) {
-      return (
-        <span className="lead-email is-ok" title={email}>
-          <Mail className="w-3 h-3 shrink-0" strokeWidth={1.75} />
-          <span className="truncate">{email}</span>
-        </span>
-      );
-    }
-    return (
-      <span className="lead-email is-missing">
-        <MailWarning className="w-3 h-3 shrink-0" strokeWidth={1.75} />
-        <span>No email</span>
-        {onRefreshContacts && (
-          <button
-            type="button"
-            className="linkish lead-email__find"
-            title="Hunt only checks the homepage quickly. Find crawls contact pages on this site."
-            disabled={refreshingId === prospect.id}
-            onClick={e => {
-              e.stopPropagation();
-              void handleRefreshEmail(prospect.id);
-            }}
-          >
-            {refreshingId === prospect.id ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Find'}
-          </button>
-        )}
-      </span>
-    );
-  };
+  const emailCell = (prospect: Prospect) => (
+    <LeadEmailField
+      prospect={prospect}
+      showWebsite
+      finding={refreshingId === prospect.id}
+      onFind={onRefreshContacts ? handleRefreshEmail : undefined}
+      onSave={async (id, email) => {
+        if (!onUpdateEmail) return;
+        await onUpdateEmail(id, email);
+      }}
+    />
+  );
   const visibleIds = visible.map(p => p.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
 
