@@ -530,53 +530,6 @@ async def run_paginated_discovery(
             if stats.enrichments >= budget.max_enrichments:
                 return None
             stats.enrichments += 1
-            from app.agents.location_verify import verify_business_location
-
-            def _mark_irrelevant() -> None:
-                with _db() as session:
-                    mem = session.exec(
-                        select(DiscoveredCompany).where(
-                            DiscoveredCompany.business_id == business_id,
-                            DiscoveredCompany.domain == domain,
-                        )
-                    ).first()
-                    now = _now()
-                    if not mem:
-                        mem = DiscoveredCompany(
-                            id=f"disc-{uuid4().hex[:12]}",
-                            business_id=business_id,
-                            domain=domain,
-                            company_name=company_name,
-                            company_name_normalized=_legal_name_key(company_name),
-                            website=website,
-                            first_seen_at=now,
-                            last_seen_at=now,
-                            matched_search_intents=[search_intent] if search_intent else [],
-                        )
-                    mem.processed = True
-                    mem.status = "irrelevant"
-                    mem.last_seen_at = now
-                    session.add(mem)
-                    session.commit()
-                stats.irrelevant += 1
-
-            # Cheap SERP geo gate before deep crawl — skip clear country mismatches
-            # without burning 10–20s per site (not barren early-stop; per-domain only).
-            pre_loc = verify_business_location(
-                requested_places=list(profile.places or []),
-                site_text="",
-                title=title,
-                snippet=snippet,
-                row_location="",
-                phones=[],
-                website=website,
-            )
-            # Skip a deep crawl only for a clear wrong city/country.
-            # UNCERTAIN snippets still get inspected — the site may show the city.
-            if pre_loc.get("location_verdict") == "WRONG_LOCATION":
-                _mark_irrelevant()
-                return None
-
             site_text = ""
             email = ""
             phone = ""
@@ -601,7 +554,9 @@ async def run_paginated_discovery(
             phone = found.get("phone") or ""
             contacts = list(found.get("contacts") or [])
 
-            # Full location verify after site text — never stamp hunt place.
+            # Note the site's own location. The hunt place stays in the Google query only.
+            from app.agents.location_verify import verify_business_location
+
             loc_check = verify_business_location(
                 requested_places=list(profile.places or []),
                 site_text=site_text,
@@ -611,11 +566,8 @@ async def run_paginated_discovery(
                 phones=[phone] if phone else [],
                 website=website,
             )
-            if loc_check.get("should_reject"):
-                _mark_irrelevant()
-                return None
 
-            # Hunter only after location clears — avoid spending API on wrong-geo firms
+            # Hunter after the page is read — location is recorded, not a save gate.
             email = ""
             email_status = "email_not_found"
             email_source = ""

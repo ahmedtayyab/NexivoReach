@@ -65,7 +65,7 @@ def test_fail_lahore_pakistan():
         row_location="New York, United States",  # stamped hunt place — must be ignored
         phones=["+92 42 111 222 333"],
     )
-    assert v["should_reject"] is True
+    assert v["should_reject"] is False
     assert v["reject_reason"] == "location_mismatch_country"
     assert "pakistan" in (v["business_location"] or "").lower() or "lahore" in (
         v["business_location"] or ""
@@ -81,7 +81,7 @@ def test_fail_los_angeles_vs_new_york():
         snippet="LA distributor",
         phones=["+1 310-555-0199"],
     )
-    assert v["should_reject"] is True
+    assert v["should_reject"] is False
     assert v["reject_reason"] in (
         "location_mismatch_state",
         "location_mismatch_city",
@@ -99,7 +99,7 @@ def test_fail_ships_to_new_york_from_pakistan():
         title="Premier Straps Co",
         snippet="Exporter",
     )
-    assert v["should_reject"] is True
+    assert v["should_reject"] is False
     assert v["reject_reason"] in (
         "location_mismatch_country",
         "foreign_business_serving_target_area",
@@ -182,11 +182,11 @@ def test_los_angeles_united_states_is_wrong_location():
         snippet="Los Angeles, United States wholesaler",
     )
     assert v["location_verdict"] == "WRONG_LOCATION"
-    assert v["should_reject"] is True
+    assert v["should_reject"] is False
     assert "los angeles" in (v["business_location"] or "").lower()
 
 
-def test_qualify_rejects_stamped_pakistan_lead():
+def test_qualify_keeps_pakistan_lead_and_records_real_location():
     profile = _ny_profile()
     q = qualify_from_fast_decision(
         row={
@@ -206,7 +206,7 @@ def test_qualify_rejects_stamped_pakistan_lead():
             "Our factory produces weightlifting belts. Call +92 52 3555555."
         ),
     )
-    assert q["shouldPersist"] is False
-    assert (q.get("fitBreakdown") or {}).get("locationRejectReason") == "location_mismatch_country"
+    assert q["shouldPersist"] is True
+    assert (q.get("fitBreakdown") or {}).get("locationVerdict") == "WRONG_LOCATION"
     assert "new york" not in (q.get("location") or "").lower()
     assert (q.get("fitBreakdown") or {}).get("requestedLocation")

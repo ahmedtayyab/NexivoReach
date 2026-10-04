@@ -140,7 +140,7 @@ def classify_serp_row(
 
     geo_source = (location or "").strip() or blob
     geo_ok = places_mentioned(geo_source, target_places) if target_places else None
-    if target_places and not reject:
+    if target_places and strict_geo and not reject:
         from app.agents.geo import location_conflicts_with_targets
 
         if location.strip() and location_conflicts_with_targets(location, target_places):
