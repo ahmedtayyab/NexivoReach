@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import gzip
 import html as html_lib
 import json
@@ -6,6 +7,7 @@ import logging
 import re
 import time
 import xml.etree.ElementTree as ET
+from functools import partial
 from typing import List, Dict, Any, Optional
 from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse, urlunparse
 
@@ -15,6 +17,19 @@ from bs4 import BeautifulSoup
 from app.config import settings
 
 log = logging.getLogger(__name__)
+
+# A search that ignores its own timeout must not fill the process thread pool.
+_SEARCH_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=3, thread_name_prefix="web-search")
+SERPER_WAIT_SEC = 18.0
+
+
+async def run_search(func, *args, timeout: float = 22.0):
+    """Run a blocking search off the event loop, and stop waiting if it hangs."""
+    loop = asyncio.get_running_loop()
+    return await asyncio.wait_for(
+        loop.run_in_executor(_SEARCH_POOL, partial(func, *args)),
+        timeout=timeout,
+    )
 
 # Shared hosts (CSF/LFD, Imunify360) auto-ban IPs that burst. Stay under their radar.
 CATALOG_CONCURRENCY = 5
@@ -580,7 +595,16 @@ class WebSearchTool:
         """One result page. Serper is Google. Other providers are labeled as not Google."""
         page = max(1, int(page or 1))
         num = max(1, min(int(num or 10), 100))
-        return await asyncio.to_thread(self._search_sync_paged, query, page, num)
+        try:
+            return await run_search(self._search_sync_paged, query, page, num, timeout=SERPER_WAIT_SEC)
+        except TimeoutError:
+            log.warning("Serper search timed out page %s: %s", page, query)
+            return {
+                "hits": [],
+                "provider": "serper",
+                "error": "Serper Google search failed: timed out",
+                "timed_out": True,
+            }
 
     def _search_sync_paged(self, query: str, page: int, num: int) -> Dict[str, Any]:
         if not settings.SERPER_API_KEY:

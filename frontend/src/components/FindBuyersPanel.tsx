@@ -326,7 +326,7 @@ export default function FindBuyersPanel({
         setServerProgress(p.progress);
         if (p.telemetryHint) setTelemetryHint(p.telemetryHint);
         if (p.huntLog?.length) setHuntLog(p.huntLog);
-        if (p.stopSummary) setStopSummary(p.stopSummary);
+        setStopSummary(p.stopSummary || '');
         const started = p.startedAt || Date.now();
         setElapsedSec(Math.max(0, Math.floor((Date.now() - started) / 1000)));
       },
@@ -519,6 +519,8 @@ export default function FindBuyersPanel({
     if (promptOverride !== undefined) applyPrompt(promptOverride);
     if ((!huntQuery && !hasBrief) || isRunning || isHuntRunning()) return;
     setShowSheetsPrompt(false);
+    setStopSummary('');
+    setHuntLog([]);
     setIsRunning(true);
     setStatusText(phases[0]);
     setServerPhase(phases[0]);

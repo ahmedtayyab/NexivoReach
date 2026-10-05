@@ -282,3 +282,32 @@ def test_leads_split_evenly_across_hunt_lines():
     assert leads_per_intent_share(40, 15) == 3
     assert leads_per_intent_share(30, 5) == 6
     assert leads_per_intent_share(40, 1) == 40
+
+
+def test_running_hunt_does_not_say_it_stopped_before_searching():
+    from app.services.paginated_discovery import HuntStats, _stop_summary, _telemetry_payload
+
+    stats = HuntStats()
+    payload = _telemetry_payload(stats, [], "")
+    assert payload["stopSummary"] == ""
+    assert _stop_summary(stats) == "The hunt stopped before any search ran."
+
+
+def test_google_search_gives_up_when_it_does_not_answer(monkeypatch):
+    import asyncio
+    import time
+
+    from app.tools import web_search
+
+    monkeypatch.setattr(web_search, "SERPER_WAIT_SEC", 0.2)
+
+    def hang(self, query, page, num):
+        del self, query, page, num
+        time.sleep(5)
+        return {"hits": [], "provider": "serper", "error": ""}
+
+    monkeypatch.setattr(web_search.WebSearchTool, "_search_sync_paged", hang)
+    started = time.time()
+    report = asyncio.run(web_search.WebSearchTool().search_organic_page("straps distributors Michigan"))
+    assert report["timed_out"] is True
+    assert time.time() - started < 2

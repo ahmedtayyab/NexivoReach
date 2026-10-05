@@ -51,7 +51,7 @@ from app.services.app_settings import (
     hunt_max_pages_per_intent,
 )
 from app.services.enrichment import enrich_website
-from app.tools.web_search import WebSearchTool
+from app.tools.web_search import WebSearchTool, run_search
 
 log = logging.getLogger(__name__)
 
@@ -1237,11 +1237,8 @@ async def run_paginated_discovery(
             }
         search_query = str(state.get("active_query") or query)
         try:
-            report = await asyncio.wait_for(
-                asyncio.to_thread(
-                    web.search_backup_page, search_query, 1, state.get("fields"),
-                ),
-                timeout=22.0,
+            report = await run_search(
+                web.search_backup_page, search_query, 1, state.get("fields"), timeout=22.0,
             )
         except TimeoutError:
             report = {
@@ -1304,6 +1301,11 @@ async def run_paginated_discovery(
 
         current_q = intent.query
         intents_done = sum(1 for r in intent_rows if r.status != "active")
+        if serper_credits_out:
+            active_query = str((backup_states.get(intent_id) or {}).get("active_query") or current_q)
+            _note(stats, f"Searching: {active_query}")
+        else:
+            _note(stats, f"Searching Google page {page}: {current_q}")
         _update_job(
             job_id,
             status="running",
@@ -1346,14 +1348,20 @@ async def run_paginated_discovery(
         organic = list(report.get("hits") or [])
         provider = str(report.get("provider") or "none")
         search_error = str(report.get("error") or "")
-        if not fallback and report.get("out_of_credits"):
+        if not fallback and (report.get("out_of_credits") or report.get("timed_out")):
             serper_credits_out = True
             stats.google_requests += 1
             _note(stats, search_error)
-            _note(
-                stats,
-                "Serper is out of credits. This run uses a free search instead. Google pages were not marked finished.",
-            )
+            if report.get("timed_out"):
+                _note(
+                    stats,
+                    "Google did not answer. This run uses a free search instead. Google pages were not marked finished.",
+                )
+            else:
+                _note(
+                    stats,
+                    "Serper is out of credits. This run uses a free search instead. Google pages were not marked finished.",
+                )
             report = await _backup_report(intent.query, intent_id)
             ddg_batch = int(report.get("batch") or 1)
             organic = list(report.get("hits") or [])
@@ -2044,7 +2052,8 @@ def _telemetry_payload(
         "leadsSaved": stats.leads_saved,
         "alreadyKnown": stats.already_known_skips,
         "huntLog": list(stats.logs),
-        "stopSummary": _stop_summary(stats),
+        # The finished summary is added when the hunt actually ends.
+        "stopSummary": "",
         "intentStatus": [
             {
                 "searchIntent": r.search_intent,
