@@ -284,6 +284,16 @@ def test_leads_split_evenly_across_hunt_lines():
     assert leads_per_intent_share(40, 1) == 40
 
 
+def test_manual_leads_match_by_website_and_name():
+    from app.integrations.sheets import _lead_match_keys
+
+    websites, names = _lead_match_keys([
+        {"company_name": "Acme Supply", "website": "https://acme.example", "stage": "Manual"},
+    ])
+    assert websites == {"https://acme.example"}
+    assert names == {"acme supply"}
+
+
 def test_running_hunt_does_not_say_it_stopped_before_searching():
     from app.services.paginated_discovery import HuntStats, _stop_summary, _telemetry_payload
 

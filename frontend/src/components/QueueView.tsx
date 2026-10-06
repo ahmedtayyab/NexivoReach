@@ -22,7 +22,12 @@ const LEAD_STAGES = [
   'Avoid',
   'Meeting',
   'Won',
+  'Manual',
 ] as const;
+
+const STAGE_LABEL: Record<string, string> = {
+  Manual: 'Send to sheet tab',
+};
 
 interface Props {
   prospects: Prospect[];
@@ -34,7 +39,7 @@ interface Props {
   onSendAllReady?: () => void | Promise<void>;
   onSendSelected?: (ids: string[]) => Promise<void> | void;
   onRefreshContacts?: (id: string) => Promise<void> | void;
-  onUpdateEmail?: (id: string, email: string) => Promise<void> | void;
+  onUpdateEmail?: (id: string, emails: string[]) => Promise<void> | void;
   gmailConnected?: boolean;
   onGoWorkspace?: () => void;
   templateCount?: number;
@@ -197,9 +202,9 @@ export default function QueueView({
       showWebsite
       finding={refreshingId === prospect.id}
       onFind={onRefreshContacts ? handleRefreshEmail : undefined}
-      onSave={async (id, email) => {
+      onSave={async (id, emails) => {
         if (!onUpdateEmail) return;
-        await onUpdateEmail(id, email);
+        await onUpdateEmail(id, emails);
       }}
     />
   );
@@ -544,7 +549,7 @@ export default function QueueView({
                   className="mt-3 w-full text-[12px] border border-border px-2 py-1.5 bg-panel text-ink-secondary"
                 >
                   {LEAD_STAGES.map(s => (
-                    <option key={s} value={s}>{s}</option>
+                    <option key={s} value={s}>{STAGE_LABEL[s] || s}</option>
                   ))}
                 </select>
               </div>
@@ -631,7 +636,7 @@ export default function QueueView({
                       className="text-[12px] border border-border px-1.5 py-1 bg-panel text-ink-secondary w-full"
                     >
                       {LEAD_STAGES.map(s => (
-                        <option key={s} value={s}>{s}</option>
+                        <option key={s} value={s}>{STAGE_LABEL[s] || s}</option>
                       ))}
                     </select>
                   </div>

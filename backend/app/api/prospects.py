@@ -8,7 +8,7 @@ from app.models.schemas import ProspectRecord
 from app.api.deps import AuthUser, get_current_user, resolve_business_id
 from app.api.serializers import prospect_from_frontend, prospect_to_frontend
 from app.integrations import sheets as sheets_mod
-from app.tools.contact_finder import resolve_lead_email
+from app.tools.contact_finder import emails_from_lead
 import csv
 import io
 import logging
@@ -28,9 +28,20 @@ def normalize_manual_email(raw: str) -> str:
     return text
 
 
-def apply_manual_lead_email(record: ProspectRecord, email: str) -> None:
-    """Set the address used for this lead. A blank value clears it."""
-    record.email = email
+def apply_manual_lead_emails(record: ProspectRecord, emails: list[str]) -> None:
+    """Replace the addresses used for this lead. An empty list clears them."""
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in emails:
+        email = normalize_manual_email(raw)
+        key = email.lower()
+        if not email or key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(email)
+        if len(cleaned) >= 8:
+            break
+    record.email = cleaned[0] if cleaned else ""
     kept = []
     for item in record.contacts or []:
         if not isinstance(item, dict):
@@ -41,12 +52,18 @@ def apply_manual_lead_email(record: ProspectRecord, email: str) -> None:
         if kind in _EMAIL_TYPES and "@" in value:
             continue
         kept.append(item)
-    if email:
-        kept.insert(0, {"type": "email", "value": email, "source": "manual", "label": "Added by you"})
-    record.contacts = kept
+    record.contacts = [
+        {"type": "email", "value": email, "source": "manual", "label": "Added by you"}
+        for email in cleaned
+    ] + kept
     draft = record.outreach_draft
     if isinstance(draft, dict):
-        record.outreach_draft = {**draft, "toEmail": email}
+        record.outreach_draft = {**draft, "toEmail": ", ".join(cleaned)}
+
+
+def apply_manual_lead_email(record: ProspectRecord, email: str) -> None:
+    """Set the address used for this lead. A blank value clears it."""
+    apply_manual_lead_emails(record, [email] if email else [])
 
 
 @router.get("/export.csv")
@@ -72,10 +89,12 @@ def export_prospects_csv(request: Request, user: AuthUser = Depends(get_current_
                     "",  # Seller Company filled by Sheets sync; leave blank here
                     front.get("companyName") or "",
                     front.get("website") or "",
-                    resolve_lead_email(
-                        email=front.get("email") or "",
-                        contacts=front.get("contacts") or [],
-                        to_email=((front.get("outreachDraft") or {}).get("toEmail") or ""),
+                    ", ".join(
+                        emails_from_lead(
+                            email=front.get("email") or "",
+                            contacts=front.get("contacts") or [],
+                            to_email=((front.get("outreachDraft") or {}).get("toEmail") or ""),
+                        )
                     ),
                     front.get("phone") or "",
                     location,
@@ -179,15 +198,22 @@ def update_prospect_email(
     request: Request,
     user: AuthUser = Depends(get_current_user),
 ):
-    email = normalize_manual_email(str((payload or {}).get("email") or ""))
-    if email and not _EMAIL_RE.match(email):
-        raise HTTPException(status_code=400, detail="Enter a full email address")
+    raw_list = (payload or {}).get("emails")
+    if isinstance(raw_list, list):
+        emails = [normalize_manual_email(str(item or "")) for item in raw_list]
+        emails = [item for item in emails if item]
+    else:
+        one = normalize_manual_email(str((payload or {}).get("email") or ""))
+        emails = [one] if one else []
+    for email in emails:
+        if not _EMAIL_RE.match(email):
+            raise HTTPException(status_code=400, detail="Enter a full email address")
     with Session(engine) as session:
         business_id = resolve_business_id(request, user, session)
         record = session.get(ProspectRecord, prospect_id)
         if not record or record.business_id != business_id:
             raise HTTPException(status_code=404, detail="Lead not found")
-        apply_manual_lead_email(record, email)
+        apply_manual_lead_emails(record, emails)
         session.add(record)
         session.commit()
         session.refresh(record)
@@ -303,6 +329,8 @@ def _maybe_sync_prospect(record: ProspectRecord):
                 "source": record.source,
                 "phone": record.phone,
                 "email": getattr(record, "email", None) or "",
+                "contacts": record.contacts or [],
+                "outreach_draft": record.outreach_draft if isinstance(record.outreach_draft, dict) else {},
                 "contact_again": bool(getattr(record, "contact_again", True)),
                 "reply_summary": getattr(record, "reply_summary", None) or "",
                 "seller_name": seller,

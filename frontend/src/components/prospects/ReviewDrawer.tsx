@@ -1,7 +1,7 @@
 import type { Prospect } from '../../types';
 import { X, ArrowLeft, ExternalLink, CheckCircle, Mail, Phone, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { recipientEmail } from '../../lib/leadTone';
+import { recipientEmail, recipientEmails } from '../../lib/leadTone';
 import LeadRationaleChips from './LeadRationaleChips';
 import LeadBrief from './LeadBrief';
 import LeadEmailField from './LeadEmailField';
@@ -20,7 +20,7 @@ interface Props {
   onPrepareOutreach?: (id: string) => void;
   onPrepareFollowUp?: (id: string) => void;
   onRefreshContacts?: (id: string) => Promise<void> | void;
-  onUpdateEmail?: (id: string, email: string) => Promise<void> | void;
+  onUpdateEmail?: (id: string, emails: string[]) => Promise<void> | void;
   gmailConnected?: boolean;
 }
 
@@ -235,7 +235,8 @@ export default function ReviewDrawer({
                   pages.push({ value: c.value, label: c.label });
                 }
               }
-              const bestTo = recipientEmail(prospect) || emails[0] || '';
+              const recipients = recipientEmails(prospect);
+              const bestTo = recipients[0] || emails[0] || '';
               const enrich = breakdown?.contactEnrich;
               const enrichNote = enrich
                 ? enrich.status === 'found'
@@ -279,9 +280,9 @@ export default function ReviewDrawer({
               }
               return (
                 <div className="space-y-2.5 text-[13px]">
-                  {bestTo && (
+                  {recipients.length > 0 && (
                     <p className="text-[12px] text-ink-muted">
-                      Best To: <span className="text-ink-secondary font-medium">{bestTo}</span>
+                      Sends to: <span className="text-ink-secondary font-medium">{recipients.join(', ')}</span>
                     </p>
                   )}
                   {emails.map(e => (

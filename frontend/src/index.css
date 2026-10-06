@@ -428,6 +428,10 @@ input:focus, textarea:focus, select:focus {
   background: color-mix(in srgb, var(--info) 16%, transparent);
   border-left-color: var(--accent-hover);
 }
+.lead-row-tone-manual {
+  background: color-mix(in srgb, #8b7cc9 14%, transparent);
+  border-left-color: #8b7cc9;
+}
 
 .lead-tone-legend {
   display: flex;
@@ -4052,12 +4056,32 @@ input:focus, textarea:focus, select:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.lead-email-editor__list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  min-width: 0;
+  max-width: 100%;
+}
+.lead-email-editor__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
 .lead-email-editor__form {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.3rem;
   width: 100%;
+}
+.lead-email-editor__row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 1 0 100%;
+  min-width: 0;
 }
 .lead-email-editor__form input {
   flex: 1 1 9rem;
@@ -4069,6 +4093,24 @@ input:focus, textarea:focus, select:focus {
   border-radius: 0.3rem;
   background: var(--bg-panel);
   color: var(--text-primary);
+}
+.lead-email-editor__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--text-muted);
+}
+.lead-email-editor__remove:hover { color: var(--text-primary); }
+.lead-email-editor__hint {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 .lead-email-editor__btn {
   padding: 0.22rem 0.5rem;

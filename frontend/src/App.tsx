@@ -426,7 +426,9 @@ export default function App() {
         if (p.id !== prospectId || !p.outreachDraft) return p;
         const updated = {
           ...p,
-          email: toEmail !== undefined && toEmail.trim() ? toEmail.trim() : p.email,
+          email: toEmail !== undefined && toEmail.trim()
+            ? (toEmail.split(/[,;\n]+/).map(item => item.trim()).find(item => item.includes('@')) || p.email)
+            : p.email,
           outreachDraft: {
             ...p.outreachDraft,
             subject,
@@ -462,9 +464,14 @@ export default function App() {
         const params = new URLSearchParams();
         if (data.mailto.subject) params.set('subject', data.mailto.subject);
         if (data.mailto.body) params.set('body', data.mailto.body);
-        const to = data.mailto.to || '';
+        const rawTo = String(data.mailto.to || '');
+        const to = rawTo
+          .split(/[,;\n]+/)
+          .map((item: string) => item.trim())
+          .filter((item: string) => item.includes('@'))
+          .join(',');
         const href = to
-          ? `mailto:${encodeURIComponent(to)}?${params.toString()}`
+          ? `mailto:${to}?${params.toString()}`
           : `mailto:?${params.toString()}`;
         window.open(href, '_blank');
         pushToast('info', 'Opened in your mail app', current?.companyName || 'Compose ready');
@@ -862,6 +869,7 @@ export default function App() {
   }, []);
 
   const handleUpdateStage = (prospectId: string, stage: Prospect['stage']) => {
+    const current = prospects.find(p => p.id === prospectId);
     setProspects(prev =>
       prev.map(p => {
         if (p.id !== prospectId) return p;
@@ -870,12 +878,19 @@ export default function App() {
         return updated;
       })
     );
+    if (stage === 'Manual') {
+      pushToast(
+        'info',
+        'Set aside for later',
+        `${current?.companyName || 'This lead'} is on the Manual tab of your company sheet.`,
+      );
+    }
   };
 
-  const handleUpdateEmail = async (prospectId: string, email: string) => {
+  const handleUpdateEmail = async (prospectId: string, emails: string[]) => {
     const resp = await apiFetch(`/api/prospects/${prospectId}/email`, {
       method: 'PATCH',
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ emails }),
     });
     if (!resp.ok) {
       let message = 'Could not save that email';

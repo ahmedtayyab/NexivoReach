@@ -324,8 +324,25 @@ def _clean_phone(raw: str) -> Optional[str]:
     return re.sub(r"\s+", " ", (raw or "").strip())[:32]
 
 
-def email_from_contacts(contacts: Any) -> str:
-    """First usable email stored on a lead's contacts list."""
+def split_email_list(raw: str) -> List[str]:
+    """Split a To: field or sheet cell into unique addresses."""
+    text = (raw or "").strip()
+    if text.lower().startswith("mailto:"):
+        text = text.split(":", 1)[1].split("?", 1)[0]
+    out: List[str] = []
+    seen: set[str] = set()
+    for part in re.split(r"[,;\n]+", text):
+        addr = _clean_email(part)
+        if addr and addr not in seen:
+            seen.add(addr)
+            out.append(addr)
+    return out
+
+
+def emails_from_contacts(contacts: Any) -> List[str]:
+    """Every usable email stored on a lead's contacts list, in stored order."""
+    out: List[str] = []
+    seen: set[str] = set()
     for c in contacts or []:
         if not isinstance(c, dict):
             continue
@@ -336,13 +353,54 @@ def email_from_contacts(contacts: Any) -> str:
             ctype = "email"
         if ctype and ctype not in ("email", "mail", "e-mail"):
             continue
-        # typeless value that looks like an email
         if not ctype and "@" not in val:
             continue
-        addr = _clean_email(val)
-        if addr:
-            return addr
-    return ""
+        for addr in split_email_list(val):
+            if addr not in seen:
+                seen.add(addr)
+                out.append(addr)
+    return out
+
+
+def email_from_contacts(contacts: Any) -> str:
+    """First usable email stored on a lead's contacts list."""
+    found = emails_from_contacts(contacts)
+    return found[0] if found else ""
+
+
+def emails_from_lead(
+    email: str = "",
+    contacts: Any = None,
+    to_email: str = "",
+) -> List[str]:
+    """Every address for this company: send list, primary email, then other contacts."""
+    out: List[str] = []
+    seen: set[str] = set()
+
+    def add(raw: str) -> None:
+        for addr in split_email_list(raw):
+            if addr not in seen:
+                seen.add(addr)
+                out.append(addr)
+
+    add(to_email)
+    add(email)
+    for addr in emails_from_contacts(contacts):
+        if addr not in seen:
+            seen.add(addr)
+            out.append(addr)
+    return out
+
+
+def recipients_for_send(saved: List[str], override: str = "") -> List[str]:
+    """Addresses for one send. A primary-only override still includes the saved list."""
+    saved = saved[:8]
+    requested = split_email_list(override)[:8]
+    if not requested:
+        return saved
+    if len(requested) == 1 and saved and requested[0] == saved[0]:
+        return saved
+    return requested
 
 
 def resolve_lead_email(

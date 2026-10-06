@@ -17,7 +17,12 @@ from app.integrations import sheets as sheets_mod
 from app.models.schemas import Business, ProspectRecord, User, OutreachTemplate, ProductItem
 from app.providers.factory import get_ai_provider
 from app.services import access as access_mod
-from app.tools.contact_finder import discover_contacts, resolve_lead_email, email_from_contacts
+from app.tools.contact_finder import (
+    discover_contacts,
+    email_from_contacts,
+    emails_from_lead,
+    recipients_for_send,
+)
 from app.tools.web_search import WebSearchTool
 from app.agents.template_selector import (
     build_lead_signals,
@@ -78,12 +83,22 @@ def _is_outreach_ready(row: ProspectRecord) -> bool:
 
 def _recipient_email(row: ProspectRecord) -> str:
     """Resolve who to email — draft To: → lead.email → contacts[]."""
+    found = _all_recipient_emails(row)
+    return found[0] if found else ""
+
+
+def _all_recipient_emails(row: ProspectRecord) -> List[str]:
     draft = row.outreach_draft or {}
-    return resolve_lead_email(
+    return emails_from_lead(
         email=row.email or "",
         contacts=row.contacts or [],
         to_email=(draft.get("toEmail") or "") if isinstance(draft, dict) else "",
     )
+
+
+def _joined_recipients(row: ProspectRecord, override: str = "") -> str:
+    """One To: line. A single primary address still sends to every saved email."""
+    return ", ".join(recipients_for_send(_all_recipient_emails(row), override))
 
 
 def _sync_leads_to_sheets(session: Session, business_id: str, rows: List[ProspectRecord]) -> None:
@@ -131,6 +146,8 @@ def _sync_leads_to_sheets(session: Session, business_id: str, rows: List[Prospec
                 "source": record.source,
                 "phone": record.phone,
                 "email": getattr(record, "email", None) or "",
+                "contacts": record.contacts or [],
+                "outreach_draft": record.outreach_draft if isinstance(record.outreach_draft, dict) else {},
                 "contact_again": bool(getattr(record, "contact_again", True)),
                 "reply_summary": getattr(record, "reply_summary", None) or "",
                 "seller_name": seller,
@@ -536,7 +553,10 @@ async def _send_one_gmail(
     if not draft:
         raise HTTPException(status_code=400, detail="No outreach draft")
 
-    to_addr = (to or "").strip() or await _ensure_recipient(session, row)
+    requested = (to or "").strip()
+    if not requested and not _all_recipient_emails(row):
+        requested = await _ensure_recipient(session, row)
+    to_addr = _joined_recipients(row, requested)
     if not to_addr:
         raise HTTPException(
             status_code=400,
@@ -587,7 +607,7 @@ async def _send_one_gmail(
     draft["gmailThreadId"] = sent.get("threadId") or ""
     draft["sentAt"] = _now()
     draft["sentVia"] = "gmail"
-    row.email = to_addr or row.email
+    row.email = to_addr.split(",")[0].strip() or row.email
     row.stage = "Contacted"
     timeline = list(row.agent_timeline or [])
     timeline.append({"time": _clock(), "action": f"Sent via Gmail to {to_addr}"})
@@ -631,8 +651,16 @@ async def send_batch(
         ).all()
         id_set = set(ids) if ids else None
         targets: List[ProspectRecord] = []
+        errors: List[Dict[str, str]] = []
         for row in rows:
             if id_set is not None and row.id not in id_set:
+                continue
+            if str(row.stage or "").strip().lower() == "manual":
+                errors.append({
+                    "id": row.id or "",
+                    "company": row.company_name or "",
+                    "error": "Set aside on the Manual sheet tab",
+                })
                 continue
             if not _draft_sendable_after_resolve(row):
                 continue
@@ -647,7 +675,6 @@ async def send_batch(
             access_mod.consume_usage(session, db_user, "send", amount=len(targets))
 
         sent_rows: List[ProspectRecord] = []
-        errors: List[Dict[str, str]] = []
         skipped_no_email = 0
         for row in targets:
             try:
@@ -722,6 +749,8 @@ async def send_ready(
                 break
             if id_set is not None and row.id not in id_set:
                 continue
+            if str(row.stage or "").strip().lower() == "manual":
+                continue
             if id_set is None and not _is_outreach_ready(row):
                 continue
             if row.outreach_draft and (row.outreach_draft or {}).get("status") in ("Sent", "Replied"):
@@ -747,6 +776,8 @@ async def send_ready(
         targets = []
         for r in rows:
             if id_set is not None and r.id not in id_set:
+                continue
+            if str(r.stage or "").strip().lower() == "manual":
                 continue
             if not _draft_sendable_after_resolve(r):
                 continue
@@ -1067,14 +1098,17 @@ async def send_outreach(
 
         subject = (body_in.get("subject") or draft.get("subject") or "").strip()
         body = (body_in.get("body") or draft.get("body") or "").strip()
-        to = (body_in.get("toEmail") or "").strip() or await _ensure_recipient(session, row)
+        requested = (body_in.get("toEmail") or "").strip()
+        if not requested and not _all_recipient_emails(row):
+            requested = await _ensure_recipient(session, row)
+        to = _joined_recipients(row, requested)
         if subject:
             draft["subject"] = subject
         if body:
             draft["body"] = body
         if to:
             draft["toEmail"] = to
-            row.email = to or row.email
+            row.email = to.split(",")[0].strip() or row.email
             row.outreach_draft = draft
             session.add(row)
             session.commit()
@@ -1122,7 +1156,7 @@ async def send_outreach(
         draft["sentAt"] = _now()
         draft["sentVia"] = "mailto"
         draft["toEmail"] = to
-        row.email = to or row.email
+        row.email = to.split(",")[0].strip() or row.email
         row.stage = "Contacted"
         timeline = list(row.agent_timeline or [])
         timeline.append({"time": _clock(), "action": "Opened mailto for human send"})

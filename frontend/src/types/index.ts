@@ -190,6 +190,7 @@ export interface Prospect {
     | 'Avoid'
     | 'Meeting'
     | 'Won'
+    | 'Manual'
     | 'New'
     | 'Researched'
     | 'Qualified';

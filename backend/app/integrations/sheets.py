@@ -21,6 +21,7 @@ from sqlmodel import Session
 from app.config import settings
 from app.integrations import sheets_oauth as sheets_oauth_mod
 from app.models.schemas import User
+from app.tools.contact_finder import emails_from_lead
 from app.tools.web_search import display_name_from_url, site_display_name_from_url, _registrable_domain
 
 log = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ _LEAD_STATUS_COLORS: dict[str, dict[str, float]] = {
     "Avoid": {"red": 0.93, "green": 0.84, "blue": 0.84},
     "Meeting": {"red": 0.72, "green": 0.82, "blue": 0.95},
     "Won": {"red": 0.68, "green": 0.88, "blue": 0.74},
+    "Manual": {"red": 0.86, "green": 0.82, "blue": 0.95},
 }
 _LEAD_COLOR_DEFAULT = {"red": 1.0, "green": 1.0, "blue": 1.0}
 
@@ -328,6 +330,15 @@ def is_sent_sheet_status(status: str) -> bool:
     return (status or "").strip().lower() in SENT_LEAD_STATUSES
 
 
+def _emails_in_cell(raw: str) -> list[str]:
+    found: list[str] = []
+    for part in re.split(r"[,;]+", raw or ""):
+        email = part.strip().lower()
+        if "@" in email and email not in found:
+            found.append(email)
+    return found
+
+
 def known_sheet_leads(
     spreadsheet_id: str = "",
     *,
@@ -348,7 +359,7 @@ def known_sheet_leads(
     count = 0
     for ws in sh.worksheets():
         title = (ws.title or "").strip()
-        if not title.endswith(" - Leads"):
+        if not (title.endswith(" - Leads") or title.endswith(" - Manual")):
             continue
         rows = ws.get_all_values()
         if not rows:
@@ -366,8 +377,7 @@ def known_sheet_leads(
             domain = _registrable_domain(row[web_i] if len(row) > web_i else "")
             if domain:
                 domains.add(domain)
-            email = (row[email_i] if len(row) > email_i else "").strip().lower()
-            if "@" in email:
+            for email in _emails_in_cell(row[email_i] if len(row) > email_i else ""):
                 emails.add(email)
     return {"domains": domains, "names": names, "emails": emails, "count": count}
 
@@ -443,8 +453,7 @@ def sent_lead_emails(
             status = row[status_i] if len(row) > status_i else ""
             if not is_sent_sheet_status(status):
                 continue
-            email = (row[email_i] if len(row) > email_i else "").strip().lower()
-            if "@" in email:
+            for email in _emails_in_cell(row[email_i] if len(row) > email_i else ""):
                 found.add(email)
     return found
 
@@ -828,42 +837,55 @@ def sync_products(
     return {"written": written, "url": url, "tab": tab_name}
 
 
-def sync_leads(
-    seller_name: str,
+def _worksheet_if_exists(spreadsheet, title: str):
+    try:
+        return spreadsheet.worksheet(title)
+    except Exception:
+        return None
+
+
+def _remove_matching_lead_rows(ws, websites: set[str], names: set[str]) -> int:
+    """Drop rows whose website or lead name is in the move set. Highest row first."""
+    try:
+        rows = ws.get_all_values()
+    except Exception as exc:
+        log.warning("Could not read %s while moving a lead: %s", getattr(ws, "title", ""), exc)
+        return 0
+    drop: list[int] = []
+    for idx, row in enumerate(rows[1:], start=2):
+        web = (row[2] if len(row) > 2 else "").strip().lower()
+        name = (row[1] if len(row) > 1 else "").strip().lower()
+        if (web and web in websites) or (name and name in names):
+            drop.append(idx)
+    for idx in reversed(drop):
+        ws.delete_rows(idx)
+    return len(drop)
+
+
+def _lead_match_keys(prospects: list[dict]) -> tuple[set[str], set[str]]:
+    websites: set[str] = set()
+    names: set[str] = set()
+    for prospect in prospects:
+        website = (prospect.get("website") or "").strip().lower()
+        name = (prospect.get("company_name") or prospect.get("companyName") or "").strip().lower()
+        if website:
+            websites.add(website)
+        if name:
+            names.add(name)
+    return websites, names
+
+
+def _write_lead_tab(
+    spreadsheet,
+    seller: str,
+    tab_name: str,
     prospects: list[dict],
-    spreadsheet_id: str = "",
     *,
-    session: Session | None = None,
-    user: User | None = None,
-    append_existing: bool = False,
+    append_existing: bool,
+    now: str,
 ) -> dict:
-    """
-    Upsert leads onto a per-seller tab: '<Seller> - Leads'.
-    Separate from the product catalog tab. Includes seller company name on every row.
-    Dedupes on Website, then Lead Name.
-    """
-    client = _get_client(session, user)
-    if client is None:
-        return {"written": 0, "error": "Sheets not configured"}
-
-    sheet_id = resolve_spreadsheet_id(spreadsheet_id)
-    if not sheet_id:
-        return {"written": 0, "error": "No spreadsheet linked for this company"}
-    sh = client.open_by_key(sheet_id)
-    generic = GENERIC_COMPANY_NAMES
-    resolved = (seller_name or "").strip()
-    if resolved.lower() in generic:
-        for p in prospects:
-            url = (p.get("seller_website") or p.get("sellerWebsite") or "").strip()
-            if url:
-                resolved = site_display_name_from_url(url) or display_name_from_url(url) or resolved
-                if resolved and resolved.lower() not in generic:
-                    break
-    seller = _sanitize_tab_label(resolved or "Company")
-    tab_name = f"{seller} - Leads"
-    ws = _get_or_create_sheet(sh, tab_name, LEAD_HEADERS)
-    now = _now()
-
+    """Upsert lead rows onto one worksheet."""
+    ws = _get_or_create_sheet(spreadsheet, tab_name, LEAD_HEADERS)
     existing = ws.get_all_values()
     index_by_web: dict[str, int] = {}
     index_by_name: dict[str, int] = {}
@@ -893,20 +915,26 @@ def sync_leads(
             "Avoid": "Do not contact",
             "Meeting": "Prepare meeting",
             "Won": "Onboard",
+            "Manual": "Contact manually later",
         }.get(stage, "Review")
         contact_again = p.get("contact_again")
         if contact_again is None:
             contact_again = p.get("contactAgain", True)
         location = p.get("location") or ""
         city, country = _lead_city_country(location)
-        # Prefer explicit fields when callers already split them
         city = (p.get("city") or city or "").strip()
         country = (p.get("country") or country or "").strip()
+        draft = p.get("outreachDraft") or p.get("outreach_draft") or {}
+        found_emails = emails_from_lead(
+            email=p.get("email") or "",
+            contacts=p.get("contacts") or [],
+            to_email=(draft.get("toEmail") or "") if isinstance(draft, dict) else "",
+        )
         row_data = [
             seller,
             name,
             website,
-            p.get("email") or "",
+            ", ".join(found_emails) if found_emails else (p.get("email") or ""),
             p.get("phone") or "",
             location,
             city,
@@ -953,9 +981,73 @@ def sync_leads(
     except Exception as exc:
         log.warning("Lead row coloring skipped: %s", exc)
 
-    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
     written = len(updates) + len(appends)
     log.info("Synced %s leads to %s", written, tab_name)
+    return {"written": written, "tab": tab_name, "existingNames": existing_names}
+
+
+def sync_leads(
+    seller_name: str,
+    prospects: list[dict],
+    spreadsheet_id: str = "",
+    *,
+    session: Session | None = None,
+    user: User | None = None,
+    append_existing: bool = False,
+) -> dict:
+    """
+    Upsert leads onto '<Seller> - Leads'.
+    Status Manual goes to '<Seller> - Manual' instead, and is removed from the main leads tab.
+    """
+    client = _get_client(session, user)
+    if client is None:
+        return {"written": 0, "error": "Sheets not configured"}
+
+    sheet_id = resolve_spreadsheet_id(spreadsheet_id)
+    if not sheet_id:
+        return {"written": 0, "error": "No spreadsheet linked for this company"}
+    sh = client.open_by_key(sheet_id)
+    generic = GENERIC_COMPANY_NAMES
+    resolved = (seller_name or "").strip()
+    if resolved.lower() in generic:
+        for p in prospects:
+            url = (p.get("seller_website") or p.get("sellerWebsite") or "").strip()
+            if url:
+                resolved = site_display_name_from_url(url) or display_name_from_url(url) or resolved
+                if resolved and resolved.lower() not in generic:
+                    break
+    seller = _sanitize_tab_label(resolved or "Company")
+    now = _now()
+    manual = [p for p in prospects if str(p.get("stage") or "").strip().lower() == "manual"]
+    main = [p for p in prospects if str(p.get("stage") or "").strip().lower() != "manual"]
+    leads_tab = f"{seller} - Leads"
+    manual_tab = f"{seller} - Manual"
+    existing_names: list[str] = []
+    written = 0
+    tab_name = leads_tab
+    if main or not manual:
+        part = _write_lead_tab(
+            sh, seller, leads_tab, main, append_existing=append_existing, now=now,
+        )
+        written += int(part.get("written") or 0)
+        existing_names.extend(part.get("existingNames") or [])
+    if manual:
+        part = _write_lead_tab(
+            sh, seller, manual_tab, manual, append_existing=True, now=now,
+        )
+        written += int(part.get("written") or 0)
+        tab_name = manual_tab
+        leads_ws = _worksheet_if_exists(sh, leads_tab)
+        if leads_ws is not None:
+            websites, names = _lead_match_keys(manual)
+            _remove_matching_lead_rows(leads_ws, websites, names)
+    if main:
+        manual_ws = _worksheet_if_exists(sh, manual_tab)
+        if manual_ws is not None:
+            websites, names = _lead_match_keys(main)
+            _remove_matching_lead_rows(manual_ws, websites, names)
+
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
     return {
         "written": written,
         "url": url,

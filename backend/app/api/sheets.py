@@ -297,6 +297,8 @@ def sync_leads_now(
                 "source": record.source,
                 "phone": record.phone,
                 "email": getattr(record, "email", None) or "",
+                "contacts": record.contacts or [],
+                "outreach_draft": record.outreach_draft if isinstance(record.outreach_draft, dict) else {},
                 "contact_again": bool(getattr(record, "contact_again", True)),
                 "reply_summary": getattr(record, "reply_summary", None) or "",
                 "seller_name": seller,
