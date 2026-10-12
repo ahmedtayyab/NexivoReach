@@ -23,7 +23,7 @@ from app.tools.contact_finder import (
     emails_from_lead,
     recipients_for_send,
 )
-from app.tools.web_search import WebSearchTool
+from app.tools.web_search import WebSearchTool, company_name_from_url
 from app.agents.template_selector import (
     build_lead_signals,
     select_outreach_template,
@@ -38,6 +38,15 @@ router = APIRouter(prefix="/api/prospects", tags=["prospects-outreach"])
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _company_for_email(row: ProspectRecord, *, default: str = "there") -> str:
+    """Name written into {{company}} and email greetings: the site's domain, not the page title."""
+    label = company_name_from_url(getattr(row, "website", "") or "")
+    if label:
+        return label
+    stored = (getattr(row, "company_name", None) or "").strip()
+    return stored or default
 
 
 def _clock() -> str:
@@ -337,7 +346,7 @@ async def _prepare_one(
                 body=picked.get("body") or "",
                 specialize_lines=picked.get("specializeLines") or picked.get("specialize_lines") or [],
                 vars={
-                    "company": row.company_name or "there",
+                    "company": _company_for_email(row),
                     "seller": seller,
                     "product": top_product,
                     "location": row.location or "",
@@ -377,7 +386,7 @@ async def _prepare_one(
             raise HTTPException(status_code=400, detail="Could not apply that template")
         provider = get_ai_provider()
         draft = await provider.generate_personalized_outreach(
-            company_name=row.company_name or "there",
+            company_name=_company_for_email(row),
             why_prospect=row.why_this_prospect or "",
             signals=row.buying_signals or [],
             matched_products=row.product_fit or [],
@@ -582,7 +591,7 @@ async def _send_one_gmail(
         seller = ""
     cleaned = sanitize_outreach_draft(
         {"subject": subj, "body": body_text},
-        company_name=row.company_name or "",
+        company_name=_company_for_email(row, default=""),
         seller_name=seller or getattr(db_user, "name", None) or "",
         first_touch=not str(subj).lower().startswith("re:"),
         # Custom templates: keep the author's line breaks, bullets, and greeting.
@@ -1043,7 +1052,7 @@ async def prepare_follow_up(
         prior = row.outreach_draft or {}
         provider = get_ai_provider()
         draft = await provider.generate_follow_up_outreach(
-            company_name=row.company_name or "there",
+            company_name=_company_for_email(row),
             why_prospect=row.why_this_prospect or "",
             prior_subject=prior.get("subject") or "",
             prior_body=prior.get("body") or "",

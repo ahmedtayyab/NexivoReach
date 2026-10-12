@@ -454,6 +454,21 @@ def test_company_name_skips_generic_title_parts():
     assert _company_name_from_title("Rhingo USA Wholesale - Gym Gear", "https://rhingousa.com/") == "Rhingo USA Wholesale"
 
 
+def test_email_company_name_comes_from_url_not_page_title():
+    from app.tools.web_search import company_name_from_url
+
+    assert company_name_from_url("www.sofiviness.shop") == "Sofiviness"
+    assert company_name_from_url("https://www.sofiviness.shop/") == "Sofiviness"
+    assert company_name_from_url(
+        "sporttrend.ee/index.php/spordivarustus/boxing-gloves-insportline"
+    ) == "Sporttrend"
+    assert company_name_from_url(
+        "hantel.ee/product-category/boxingkickboxing-equipment/?lang=en"
+    ) == "Hantel"
+    assert company_name_from_url("https://shop.example.co.uk/catalog") == "Example"
+    assert company_name_from_url("") == ""
+
+
 def test_product_hunt_runs_web_search_without_maps(monkeypatch):
     import asyncio
     from app.agents.prospecting_agent import ProspectingAgent

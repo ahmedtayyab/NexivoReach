@@ -782,6 +782,7 @@ FORMATTING (plain text — critical for readability in Gmail)
   Best regards,
   {seller}
 - Prefer "Hi {company} team," over bare "Hello," when no contact first name is known.
+- Address them only as "{company}". That name comes from their website domain. Do not replace it with a longer name from a page title, meta description, or homepage.
 - Do not use Markdown, bullets, or HTML.
 
 HARD RULES
@@ -824,6 +825,7 @@ Rules:
 - 80–140 words. One clear CTA.
 - Use blank lines between greeting, each short paragraph, CTA, and sign-off — never one dense block.
 - Prefer "Hi {company_name} team," over bare "Hello,".
+- Address them only as "{company_name}". Do not replace it with a longer name from a page title, meta description, or homepage.
 - If they replied, address their point first; do not re-pitch blindly.
 - If silence, briefly restate relevance without guilt, pressure, or "circling back / got buried" clichés.
 - No links unless essential; no "click here", urgency, or guarantees.

@@ -131,6 +131,38 @@ def display_name_from_url(url: str) -> str:
     return _brand_from_url(url)
 
 
+# Second-level suffixes where the brand sits one label further left (example.co.uk).
+_SECOND_LEVEL_SUFFIXES = frozenset({
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au",
+    "co.nz", "com.br", "com.mx", "co.za", "co.jp", "com.tr", "com.ar",
+    "co.in", "com.sg", "com.hk", "co.kr", "com.tw",
+})
+
+
+def company_name_from_url(url: str) -> str:
+    """
+    Company label from the website host only — not the page title, description, or homepage.
+
+    www.sofiviness.shop → Sofiviness
+    sporttrend.ee/index.php/spordivarustus/boxing-gloves-insportline → Sporttrend
+    hantel.ee/product-category/boxingkickboxing-equipment/?lang=en → Hantel
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    candidate = raw if "://" in raw else f"https://{raw}"
+    host = (urlparse(candidate).hostname or "").lower().strip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    labels = [part for part in host.split(".") if part]
+    if len(labels) < 2:
+        return ""
+    tail = ".".join(labels[-2:])
+    slug = labels[-3] if len(labels) >= 3 and tail in _SECOND_LEVEL_SUFFIXES else labels[-2]
+    label = re.sub(r"\s+", " ", slug.replace("-", " ").replace("_", " ")).strip()
+    return label.title() if label else ""
+
+
 def site_display_name_from_url(url: str) -> str:
     """
     Best-effort company name from a website: og:site_name / <title>, then domain slug.
