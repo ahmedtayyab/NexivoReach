@@ -42,6 +42,7 @@ import LoginView from './components/LoginView';
 import PrivacyPolicyView from './components/PrivacyPolicyView';
 import SuspendedView from './components/SuspendedView';
 import BrandLockup from './components/brand/BrandLockup';
+import AppVersionMark from './components/AppVersionMark';
 
 function gmailCanSend(user: AuthUser | null | undefined): boolean {
   const g = user?.gmail;
@@ -1022,6 +1023,7 @@ export default function App() {
           decoding="async"
         />
         <span className="nr-enter nr-enter-delay-1">Loading…</span>
+        <AppVersionMark />
       </div>
     );
   }
@@ -1031,11 +1033,21 @@ export default function App() {
     activeRoute === 'privacy' || path === '/privacy' || path === '/privacy.html';
 
   if (wantsPrivacy && (!authConfigured || !user)) {
-    return <PrivacyPolicyView />;
+    return (
+      <>
+        <PrivacyPolicyView />
+        <AppVersionMark />
+      </>
+    );
   }
 
   if (authConfigured && !user) {
-    return <LoginView error={authError} />;
+    return (
+      <>
+        <LoginView error={authError} />
+        <AppVersionMark />
+      </>
+    );
   }
 
   if (user?.isSuspended) {
@@ -1047,12 +1059,14 @@ export default function App() {
           onToast={pushToast}
         />
         <ToastHost toasts={toasts} onDismiss={dismissToast} />
+        <AppVersionMark />
       </>
     );
   }
 
   return (
     <div className="app-shell text-ink flex flex-col md:flex-row">
+      <AppVersionMark />
       <header className="md:hidden sticky top-0 z-30 h-12 px-3 flex items-center justify-between gap-3 bg-surface border-b border-border">
         <button
           type="button"

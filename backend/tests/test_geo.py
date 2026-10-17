@@ -599,7 +599,7 @@ def test_keeps_shopify_product_page_as_business():
     assert row["entity_type"] == "company"
 
 
-def test_company_blog_page_is_still_the_business():
+def test_company_blog_page_is_skipped_but_the_domain_stays_open():
     from app.agents.serp_classifier import classify_serp_row
 
     row = classify_serp_row(
@@ -613,7 +613,9 @@ def test_company_blog_page_is_still_the_business():
         hunting_buyers=True,
         target_places=["New Jersey"],
     )
-    assert row["reject"] is False
+    assert row["reject"] is True
+    assert row["page_kind"] == "article"
+    assert row["burn_domain"] is False
 
 
 def test_accepts_lifting_straps_serp():
@@ -819,6 +821,91 @@ def test_buyers_importers_page_is_kept():
         strict_geo=True,
     )
     assert row["reject"] is False
+
+
+def test_blog_and_review_pages_are_skipped_without_burning_the_company_domain():
+    from app.agents.serp_classifier import classify_serp_row
+
+    blog = classify_serp_row(
+        {
+            "company_name": "Best boxing gloves for gyms",
+            "website": "https://sporttrend.ee/blog/best-boxing-gloves",
+            "title": "Best boxing gloves for gyms",
+            "snippet": "A review of boxing gloves",
+        },
+        hunting_buyers=True,
+        target_places=["London"],
+    )
+    assert blog["reject"] is True
+    assert blog["page_kind"] == "article"
+    assert blog["burn_domain"] is False
+
+    directory = classify_serp_row(
+        {
+            "company_name": "Fitness wholesalers",
+            "website": "https://www.europages.co.uk/companies/fitness.html",
+            "title": "Fitness wholesalers",
+            "snippet": "Directory",
+        },
+        hunting_buyers=True,
+        target_places=["London"],
+    )
+    assert directory["reject"] is True
+    assert directory["page_kind"] == "directory"
+    assert directory["burn_domain"] is False
+
+    homepage = classify_serp_row(
+        {
+            "company_name": "Northstar Fitness",
+            "website": "https://northstarfitness.co.uk/",
+            "title": "Northstar Fitness",
+            "snippet": "Gym equipment wholesaler in Manchester",
+        },
+        hunting_buyers=True,
+        target_places=["London"],
+    )
+    assert homepage["reject"] is False
+    assert homepage["page_kind"] == "company"
+
+
+def test_directory_page_yields_company_sites_not_the_directory():
+    from app.agents.serp_classifier import extract_directory_companies
+
+    html = """
+    <html><body>
+      <a href="https://www.europages.co.uk/companies/next">Next page</a>
+      <a href="https://northstarfitness.co.uk/">Northstar Fitness</a>
+      <a href="https://northstarfitness.co.uk/about">About</a>
+      <a href="https://exampleblog.com/blog/best-gloves">Review</a>
+      <a href="https://facebook.com/northstar">Facebook</a>
+      <a href="https://hantel.ee/">Hantel</a>
+    </body></html>
+    """
+    links = extract_directory_companies(html, "https://www.europages.co.uk/companies/fitness")
+    assert "https://northstarfitness.co.uk/" in links
+    assert "https://hantel.ee/" in links
+    assert all("europages" not in link for link in links)
+    assert all("/blog/" not in link for link in links)
+    assert all("facebook.com" not in link for link in links)
+
+
+def test_category_queries_keep_buyer_wording_and_drop_reviews():
+    from app.agents.category_queries import sanitize_category_queries
+
+    kept = sanitize_category_queries(
+        [
+            "best fitness equipment",
+            "gym accessories wholesalers",
+            "weightlifting accessories distributors",
+            "fitness equipment distributors London",
+        ],
+        location="London, United Kingdom",
+        existing=["weightlifting accessories distributors London, United Kingdom"],
+    )
+    assert "gym accessories wholesalers London, United Kingdom" in kept
+    assert "fitness equipment distributors London" in kept
+    assert not any("best" in query.lower() for query in kept)
+    assert not any(query.lower().startswith("weightlifting accessories distributors") for query in kept)
 
 
 def test_wiki_and_how_to_articles_are_skipped():

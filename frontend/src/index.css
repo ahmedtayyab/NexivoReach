@@ -1320,6 +1320,18 @@ input:focus, textarea:focus, select:focus {
   max-width: 100vw;
   overflow-x: clip;
 }
+.app-version {
+  position: fixed;
+  right: 10px;
+  bottom: 8px;
+  z-index: 80;
+  pointer-events: none;
+  user-select: none;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  opacity: 0.75;
+}
 .app-main {
   background: transparent;
   min-width: 0;

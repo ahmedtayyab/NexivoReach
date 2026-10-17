@@ -131,6 +131,14 @@ def has_local_office_presence(text: str, places: List[str]) -> bool:
     return False
 
 
+def preferred_city(location: str) -> str:
+    """'London, United Kingdom' → London. A country-only hunt has no preferred city."""
+    parts = [part.strip() for part in (location or "").split(",") if part.strip()]
+    if not parts or _is_country_place(parts[0]):
+        return ""
+    return parts[0]
+
+
 def _is_country_place(place: str) -> bool:
     """True for country names/aliases, not for a US state or city."""
     low = (place or "").strip().lower()
@@ -411,10 +419,15 @@ def verify_business_location(
 
     def _wrong(reason: str) -> Dict[str, Any]:
         result["match"] = False
-        result["should_reject"] = False
         result["location_verdict"] = "WRONG_LOCATION"
         result["reject_reason"] = reason
         result["confidence"] = "high"
+        # A confirmed address in another country is not a lead.
+        # Another city in the same country is recorded and kept.
+        result["should_reject"] = reason in (
+            "location_mismatch_country",
+            "foreign_business_serving_target_area",
+        )
         return result
 
     def _uncertain(reason: str = "uncertain_location") -> Dict[str, Any]:

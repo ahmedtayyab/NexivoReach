@@ -65,7 +65,7 @@ def test_fail_lahore_pakistan():
         row_location="New York, United States",  # stamped hunt place — must be ignored
         phones=["+92 42 111 222 333"],
     )
-    assert v["should_reject"] is False
+    assert v["should_reject"] is True
     assert v["reject_reason"] == "location_mismatch_country"
     assert "pakistan" in (v["business_location"] or "").lower() or "lahore" in (
         v["business_location"] or ""
@@ -99,7 +99,7 @@ def test_fail_ships_to_new_york_from_pakistan():
         title="Premier Straps Co",
         snippet="Exporter",
     )
-    assert v["should_reject"] is False
+    assert v["should_reject"] is True
     assert v["reject_reason"] in (
         "location_mismatch_country",
         "foreign_business_serving_target_area",
@@ -206,7 +206,26 @@ def test_qualify_keeps_pakistan_lead_and_records_real_location():
             "Our factory produces weightlifting belts. Call +92 52 3555555."
         ),
     )
-    assert q["shouldPersist"] is True
+    assert q["shouldPersist"] is False
     assert (q.get("fitBreakdown") or {}).get("locationVerdict") == "WRONG_LOCATION"
     assert "new york" not in (q.get("location") or "").lower()
     assert (q.get("fitBreakdown") or {}).get("requestedLocation")
+
+
+def test_london_keeps_other_uk_cities_and_drops_another_country():
+    uk = ["London", "United Kingdom"]
+    manchester = verify_business_location(
+        requested_places=uk,
+        site_text="Northstar Fitness Wholesale, warehouse in Manchester, England.",
+        title="Northstar Fitness",
+        snippet="Gym equipment wholesaler",
+    )
+    assert manchester["should_reject"] is False
+    abroad = verify_business_location(
+        requested_places=uk,
+        site_text="Showroom at 100 Market St, Los Angeles, United States.",
+        title="Pacific Bag Co",
+        snippet="Los Angeles wholesaler",
+    )
+    assert abroad["should_reject"] is True
+    assert abroad["reject_reason"] == "location_mismatch_country"

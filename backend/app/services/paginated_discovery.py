@@ -680,6 +680,24 @@ async def run_paginated_discovery(
         place = parsed["location"]
 
     intent_specs = _build_intents_from_prompt(user_prompt, place)
+    if intent_specs:
+        from app.agents.category_queries import expand_category_queries
+
+        expanded = await expand_category_queries(
+            [spec["search_intent"] for spec in intent_specs],
+            place,
+        )
+        known_queries = {_query_key(spec["query"]) for spec in intent_specs}
+        for query in list(expanded.get("queries") or []):
+            key = _query_key(str(query))
+            if not key or key in known_queries:
+                continue
+            known_queries.add(key)
+            intent_specs.append({
+                "search_intent": str(query),
+                "location": place,
+                "query": str(query),
+            })
     stats.search_intents = len(intent_specs)
     intent_leads_this_run: Dict[str, int] = {}
 
@@ -757,6 +775,12 @@ async def run_paginated_discovery(
         stats,
         f"Starting {len(intent_rows)} search(es). Limit {budget.leads_per_run} new leads, {budget.max_pages_per_intent} new Google pages per search.",
     )
+    original_count = len(_build_intents_from_prompt(user_prompt, place))
+    if len(intent_rows) > original_count:
+        _note(
+            stats,
+            f"Added {len(intent_rows) - original_count} category searches so related buyer wording is included.",
+        )
     for row in intent_rows:
         if row.status != "exhausted":
             _note(stats, f"Will search: {row.query} (starting at Google page {row.current_page})")
@@ -1000,6 +1024,16 @@ async def run_paginated_discovery(
                     triage=triage,
                     site_text=site_text or f"{title}\n{snippet}",
                 )
+                if loc_check.get("should_reject"):
+                    mem.processed = True
+                    mem.status = "irrelevant"
+                    session.add(mem)
+                    session.commit()
+                    _note(
+                        stats,
+                        f"Skipped {company_name or domain} — confirmed address is outside the hunt country",
+                    )
+                    return None
                 if not relevant or not q.get("shouldPersist"):
                     _bump_funnel(stats, search_intent, "irrelevant")
                     q["shouldPersist"] = True
@@ -1122,6 +1156,14 @@ async def run_paginated_discovery(
                             "duplicate": True,
                             "duplicateReason": "email",
                         }
+
+                from app.agents.location_verify import preferred_city
+
+                city = preferred_city(location_hint)
+                if city and city.lower() in (q.get("location") or "").lower():
+                    fb["inTargetCity"] = True
+                    fb["targetCity"] = city
+                    q["fitScore"] = int(q.get("fitScore") or 0) + 8
 
                 prospect_id = f"prospect-{uuid4().hex[:10]}"
                 pr = ProspectRecord(
@@ -1482,6 +1524,7 @@ async def run_paginated_discovery(
 
         page_domains: List[str] = []
         enrich_jobs: List[Dict[str, Any]] = []
+        directory_urls: List[str] = []
         # Advance the cross-run cursor only after this page is fully handled.
         pending_cursor: Optional[int] = None
 
@@ -1529,12 +1572,20 @@ async def run_paginated_discovery(
                 if classified.get("reject"):
                     session.add(serp)
                     _bump_funnel(stats, intent.search_intent, "junk_filtered")
-                    _note(
-                        stats,
-                        f"Skipped “{(title or domain or 'result')[:80]}” — {classified.get('reject_reason') or 'not a business'}",
-                    )
-                    # Record as seen/irrelevant junk without enrich
-                    if domain:
+                    if classified.get("page_kind") == "directory" and url:
+                        directory_urls.append(url)
+                        _note(
+                            stats,
+                            f"Reading companies from directory “{(title or domain or 'listing')[:80]}”",
+                        )
+                    else:
+                        _note(
+                            stats,
+                            f"Skipped “{(title or domain or 'result')[:80]}” — {classified.get('reject_reason') or 'not a business'}",
+                        )
+                    # Article URLs on a company site must not block that homepage later.
+                    # Known article hosts can be remembered. Directories stay open for later pages.
+                    if domain and classified.get("burn_domain"):
                         _touch_discovered(
                             session,
                             business_id=business_id,
@@ -1767,6 +1818,68 @@ async def run_paginated_discovery(
                         intent_rows[i] = intent
                         break
 
+        if directory_urls:
+            mined_links = await _companies_from_directories(directory_urls)
+            queued_from_directory = 0
+            if mined_links:
+                from app.tools.web_search import company_name_from_url
+
+                with _db() as session:
+                    for link in mined_links:
+                        host = _domain(link)
+                        if not host or host in seen_domains_this_hunt:
+                            continue
+                        label = company_name_from_url(link) or host
+                        if stats.enrichments + len(enrich_jobs) >= budget.max_enrichments:
+                            break
+                        if stats.leads_saved >= budget.leads_per_run:
+                            break
+                        mem = session.exec(
+                            select(DiscoveredCompany).where(
+                                DiscoveredCompany.business_id == business_id,
+                                DiscoveredCompany.domain == host,
+                            )
+                        ).first()
+                        if mem and mem.processed:
+                            continue
+                        if lead_already_in_sheet(host, label, sheet_domains, sheet_names):
+                            continue
+                        _touch_discovered(
+                            session,
+                            business_id=business_id,
+                            domain=host,
+                            company_name=label,
+                            website=link,
+                            search_intent=intent.search_intent,
+                            status="seen",
+                            processed=False,
+                        )
+                        seen_domains_this_hunt.add(host)
+                        stats.unique_domains = len(seen_domains_this_hunt)
+                        _bump_funnel(stats, intent.search_intent, "queued")
+                        enrich_jobs.append({
+                            "domain": host,
+                            "website": link,
+                            "company_name": label,
+                            "title": label,
+                            "snippet": "",
+                            "discovery_query": intent.query,
+                            "search_intent": intent.search_intent,
+                            "discovery_queries": [intent.query],
+                            "location_hint": intent.location,
+                            "intent_id": intent.id or "",
+                        })
+                        queued_from_directory += 1
+                    session.commit()
+            if queued_from_directory:
+                _note(stats, f"Queued {queued_from_directory} companies linked from directories.")
+
+        if organic and not enrich_jobs:
+            _note(
+                stats,
+                f"“{intent.query}” had no new companies on this page. The next page will still be searched.",
+            )
+
         # Enrich new domains from this page (bounded concurrency) — incremental save
         if enrich_jobs:
             tasks = [
@@ -1959,6 +2072,39 @@ def _persist_intent(intent: DiscoverySearchIntent) -> None:
                 log.warning("Intent persist failed for %s: %s", intent.id, exc)
                 return
             time.sleep(0.15 * (attempt + 1))
+
+
+async def _companies_from_directories(urls: List[str]) -> List[str]:
+    """Outbound company sites from a directory listing. The directory is not a lead."""
+    import httpx
+
+    from app.agents.serp_classifier import extract_directory_companies
+    from app.tools.web_search import HEADERS
+
+    async def one(url: str) -> List[str]:
+        try:
+            async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, headers=HEADERS) as client:
+                res = await client.get(url)
+            if res.status_code != 200 or not res.text:
+                return []
+            return extract_directory_companies(res.text, str(res.url))
+        except Exception as exc:
+            log.warning("Directory mine failed for %s: %s", url, exc)
+            return []
+
+    groups = await asyncio.gather(*[one(url) for url in urls[:2]])
+    found: List[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for link in group:
+            host = _domain(link)
+            if not host or host in seen:
+                continue
+            seen.add(host)
+            found.append(link)
+            if len(found) >= 12:
+                return found
+    return found
 
 
 def _touch_discovered(
