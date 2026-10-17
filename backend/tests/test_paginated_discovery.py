@@ -321,3 +321,19 @@ def test_google_search_gives_up_when_it_does_not_answer(monkeypatch):
     report = asyncio.run(web_search.WebSearchTool().search_organic_page("straps distributors Michigan"))
     assert report["timed_out"] is True
     assert time.time() - started < 2
+
+
+def test_company_catalog_page_is_still_a_lead():
+    from app.agents.serp_classifier import classify_serp_row
+
+    row = classify_serp_row(
+        {
+            "company_name": "Northstar Fitness",
+            "website": "https://northstarfitness.co.uk/resources/knee-sleeves",
+            "title": "Knee sleeves",
+            "snippet": "Wholesale gym equipment",
+        },
+        hunting_buyers=True,
+        target_places=["United Kingdom"],
+    )
+    assert row["reject"] is False

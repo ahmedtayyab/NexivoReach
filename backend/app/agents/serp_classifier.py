@@ -25,13 +25,25 @@ DIRECTORY_HOSTS = (
 SEARCH_HOSTS = (
     "google.com", "duckduckgo.com",
 )
+SOCIAL_HOSTS = (
+    "facebook.com", "instagram.com", "linkedin.com", "twitter.com", "x.com",
+    "youtube.com", "youtu.be", "pinterest.com", "tiktok.com", "reddit.com",
+)
+DOCUMENT_TITLE = re.compile(
+    r"\b(design guidelines?|lecture halls?|classroom design|supplemental general conditions|space utilization guidelines)\b",
+    re.I,
+)
+_INSTITUTION_HOST = re.compile(
+    r"(^|\.)(edu|mil)(\.[a-z]{2})?$|(^|\.)ac\.[a-z]{2}$|(^|\.)gov(\.[a-z]{2})?$",
+    re.I,
+)
 ARTICLE_TITLE = re.compile(
     r"\b(top\s+\d+|best\s+\d+|complete guide|how to|what is)\b",
     re.I,
 )
 REVIEW_TITLE = re.compile(r"\b(review|reviews|roundup|listicle)\b", re.I)
 ARTICLE_PATH = re.compile(
-    r"/(blog|blogs|news|press|articles?|wiki|reviews?|guides?|insights|learn|resources|roundups?)(/|$)",
+    r"/(blog|blogs|news|articles?|wiki|reviews?|guides?|roundups?)(/|$)",
     re.I,
 )
 MFR_RE = re.compile(
@@ -77,6 +89,10 @@ def classify_page(url: str, title: str = "") -> Dict[str, Any]:
     """
     host = _host(url)
     path = _path(url)
+    if host and (_endswith_any(host, SOCIAL_HOSTS) or _INSTITUTION_HOST.search(host)):
+        return {"page_kind": "article", "burn_domain": True, "reason": "Not a company website"}
+    if path.endswith((".pdf", ".doc", ".docx", ".ppt", ".pptx")) or DOCUMENT_TITLE.search(title or ""):
+        return {"page_kind": "article", "burn_domain": bool(host and _INSTITUTION_HOST.search(host)), "reason": "Document, not a company"}
     if host and _endswith_any(host, DIRECTORY_HOSTS):
         return {"page_kind": "directory", "burn_domain": False, "reason": "Directory page"}
     if host and (_endswith_any(host, ARTICLE_HOSTS) or _endswith_any(host, REVIEW_HOSTS) or "/wiki" in (url or "").lower()):
@@ -94,10 +110,7 @@ def classify_page(url: str, title: str = "") -> Dict[str, Any]:
     return {"page_kind": "company", "burn_domain": False, "reason": ""}
 
 
-_OUTBOUND_SKIP_HOSTS = SEARCH_HOSTS + ARTICLE_HOSTS + REVIEW_HOSTS + DIRECTORY_HOSTS + (
-    "facebook.com", "instagram.com", "linkedin.com", "twitter.com", "x.com",
-    "youtube.com", "youtu.be", "pinterest.com", "tiktok.com", "reddit.com",
-)
+_OUTBOUND_SKIP_HOSTS = SEARCH_HOSTS + ARTICLE_HOSTS + REVIEW_HOSTS + DIRECTORY_HOSTS + SOCIAL_HOSTS
 
 
 def extract_directory_companies(html: str, page_url: str, limit: int = 12) -> List[str]:

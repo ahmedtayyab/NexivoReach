@@ -908,6 +908,36 @@ def test_category_queries_keep_buyer_wording_and_drop_reviews():
     assert not any(query.lower().startswith("weightlifting accessories distributors") for query in kept)
 
 
+def test_university_documents_and_pinterest_are_not_leads():
+    from app.agents.serp_classifier import classify_serp_row
+
+    guide = classify_serp_row(
+        {
+            "company_name": "CLASSROOM AND LECTURE HALL DESIGN GUIDELINES",
+            "website": "https://updc.uconn.edu/classroom-guidelines.pdf",
+            "title": "CLASSROOM AND LECTURE HALL DESIGN GUIDELINES",
+            "snippet": "University design standards",
+        },
+        hunting_buyers=True,
+        target_places=["United Kingdom"],
+    )
+    assert guide["reject"] is True
+    assert guide["burn_domain"] is True
+
+    pin = classify_serp_row(
+        {
+            "company_name": "Tiered Classroom - Pinterest",
+            "website": "https://www.pinterest.com/pin/tiered-classroom/",
+            "title": "Tiered Classroom - Pinterest",
+            "snippet": "Seating ideas",
+        },
+        hunting_buyers=True,
+        target_places=["United Kingdom"],
+    )
+    assert pin["reject"] is True
+    assert pin["burn_domain"] is True
+
+
 def test_wiki_and_how_to_articles_are_skipped():
     from app.agents.serp_classifier import classify_serp_row
 
