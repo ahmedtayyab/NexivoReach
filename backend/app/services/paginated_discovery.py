@@ -429,20 +429,12 @@ def _ddg_cursor_json(
     })
 
 
-_BACKUP_LEADING_WORDS = {
-    "fitness",
-    "gym",
-    "strength",
-    "training",
-    "weightlifting",
-    "athletic",
-    "sports",
-    "powerlifting",
-}
-
-
 def backup_query_ladder(query: str, place: str) -> List[str]:
-    """Exact search first, then shorter wording when that search has no pages left."""
+    """Exact search first, then the same product with a shorter buyer role.
+
+    The product words stay. Dropping "weightlifting" or "fitness" turns the
+    search into cargo straps and crane hooks.
+    """
     from app.agents.geo import _VOLUME_ROLE_SHORT
 
     def _clean(text: str) -> str:
@@ -468,14 +460,18 @@ def backup_query_ladder(query: str, place: str) -> List[str]:
         short = _VOLUME_ROLE_SHORT.get(words[-1].lower(), "")
         if short and short != words[-1].lower():
             _add(" ".join(words[:-1] + [short]))
-    for seed in list(ladder):
-        words = seed.split()
-        while len(words) > 3 and words[0].lower() in _BACKUP_LEADING_WORDS:
-            words = words[1:]
-            if place_clean and words and words[-1].lower() == place_clean.lower():
-                words = words[:-1]
-            _add(" ".join(words))
     return ladder
+
+
+def resume_backup_query(active: str, ladder: List[str]) -> int:
+    """Where to continue. A saved wording that dropped the product starts over."""
+    wanted = (active or "").strip().lower()
+    if not wanted or not ladder:
+        return 0
+    for n, item in enumerate(ladder):
+        if item.lower() == wanted:
+            return n
+    return 0
 
 
 def should_stop_backup_after_empty(*, had_results: bool, page: int) -> bool:
@@ -1211,11 +1207,11 @@ async def run_paginated_discovery(
         )
         ladder = backup_query_ladder(row.query, row.location)
         active = str(parsed.get("active_query") or "").strip()
-        index = 0
-        for n, item in enumerate(ladder):
-            if active and item.lower() == active.lower():
-                index = n
-                break
+        index = resume_backup_query(active, ladder)
+        if active and ladder and active.lower() != ladder[index].lower():
+            parsed["fields"] = None
+            parsed["batch"] = 1
+            parsed["exhausted"] = False
         parsed["ladder"] = ladder
         parsed["ladder_i"] = index
         parsed["active_query"] = ladder[index] if ladder else row.query

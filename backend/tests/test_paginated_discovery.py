@@ -32,17 +32,25 @@ def test_duckduckgo_more_results_form_is_kept():
     assert parsed["next_form"]["s"] == "10"
 
 
-def test_backup_ladder_shortens_an_empty_search():
-    from app.services.paginated_discovery import backup_query_ladder
+def test_backup_ladder_keeps_the_product_words():
+    from app.services.paginated_discovery import backup_query_ladder, resume_backup_query
 
     knee = backup_query_ladder("fitness knee sleeves importers Ohio", "Ohio")
     assert knee[0] == "fitness knee sleeves importers Ohio"
     assert "fitness knee sleeves importers" in knee
-    assert "knee sleeves importers" in knee
-    assert "knee sleeves importer" in knee
+    assert "fitness knee sleeves importer" in knee
+    assert "knee sleeves importers" not in knee
+    hooks = backup_query_ladder(
+        "weightlifting hooks distributors United Kingdom",
+        "United Kingdom",
+    )
+    assert "hooks distributors" not in [item.lower() for item in hooks]
+    assert all("weightlifting" in item.lower() for item in hooks)
     wraps = backup_query_ladder("wrist wraps weightlifting distributors Ohio", "Ohio")
     assert "wrist wraps weightlifting distributors" in wraps
     assert "wraps weightlifting distributors" not in [item.lower() for item in wraps]
+    assert resume_backup_query("straps distributors", hooks) == 0
+    assert resume_backup_query(hooks[0], hooks) == 0
 
 
 def test_saved_more_results_cursor_resumes_the_next_batch():
