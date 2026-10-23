@@ -16,7 +16,8 @@ ARTICLE_HOSTS = (
 NON_BUSINESS_HOSTS = (
     "onlyfans.com", "github.com", "github.io", "gitlab.com",
     "amazon.com", "amazon.co.uk", "amazon.ca", "amazon.de", "amazon.com.au", "amzn.to", "amzn.eu",
-    "ebay.com", "ebay.co.uk", "etsy.com", "aliexpress.com", "alibaba.com", "made-in-china.com",
+    "ebay.com", "ebay.co.uk", "etsy.com", "aliexpress.com", "alibaba.com",
+    "made-in-china.com", "madeinchina.com", "1688.com", "dhgate.com",
     "indiamart.com", "walmart.com", "temu.com", "wish.com",
     "reddit.com", "pinterest.com", "pinterest.co.uk", "facebook.com", "instagram.com",
     "twitter.com", "x.com", "tiktok.com", "youtube.com", "youtu.be", "linkedin.com",

@@ -128,6 +128,8 @@ COUNTRY_ALIASES: dict[str, tuple[str, ...]] = {
     "italy": ("italy", "milan", "rome"),
     "mexico": ("mexico", "guadalajara", "monterrey"),
     "brazil": ("brazil", "são paulo", "sao paulo", "rio de janeiro"),
+    "new zealand": ("new zealand", "nz", "auckland", "wellington"),
+    "china": ("china", "prc", "shenzhen", "guangzhou", "yiwu"),
 }
 
 # E.164 country calling codes → canonical country label (longest prefix wins).
@@ -1041,12 +1043,18 @@ def parse_discovery_query(query: str) -> tuple[str, str, str]:
         return product, role, place
 
     m = re.search(
-        r"^(?P<product>.+?)\s+(?P<role>distributors?|wholesalers?|importers?|retailers?|"
-        r"buyers?|dealers?|gyms?|clinics?|brands?)"
+        r"^(?P<product>.+?)\s+(?P<role>distributors?|wholesalers?|importers?|retailers?|dealers?)"
         r"(?:\s+(?:in\s+)?(?P<place>.+))?$",
         raw,
         re.I,
     )
+    if not m:
+        m = re.search(
+            r"^(?P<product>.+?)\s+(?P<role>buyers?|gyms?|clinics?|brands?)"
+            r"(?:\s+(?:in\s+)?(?P<place>.+))?$",
+            raw,
+            re.I,
+        )
     if m:
         product = m.group("product").strip()
         role = normalize_buyer_query_term(m.group("role")) or m.group("role").strip().lower()

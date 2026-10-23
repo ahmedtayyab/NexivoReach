@@ -32,6 +32,7 @@ from app.services.paginated_discovery import lead_save_decision
         "https://www.researchgate.net/publication/123_grip_strength",
         "https://www.strath.ac.uk/sport/strength-and-conditioning/",
         "https://sportsci.edu.au/papers/grip.pdf",
+        "https://www.madeinchina.com/product/knee-sleeve.html",
     ],
 )
 def test_non_business_hosts_are_never_companies(url):
@@ -266,7 +267,8 @@ def test_places_step_sends_exact_query_and_region(monkeypatch):
 
 def test_company_name_words_follow_the_trade():
     assert bs.company_name_words("boxing gloves", "distributors")[:2] == ["boxing", "fight"]
-    assert bs.company_name_words("weightlifting straps", "wholesalers")[0] == "fitness"
+    assert bs.company_name_words("weightlifting straps", "wholesalers")[0] == "wrap"
+    assert "sleeve" in bs.company_name_words("gym knee sleeves", "distributors")
     assert "sport" in bs.company_name_words("cricket bats", "importers")
 
 
@@ -371,7 +373,7 @@ def test_companies_house_step_pages_and_resolves(monkeypatch):
         searcher=searcher, api_key="k", client=_Client(), pause_sec=0, prober=lambda n: "",
     )
     assert calls["auth"] == ("k", "")
-    assert calls["params"]["company_name_includes"] == "fitness"
+    assert calls["params"]["company_name_includes"] == "wrap"
     assert calls["params"]["location"] == "Leeds"
     assert "46499" in calls["params"]["sic_codes"]
     assert len(step.candidates) == bs.CH_PAGE
@@ -399,6 +401,23 @@ def test_companies_house_short_page_moves_to_the_next_name_word():
     assert step.candidates == []
     assert step.skipped_without_website == 1
     assert bs.parse_ch_cursor(step.next_cursor) == {"word": 1, "start": 0}
+
+
+def test_companies_house_error_does_not_finish_the_source():
+    class _Res:
+        status_code = 401
+        text = "unauthorized"
+
+    class _Client:
+        def get(self, url, params=None, auth=None):
+            return _Res()
+
+    step = bs.companies_house_step(
+        product="gym knee sleeves", role="distributors", city="", cursor="",
+        searcher=lambda q: [], api_key="k", client=_Client(), pause_sec=0, prober=lambda n: "",
+    )
+    assert step.exhausted is False
+    assert step.candidates == []
 
 
 # --------------------------------------------------------------------------- OpenStreetMap
@@ -429,6 +448,26 @@ def test_overpass_payload_to_candidates():
     assert cands[0].website == "https://leedsboxingstore.co.uk"
     assert cands[0].address == "Leeds, United Kingdom"
     assert cands[0].ref == "node/1"
+
+
+def test_gym_in_the_product_is_not_the_buyer_role():
+    from app.agents.geo import parse_discovery_query
+
+    product, role, place = parse_discovery_query("wrist wraps gym wholesalers United Kingdom")
+    assert role == "wholesalers"
+    assert "wraps" in product
+    assert "united kingdom" in place.lower()
+    gyms = parse_discovery_query("boxing gyms London, United Kingdom")
+    assert gyms[1] == "gyms"
+
+
+def test_source_cursor_key_is_shared_across_similar_hunt_lines():
+    from app.services.paginated_discovery import source_cursor_key
+
+    plan = {"iso": "GB", "family": "channel", "product": "gym knee sleeves", "role": "distributors"}
+    other = {"iso": "GB", "family": "channel", "product": "weightlifting knee sleeves", "role": "wholesalers"}
+    assert source_cursor_key("companies_house", "q1", plan) == source_cursor_key("companies_house", "q2", other)
+    assert source_cursor_key("directory", "q1", plan) == source_cursor_key("directory", "q2", other)
 
 
 def test_ch_cursor_roundtrip():

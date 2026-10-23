@@ -48,6 +48,8 @@ COUNTRY_ISO: Dict[str, str] = {
     "malaysia": "MY",
     "turkey": "TR",
     "south africa": "ZA",
+    "new zealand": "NZ",
+    "china": "CN",
     "spain": "ES",
     "italy": "IT",
     "mexico": "MX",
@@ -354,6 +356,8 @@ CH_PAGE = 15
 
 _NAME_WORDS_BY_TRADE: Tuple[Tuple[Tuple[str, ...], Tuple[str, ...]], ...] = (
     (("boxing", "mma", "martial", "fight", "combat", "kick"), ("boxing", "fight", "martial", "combat")),
+    (("knee", "sleeve", "sleeves"), ("sleeve", "knee")),
+    (("wrist", "wrap", "wraps", "strap", "straps", "hook", "hooks", "grip", "grips"), ("wrap", "strap")),
     (("weight", "lifting", "strength", "gym", "fitness", "powerlifting", "crossfit"), ("fitness", "gym", "strength", "lifting")),
     (("sport", "sports", "athletic", "team", "football", "cricket", "rugby", "hockey"), ("sport", "athletic")),
     (("yoga", "pilates"), ("yoga", "pilates")),
@@ -622,13 +626,15 @@ def companies_house_step(
         if res.status_code == 404:
             items: List[BusinessCandidate] = []
         elif res.status_code >= 400:
-            step.exhausted = True
+            step.exhausted = False
+            step.next_cursor = cursor
             step.note = f"Companies House answered {res.status_code}: {res.text[:160]}"
             return step
         else:
             items = parse_ch_items(res.json())
     except Exception as exc:
-        step.exhausted = True
+        step.exhausted = False
+        step.next_cursor = cursor
         step.note = f"Companies House did not answer: {exc}"
         return step
     finally:
@@ -834,6 +840,7 @@ _EUROPAGES_ROLE = {
 }
 _DIR_KEYWORDS: Tuple[Tuple[Tuple[str, ...], Tuple[str, ...]], ...] = (
     (("boxing", "mma", "martial", "fight", "combat", "kick"), ("boxing", "sport")),
+    (("knee", "sleeve", "sleeves", "wrap", "wraps", "strap", "straps"), ("fitness", "sports-goods")),
     (("weight", "lifting", "strength", "gym", "fitness", "powerlifting", "crossfit"), ("fitness", "sport")),
     (("yoga", "pilates"), ("fitness", "sport")),
     (("sport", "sports", "athletic", "team", "football", "cricket", "rugby", "hockey"), ("sport", "sports-goods")),

@@ -1431,7 +1431,9 @@ async def run_paginated_discovery(
                 return
             row, plan, src = queue.pop(0)
             key = (row.id or "", src)
-            cursor_row = _load_source_cursor(business_id, src, row.query, row.location)
+            cursor_row = _load_source_cursor(business_id, src, row.query, row.location, plan=plan)
+            if cursor_row.status == "exhausted" and _source_cursor_worth_retry(cursor_row):
+                cursor_row = _reopen_source_cursor(cursor_row)
             if cursor_row.status == "exhausted":
                 if key not in exhausted_noted:
                     exhausted_noted.add(key)
@@ -2382,8 +2384,52 @@ def _source_step(source: str, plan: Dict[str, Any], query: str, cursor: str, web
     raise ValueError(f"Unknown list source {source}")
 
 
-def _load_source_cursor(business_id: str, source: str, query: str, location: str) -> HuntSourceCursor:
-    key = _query_key(query)
+def source_cursor_key(source: str, query: str, plan: Optional[Dict[str, Any]] = None) -> str:
+    """List sources that share a trade and country share one cursor.
+
+    Eight 'knee sleeves distributors' lines used to each finish Companies House
+    after one failed page. One walk of the register serves all of them.
+    """
+    plan = plan or {}
+    if source == "companies_house":
+        from app.services.business_sources import company_name_words
+
+        words = " ".join(company_name_words(str(plan.get("product") or ""), str(plan.get("role") or "")))
+        return _query_key(f"ch {plan.get('iso')} {plan.get('family')} {words}")
+    if source == "directory":
+        return _query_key(f"dir {plan.get('iso')} {plan.get('family')}")
+    if source == "osm":
+        return _query_key(f"osm {plan.get('iso')} {plan.get('city')} {plan.get('family')}")
+    return _query_key(query)
+
+
+def _source_cursor_worth_retry(row: HuntSourceCursor) -> bool:
+    """A finished source that never handed over a company should run again."""
+    return row.source in {"companies_house", "directory", "osm"} and int(row.candidates or 0) == 0
+
+
+def _reopen_source_cursor(row: HuntSourceCursor) -> HuntSourceCursor:
+    with _db() as session:
+        live = session.get(HuntSourceCursor, row.id)
+        if not live:
+            return row
+        live.status = "active"
+        live.cursor = ""
+        live.updated_at = _now()
+        session.add(live)
+        session.commit()
+        session.refresh(live)
+        return live
+
+
+def _load_source_cursor(
+    business_id: str,
+    source: str,
+    query: str,
+    location: str,
+    plan: Optional[Dict[str, Any]] = None,
+) -> HuntSourceCursor:
+    key = source_cursor_key(source, query, plan)
     with _db() as session:
         row = session.exec(
             select(HuntSourceCursor).where(
