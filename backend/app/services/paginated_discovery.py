@@ -374,7 +374,7 @@ class HuntStats:
 
 SOURCE_LABELS = {
     "search": "web search",
-    "directory": "trade directories"
+    "directory": "trade directories",
     "places": "Google Places",
     "companies_house": "Companies House",
     "osm": "OpenStreetMap",
