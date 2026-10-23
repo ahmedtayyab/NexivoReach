@@ -63,6 +63,20 @@ class Settings(BaseSettings):
     SERPER_API_KEY: str = ""
     BRAVE_SEARCH_API_KEY: str = ""
     TAVILY_API_KEY: str = ""
+    # Business list sources. Each is skipped when its key is empty.
+    # Companies House: free developer key, UK registry, no billing.
+    COMPANIES_HOUSE_API_KEY: str = ""
+    # Google Places Text Search (New). Needs a Google Cloud project with billing
+    # enabled; stays at $0 under the monthly free allowance. The app stops itself
+    # at GOOGLE_PLACES_MONTHLY_CAP requests. Set a quota cap in Cloud Console too.
+    GOOGLE_PLACES_API_KEY: str = ""
+    GOOGLE_PLACES_MONTHLY_CAP: int = 900
+    # OpenStreetMap via the public Overpass API. No key. Retailer, gym and club hunts only.
+    OSM_SOURCE_ENABLED: bool = True
+    # Public trade-directory pages (Europages, eSources). No key, never billed.
+    DIRECTORY_SOURCE_ENABLED: bool = True
+    # List-source steps per hunt line per run (one step = one page of a source).
+    HUNT_SOURCE_STEPS_PER_INTENT: int = 3
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:3000/api/auth/google/callback"

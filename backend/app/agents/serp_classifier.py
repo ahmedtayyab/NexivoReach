@@ -12,13 +12,45 @@ ARTICLE_HOSTS = (
     "reuters.com", "techcrunch.com", "forbes.com",
     "businessinsider.com", "prnewswire.com", "globenewswire.com",
 )
+# Hosts that are never a company website. A hit here is skipped and the host is remembered.
+NON_BUSINESS_HOSTS = (
+    "onlyfans.com", "github.com", "github.io", "gitlab.com",
+    "amazon.com", "amazon.co.uk", "amazon.ca", "amazon.de", "amazon.com.au", "amzn.to", "amzn.eu",
+    "ebay.com", "ebay.co.uk", "etsy.com", "aliexpress.com", "alibaba.com", "made-in-china.com",
+    "indiamart.com", "walmart.com", "temu.com", "wish.com",
+    "reddit.com", "pinterest.com", "pinterest.co.uk", "facebook.com", "instagram.com",
+    "twitter.com", "x.com", "tiktok.com", "youtube.com", "youtu.be", "linkedin.com",
+    "scribd.com", "slideshare.net", "issuu.com", "academia.edu", "researchgate.net",
+    "glassdoor.com", "indeed.com", "indeed.co.uk", "crunchbase.com", "zoominfo.com",
+    "dnb.com", "bloomberg.com", "opencorporates.com", "companieshouse.gov.uk",
+    "find-and-update.company-information.service.gov.uk", "endole.co.uk", "companycheck.co.uk",
+    "bizstats.co.uk", "trustpilot.com", "tripadvisor.com",
+)
+# Business directories. Companies linked from the page are worth reading; the page itself is not a lead.
+DIRECTORY_HOSTS = (
+    "europages.com", "europages.co.uk", "kompass.com", "yell.com",
+    "yelp.com", "yelp.co.uk", "thomasnet.com", "yellowpages.com",
+    "yellowpages.co.uk", "esources.co.uk", "thewholesaler.co.uk", "wholesaledeals.co.uk",
+    "cylex-uk.co.uk", "cylex.co.uk", "hotfrog.com", "hotfrog.co.uk", "freeindex.co.uk",
+    "scoot.co.uk", "192.com", "manta.com", "bbb.org", "globalsources.com", "tradekey.com",
+    "exportersindia.com", "ec21.com", "wlw.de", "wlw.co.uk", "ensun.io", "4imprint.com",
+)
 SEARCH_HOSTS = (
-    "google.com", "duckduckgo.com",
+    "google.com", "duckduckgo.com", "yahoo.com", "bing.com",
 )
 ARTICLE_TITLE = re.compile(
-    r"\b(top\s+\d+|best\s+\d+|complete guide|how to|what is)\b",
+    r"\b(top\s+\d+|best\s+\d+|complete guide|how to|what is|product review|buyer'?s guide)\b",
     re.I,
 )
+ARTICLE_PATH = re.compile(
+    r"/(blog|blogs|news|press|articles?|wiki|reviews?|guides?|roundups?|jobs|careers)(/|$)",
+    re.I,
+)
+_INSTITUTION_HOST = re.compile(
+    r"(^|\.)(edu|mil)(\.[a-z]{2})?$|(^|\.)ac\.[a-z]{2}$|(^|\.)gov(\.[a-z]{2})?$|(^|\.)edu\.[a-z]{2}$",
+    re.I,
+)
+_DOCUMENT_EXT = (".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx")
 MFR_RE = re.compile(
     r"\b(manufacturer|manufacturing|factory|factories|oem|odm|textile mill|foundry)\b",
     re.I,
@@ -43,6 +75,31 @@ def _endswith_any(host: str, suffixes: tuple[str, ...]) -> bool:
 from app.agents.geo import places_mentioned
 
 
+def classify_page(url: str, title: str = "") -> Dict[str, Any]:
+    """
+    What kind of page a URL is: company, directory, or article.
+
+    burn_domain is true only when the host itself can never be a company
+    website. A blog URL on a company site is skipped, and that company's
+    homepage can still be saved later.
+    """
+    host = _host(url)
+    path = (urlparse(url or "").path or "").lower()
+    if host and (_endswith_any(host, NON_BUSINESS_HOSTS) or _INSTITUTION_HOST.search(host)):
+        return {"page_kind": "article", "burn_domain": True, "reason": "Not a company website"}
+    if host and _endswith_any(host, DIRECTORY_HOSTS):
+        return {"page_kind": "directory", "burn_domain": False, "reason": "Directory page"}
+    if path.endswith(_DOCUMENT_EXT):
+        return {"page_kind": "article", "burn_domain": False, "reason": "Document, not a company page"}
+    if host and (_endswith_any(host, ARTICLE_HOSTS) or "/wiki" in (url or "").lower()):
+        return {"page_kind": "article", "burn_domain": True, "reason": "Article or wiki page"}
+    if ARTICLE_PATH.search(path) or "/best-" in path:
+        return {"page_kind": "article", "burn_domain": False, "reason": "Article, review, or jobs URL"}
+    if ARTICLE_TITLE.search(title or ""):
+        return {"page_kind": "article", "burn_domain": False, "reason": "Article or listicle title"}
+    return {"page_kind": "company", "burn_domain": False, "reason": ""}
+
+
 def classify_serp_row(
     row: Dict[str, Any],
     *,
@@ -60,21 +117,18 @@ def classify_serp_row(
     entity = "company"
     reject = False
     reason = ""
+    page = classify_page(url, title)
+    burn_domain = bool(page.get("burn_domain"))
 
     if not host and not (row.get("company_name") and row.get("source") == "maps"):
         reject, entity, reason = True, "unknown", "No website or Maps identity"
 
     elif _endswith_any(host, SEARCH_HOSTS):
         reject, entity, reason = True, "skip_domain", "Search engine page"
+        burn_domain = True
 
-    elif _endswith_any(host, ARTICLE_HOSTS) or "/wiki" in url.lower():
-        reject, entity, reason = True, "article", "Article or wiki page"
-
-    elif ARTICLE_TITLE.search(title):
-        reject, entity, reason = True, "article", "Article or listicle title"
-
-    elif re.search(r"/(news|press|article|wiki)(/|$)", url.lower()):
-        reject, entity, reason = True, "article", "Article URL"
+    elif page["page_kind"] != "company":
+        reject, entity, reason = True, page["page_kind"], page["reason"]
 
     elif hunting_buyers and MFR_RE.search(blob) and not BUYER_RE.search(blob):
         # Tag only — do not drop organic Google companies that look like factories
@@ -107,7 +161,45 @@ def classify_serp_row(
         "competitor_seed": competitor_seed,
         "geo_mentioned": geo_ok,
         "title": title,
+        "page_kind": entity if entity in ("article", "directory") else "company",
+        "burn_domain": burn_domain,
     }
+
+
+def extract_directory_companies(html: str, page_url: str, limit: int = 12) -> List[str]:
+    """Company websites linked from a directory page. The directory page is not a lead."""
+    if not html or not page_url:
+        return []
+    try:
+        from urllib.parse import urljoin
+
+        from bs4 import BeautifulSoup
+    except Exception:
+        return []
+    page_host = _host(page_url)
+    soup = BeautifulSoup(html, "html.parser")
+    found: List[str] = []
+    seen: set[str] = set()
+    skip_hosts = SEARCH_HOSTS + ARTICLE_HOSTS + NON_BUSINESS_HOSTS + DIRECTORY_HOSTS
+    for link in soup.select("a[href]"):
+        href = str(link.get("href") or "").strip()
+        if not href or href.startswith(("#", "mailto:", "javascript:", "tel:")):
+            continue
+        absolute = urljoin(page_url, href)
+        if not absolute.lower().startswith(("http://", "https://")):
+            continue
+        host = _host(absolute)
+        if not host or host == page_host or host.endswith("." + page_host) or _endswith_any(host, skip_hosts):
+            continue
+        if classify_page(absolute, link.get_text(" ", strip=True))["page_kind"] != "company":
+            continue
+        if host in seen:
+            continue
+        seen.add(host)
+        found.append(absolute.split("#", 1)[0])
+        if len(found) >= max(1, limit):
+            break
+    return found
 
 
 def _foreign_geo_conflict(blob: str, places: List[str]) -> bool:

@@ -128,6 +128,15 @@ RETAIL_SIGNAL_RE = re.compile(
 CHANNEL_BUYERS = {"distributor", "distributors", "wholesaler", "wholesalers", "importer", "importers", "dealer", "dealers"}
 
 
+def _category_word_hit(blob: str, categories: List[str]) -> bool:
+    text = (blob or "").lower()
+    for cat in categories or []:
+        for word in re.findall(r"[a-z0-9]+", (cat or "").lower()):
+            if len(word) >= 4 and re.search(rf"\b{re.escape(word)}s?\b", text):
+                return True
+    return False
+
+
 def website_relevance(
     *,
     product: str,
@@ -222,29 +231,31 @@ def website_relevance(
             "reason": "Sports/fitness trade context; exact SKU not confirmed on inspected pages.",
             "evidence": "Related trade context.",
         }
-    # Site fetched but thin — still keep if Google returned it for the exact query
-    if (snippet or title) and (site_text or "").strip():
+    if b2b and (site_text or "").strip() and _category_word_hit(blob, cats):
         return {
-            "level": "low",
+            "level": "medium",
             "relevant": True,
-            "confidence": 0.4,
-            "reason": "Thin site evidence; kept because Google returned it for this hunt query.",
-            "evidence": "SERP match; weak page text.",
+            "confidence": 0.64,
+            "reason": "Wholesale or distributor language, with a product from this hunt on the page.",
+            "evidence": "B2B role and a category word.",
         }
-    if snippet or title:
+    if not (site_text or "").strip():
+        # Nothing was read from the site. Not a lead yet, and not ruled out either.
         return {
-            "level": "low",
-            "relevant": True,
-            "confidence": 0.38,
-            "reason": "Could not load useful page text; SERP still matched the hunt query.",
-            "evidence": "SERP-only.",
+            "level": "irrelevant",
+            "relevant": False,
+            "confidence": 0.45,
+            "reason": "The website did not load, so this result was not accepted as a business.",
+            "evidence": "",
+            "decision": "UNCERTAIN_REQUIRES_MORE_EVIDENCE",
         }
     return {
         "level": "irrelevant",
         "relevant": False,
         "confidence": 0.55,
-        "reason": "No usable site or SERP evidence of commercial relevance.",
+        "reason": "The page loaded, but nothing on it points to the sports or fitness trade.",
         "evidence": "",
+        "decision": "REJECT_UNRELATED_BUSINESS",
     }
 
 

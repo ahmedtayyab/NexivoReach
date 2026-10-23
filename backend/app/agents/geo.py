@@ -487,6 +487,16 @@ _VOLUME_ROLE_SHORT: dict[str, str] = {
 }
 
 
+# Venue roles count only when they end a hunt line ("boxing gyms"), so
+# "gym equipment distributors" is still one product with the role "distributors".
+# Hunt lines are joined with LINE_BREAK before parsing.
+LINE_BREAK = " | "
+HUNT_LINE_END_ROLES: tuple[str, ...] = (
+    "gyms", "clubs", "shops", "stores", "stockists", "studios", "academies",
+    "suppliers", "teams", "schools", "boutiques", "centres", "centers",
+)
+
+
 def _hunt_role_pattern() -> re.Pattern[str]:
     forms: List[str] = []
     seen = set()
@@ -498,7 +508,12 @@ def _hunt_role_pattern() -> re.Pattern[str]:
             seen.add(key)
             forms.append(variant)
     forms.sort(key=len, reverse=True)
-    return re.compile(r"\b(?:" + "|".join(re.escape(f) for f in forms) + r")\b", re.I)
+    anywhere = "|".join(re.escape(f) for f in forms)
+    line_end = "|".join(re.escape(f) for f in HUNT_LINE_END_ROLES)
+    return re.compile(
+        rf"\b(?:{anywhere})\b|\b(?:{line_end})\b(?=\s*(?:\||$))",
+        re.I,
+    )
 
 
 _HUNT_ROLE_RE = _hunt_role_pattern()
@@ -509,6 +524,9 @@ def canonical_hunt_role(matched: str) -> str:
     for label, variants in HUNT_QUERY_ROLES:
         if token == label or token in variants:
             return label
+    if token in HUNT_LINE_END_ROLES:
+        # The user's own word stays in the search.
+        return token
     return normalize_buyer_query_term(token) or token
 
 
@@ -536,7 +554,7 @@ def _clean_product_span(span: str, place: str = "") -> str:
 
 def _product_chunks(span: str, place: str = "") -> List[str]:
     """'wrist straps and ankle straps' before a role → two products, same buyer."""
-    parts = re.split(r"\s+and\s+|,", span or "", flags=re.I)
+    parts = re.split(r"\s+and\s+|,|\|", span or "", flags=re.I)
     out: List[str] = []
     seen = set()
     for part in parts:
@@ -560,7 +578,7 @@ def _hunt_body_text(prompt: str) -> str:
         if low.startswith("buyer types:") or low.startswith("priority hunt"):
             continue
         lines.append(line)
-    return " ".join(lines)
+    return LINE_BREAK.join(lines)
 
 
 def parse_product_buyer_combinations(prompt: str, place: str = "") -> List[Tuple[str, str]]:

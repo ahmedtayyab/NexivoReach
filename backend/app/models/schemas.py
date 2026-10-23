@@ -264,6 +264,39 @@ class HuntSearchCursor(SQLModel, table=True):
     updated_at: str = ""
 
 
+class HuntSourceCursor(SQLModel, table=True):
+    """
+    Where a business list source (Google Places, Companies House, OpenStreetMap)
+    stopped for one workspace + hunt line. The next hunt continues from here.
+    Start over deletes these rows.
+    """
+
+    __tablename__ = "hunt_source_cursor"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    business_id: str = Field(index=True)
+    source: str = Field(index=True)  # directory | companies_house | osm | places
+    query_key: str = Field(index=True)  # normalized hunt line + location
+    query: str = ""
+    cursor: str = ""  # source-specific position (page token, JSON offsets)
+    status: str = "active"  # active | exhausted
+    steps: int = 0
+    candidates: int = 0
+    updated_at: str = ""
+
+
+class ApiUsageMonth(SQLModel, table=True):
+    """Requests made to a metered provider in one calendar month. Hard cap ledger."""
+
+    __tablename__ = "api_usage_month"
+
+    id: Optional[str] = Field(default=None, primary_key=True)
+    provider: str = Field(index=True)
+    month: str = Field(index=True)  # YYYY-MM (UTC)
+    count: int = 0
+    updated_at: str = ""
+
+
 class AppSetting(SQLModel, table=True):
     """Mutable admin-configurable app settings (key/value)."""
 

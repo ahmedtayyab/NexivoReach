@@ -12,6 +12,7 @@ from app.models.schemas import (
     DiscoveryJob,
     DiscoveredCompany,
     HuntSearchCursor,
+    HuntSourceCursor,
 )
 from app.database.session import engine
 from app.api.deps import AuthUser, get_current_user, resolve_business_id
@@ -346,12 +347,18 @@ def reset_hunt_memory(request: Request, user: AuthUser = Depends(get_current_use
         cursors = session.exec(
             select(HuntSearchCursor).where(HuntSearchCursor.business_id == business_id)
         ).all()
+        source_cursors = session.exec(
+            select(HuntSourceCursor).where(HuntSourceCursor.business_id == business_id)
+        ).all()
         deleted_companies = 0
         deleted_cursors = 0
         for row in companies:
             session.delete(row)
             deleted_companies += 1
         for row in cursors:
+            session.delete(row)
+            deleted_cursors += 1
+        for row in source_cursors:
             session.delete(row)
             deleted_cursors += 1
         session.commit()

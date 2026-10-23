@@ -44,11 +44,19 @@ from app.models.schemas import (
     DiscoverySearchIntent,
     DiscoverySerpHit,
     HuntSearchCursor,
+    HuntSourceCursor,
     ProspectRecord,
 )
 from app.services.app_settings import (
     hunt_leads_per_run,
     hunt_max_pages_per_intent,
+)
+from app.services.business_sources import (
+    BusinessCandidate,
+    places_budget_allows,
+    places_requests_this_month,
+    record_places_request,
+    source_plan_for_intent,
 )
 from app.services.enrichment import enrich_website
 from app.tools.web_search import WebSearchTool, run_search
@@ -332,6 +340,9 @@ FUNNEL_KEYS = (
 )
 
 
+FREE_SEARCH_PROVIDERS = {"duckduckgo", "yahoo", "brave", "tavily"}
+
+
 def _empty_funnel() -> Dict[str, int]:
     return {key: 0 for key in FUNNEL_KEYS}
 
@@ -356,6 +367,18 @@ class HuntStats:
     funnel: Dict[str, int] = field(default_factory=_empty_funnel)
     funnel_by_intent: Dict[str, Dict[str, int]] = field(default_factory=dict)
     logs: List[str] = field(default_factory=list)
+    # Companies handed to the pipeline and leads saved, per source.
+    candidates_by_source: Dict[str, int] = field(default_factory=dict)
+    leads_by_source: Dict[str, int] = field(default_factory=dict)
+
+
+SOURCE_LABELS = {
+    "search": "web search",
+    "directory": "trade directories"
+    "places": "Google Places",
+    "companies_house": "Companies House",
+    "osm": "OpenStreetMap",
+}
 
 
 def _note(stats: HuntStats, message: str) -> None:
@@ -479,6 +502,11 @@ def should_stop_backup_after_empty(*, had_results: bool, page: int) -> bool:
     return had_results or int(page or 1) > 1
 
 
+def backup_page_mostly_known(known: int, total: int, *, min_total: int = 6, ratio: float = 0.8) -> bool:
+    """True when a free-search page is mostly companies we already opened."""
+    return int(total or 0) >= min_total and (int(known or 0) / int(total)) >= ratio
+
+
 def _finish_backup_search(
     stats: HuntStats,
     intent: Any,
@@ -595,6 +623,27 @@ def _progress_pct(stats: HuntStats, budget: HuntBudget, intents_done: int, inten
     intent_frac = intents_done / max(intents_total, 1)
     raw = 8 + int(80 * (0.7 * lead_frac + 0.3 * intent_frac))
     return max(5, min(95, raw))
+
+
+def lead_save_decision(
+    *,
+    relevant: bool,
+    should_reject: bool,
+    page_loaded: bool,
+) -> str:
+    """
+    The only save gate. A negative decision is never turned into a save.
+
+    QUALIFIED_BUSINESS saves the lead. REJECT_* marks the domain as handled.
+    UNCERTAIN_REQUIRES_MORE_EVIDENCE leaves the domain open for a later hunt.
+    """
+    if should_reject:
+        return "REJECT_WRONG_LOCATION"
+    if not page_loaded:
+        return "UNCERTAIN_REQUIRES_MORE_EVIDENCE"
+    if not relevant:
+        return "REJECT_UNRELATED_BUSINESS"
+    return "QUALIFIED_BUSINESS"
 
 
 def _build_intents_from_prompt(user_prompt: str, location: str) -> List[Dict[str, str]]:
@@ -748,7 +797,7 @@ async def run_paginated_discovery(
     if settings.SERPER_API_KEY:
         _note(stats, "Google search is on (Serper).")
     else:
-        _note(stats, "SERPER_API_KEY is missing. This hunt cannot search Google.")
+        _note(stats, "No Google key (SERPER_API_KEY). This hunt searches with DuckDuckGo and Yahoo.")
     _note(
         stats,
         f"Starting {len(intent_rows)} search(es). Limit {budget.leads_per_run} new leads, {budget.max_pages_per_intent} new Google pages per search.",
@@ -831,6 +880,8 @@ async def run_paginated_discovery(
         discovery_queries: List[str],
         location_hint: str,
         intent_id: str = "",
+        source: str = "search",
+        location_seed: str = "",
     ) -> Optional[Dict[str, Any]]:
         nonlocal stats
         async with enrich_sem:
@@ -877,7 +928,7 @@ async def run_paginated_discovery(
                 site_text=site_text,
                 title=title,
                 snippet=snippet,
-                row_location=str(found.get("location") or ""),
+                row_location=str(found.get("location") or location_seed or ""),
                 phones=[phone] if phone else [],
                 website=website,
             )
@@ -986,8 +1037,6 @@ async def run_paginated_discovery(
                 mem.processed = True
                 mem.email = email or mem.email or ""
                 mem.email_status = email_status
-                # The Google query already selected this company website.
-                # Product-word checks are stored on the lead. They do not drop it.
 
                 q = qualify_from_fast_decision(
                     row=row,
@@ -996,8 +1045,26 @@ async def run_paginated_discovery(
                     triage=triage,
                     site_text=site_text or f"{title}\n{snippet}",
                 )
-                if not relevant or not q.get("shouldPersist"):
-                    _bump_funnel(stats, search_intent, "irrelevant")
+                decision = lead_save_decision(
+                    relevant=relevant,
+                    should_reject=bool(loc_check.get("should_reject")),
+                    page_loaded=bool((site_text or "").strip()),
+                )
+                if decision != "QUALIFIED_BUSINESS":
+                    # Not a lead. An unread site stays open for a later hunt.
+                    mem.processed = decision != "UNCERTAIN_REQUIRES_MORE_EVIDENCE"
+                    mem.status = "irrelevant" if mem.processed else "seen"
+                    session.add(mem)
+                    session.commit()
+                    if decision == "REJECT_WRONG_LOCATION":
+                        where = loc_check.get("business_location") or "another country"
+                        _note(stats, f"Skipped {company_name or domain} — located in {where}, outside the hunt country")
+                    else:
+                        _bump_funnel(stats, search_intent, "irrelevant")
+                        _note(stats, f"Skipped {company_name or domain} — {graded.get('reason') or 'not a business in this trade'}")
+                    return None
+                if not q.get("shouldPersist"):
+                    # The fit score is advice on the lead, not a second gate.
                     q["shouldPersist"] = True
 
                 stats.relevant += 1
@@ -1041,8 +1108,12 @@ async def run_paginated_discovery(
                 if existing_id:
                     existing = session.get(ProspectRecord, existing_id)
 
+                fb["discoverySource"] = source
                 timeline = [
-                    {"time": time.strftime("%H:%M"), "action": f"Discovered via Google ({search_intent})"},
+                    {
+                        "time": time.strftime("%H:%M"),
+                        "action": f"Discovered via {SOURCE_LABELS.get(source, source)} ({search_intent})",
+                    },
                     {
                         "time": time.strftime("%H:%M"),
                         "action": f"Fit {q.get('fitSummary')} · {level} (website inspect)",
@@ -1156,6 +1227,7 @@ async def run_paginated_discovery(
                 session.commit()
                 _remember_lead(lead_index, pr)
                 stats.leads_saved += 1
+                stats.leads_by_source[source] = stats.leads_by_source.get(source, 0) + 1
                 _bump_funnel(stats, search_intent, "leads_created")
                 _note(stats, f"Saved lead: {company_name} ({domain})")
                 if intent_id:
@@ -1196,8 +1268,230 @@ async def run_paginated_discovery(
         log.warning("Could not read leads from Google Sheets: %s", exc)
         _note(stats, f"Could not read leads from Google Sheets ({exc}).")
 
+    def _queue_candidates(
+        candidates: List[BusinessCandidate],
+        intent: DiscoverySearchIntent,
+        source: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Companies from a list source enter the same path as a search result:
+        known-domain and sheet checks here, then website read, email, save.
+        """
+        from app.agents.serp_classifier import classify_page
+        from app.tools.web_search import company_name_from_url
+
+        jobs: List[Dict[str, Any]] = []
+        with _db() as session:
+            for cand in candidates:
+                website = (cand.website or "").strip()
+                host = _domain(website)
+                if not host or host in seen_domains_this_hunt:
+                    continue
+                if classify_page(website, cand.name)["page_kind"] != "company":
+                    continue
+                stats.candidates_by_source[source] = stats.candidates_by_source.get(source, 0) + 1
+                label = (cand.name or "").strip() or company_name_from_url(website) or host
+                seen_domains_this_hunt.add(host)
+                stats.unique_domains = len(seen_domains_this_hunt)
+                _bump_funnel(stats, intent.search_intent, "unique_domains")
+                if lead_already_in_sheet(host, label, sheet_domains, sheet_names):
+                    stats.already_known_skips += 1
+                    _bump_funnel(stats, intent.search_intent, "already_seen")
+                    _touch_discovered(
+                        session, business_id=business_id, domain=host, company_name=label,
+                        website=website, search_intent=intent.search_intent,
+                        status="skipped", processed=True,
+                    )
+                    continue
+                mem = session.exec(
+                    select(DiscoveredCompany).where(
+                        DiscoveredCompany.business_id == business_id,
+                        DiscoveredCompany.domain == host,
+                    )
+                ).first()
+                if mem and mem.processed:
+                    stats.previously_known += 1
+                    stats.already_known_skips += 1
+                    _bump_funnel(stats, intent.search_intent, "already_seen")
+                    intents = list(mem.matched_search_intents or [])
+                    if intent.search_intent and intent.search_intent not in intents:
+                        intents.append(intent.search_intent)
+                        mem.matched_search_intents = intents[:24]
+                    mem.last_seen_at = _now()
+                    session.add(mem)
+                    continue
+                if stats.enrichments + len(jobs) >= budget.max_enrichments:
+                    break
+                if stats.leads_saved >= budget.leads_per_run:
+                    break
+                stats.new_domains += 1
+                _touch_discovered(
+                    session, business_id=business_id, domain=host, company_name=label,
+                    website=website, search_intent=intent.search_intent,
+                    status="seen", processed=False,
+                )
+                _bump_funnel(stats, intent.search_intent, "queued")
+                jobs.append({
+                    "domain": host,
+                    "website": website,
+                    "company_name": label,
+                    "title": label,
+                    "snippet": cand.address or "",
+                    "discovery_query": intent.query,
+                    "search_intent": intent.search_intent,
+                    "discovery_queries": [intent.query],
+                    "location_hint": intent.location,
+                    "intent_id": intent.id or "",
+                    "source": source,
+                    "location_seed": cand.address or "",
+                })
+            session.commit()
+        return jobs
+
+    async def _enrich_batch(jobs: List[Dict[str, Any]], intent: DiscoverySearchIntent) -> int:
+        """Open, read, and save a batch of queued companies. Returns leads saved."""
+        if not jobs:
+            return 0
+        before = stats.leads_saved
+        tasks = [asyncio.create_task(_enrich_and_maybe_save(**job)) for job in jobs]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        gc.collect()
+        for res in results:
+            if isinstance(res, Exception) or not res or res.get("skippedSheet"):
+                continue
+            pid = res.get("id")
+            prospect = res.get("prospect")
+            if pid and prospect and not res.get("merged"):
+                if pid not in saved_ids:
+                    saved_ids.append(pid)
+                    saved_front.append(prospect)
+                with _db() as session:
+                    it = session.get(DiscoverySearchIntent, intent.id)
+                    if it:
+                        it.relevant_leads = int(it.relevant_leads or 0) + 1
+                        intent.relevant_leads = it.relevant_leads
+                        session.add(it)
+                        session.commit()
+        _update_job(
+            job_id,
+            status="running",
+            phase=_phase_from_stats(
+                stats, intent.query, sum(1 for r in intent_rows if r.status != "active"),
+                len(intent_rows), leads_cap=budget.leads_per_run,
+            ),
+            progress=_progress_pct(
+                stats, budget, sum(1 for r in intent_rows if r.status != "active"), len(intent_rows),
+            ),
+            found_count=stats.leads_saved,
+            skipped_existing=stats.already_known_skips,
+            result_prospect_ids=saved_ids[-200:],
+            telemetry=_telemetry_payload(stats, intent_rows, intent.query, budget),
+        )
+        return stats.leads_saved - before
+
+    source_steps_this_run: Dict[Tuple[str, str], int] = {}
+    source_plans: List[Tuple[DiscoverySearchIntent, Dict[str, Any]]] = [
+        (row, source_plan_for_intent(row.query, row.location)) for row in intent_rows
+    ]
+    sources_in_use = sorted({src for _row, plan in source_plans for src in plan["sources"]})
+    if sources_in_use:
+        _note(
+            stats,
+            "Business lists on: " + ", ".join(SOURCE_LABELS.get(s, s) for s in sources_in_use)
+            + ". Each company still gets its website read before it is saved.",
+        )
+    else:
+        _note(
+            stats,
+            "No extra business list is on. Trade directories still run. "
+            "For UK distributor hunts, add a free Companies House key at "
+            "developer.company-information.service.gov.uk — there is no bill.",
+        )
+
+    async def _run_list_sources(max_steps_per_source: int) -> None:
+        """
+        Walk Companies House, OpenStreetMap, and trade directories for every
+        hunt line, one page at a time, round-robin. Places only runs when a
+        key is set. Each page's companies go through the same read / email /
+        dedup / save path as a search result.
+        """
+        if max_steps_per_source <= 0:
+            return
+        queue: List[Tuple[DiscoverySearchIntent, Dict[str, Any], str]] = [
+            (row, plan, src)
+            for row, plan in source_plans
+            for src in plan["sources"]
+            if source_steps_this_run.get((row.id or "", src), 0) < max_steps_per_source
+        ]
+        exhausted_noted: set[Tuple[str, str]] = set()
+        while queue:
+            hit_reasons: List[str] = []
+            if _budget_hit(hit_reasons):
+                _note(stats, _STOP_TEXT.get(hit_reasons[0], hit_reasons[0]))
+                return
+            row, plan, src = queue.pop(0)
+            key = (row.id or "", src)
+            cursor_row = _load_source_cursor(business_id, src, row.query, row.location)
+            if cursor_row.status == "exhausted":
+                if key not in exhausted_noted:
+                    exhausted_noted.add(key)
+                    _note(
+                        stats,
+                        f"{SOURCE_LABELS.get(src, src)} for “{row.query}” was finished on an earlier hunt. Start over to read it again.",
+                    )
+                continue
+
+            if src == "places":
+                with _db() as session:
+                    used = places_requests_this_month(session)
+                if not places_budget_allows(used):
+                    _note(
+                        stats,
+                        f"Google Places reached this month's cap of {settings.GOOGLE_PLACES_MONTHLY_CAP} requests. It stays free; it resumes next month.",
+                    )
+                    source_plans[:] = [(r, {**p, "sources": [s for s in p["sources"] if s != "places"]}) for r, p in source_plans]
+                    queue = [(r, p, s) for r, p, s in queue if s != "places"]
+                    continue
+
+            _note(stats, f"{SOURCE_LABELS.get(src, src).capitalize()}: {row.query}")
+            try:
+                step = await asyncio.to_thread(_source_step, src, plan, row.query, cursor_row.cursor, web)
+            except Exception as exc:
+                log.warning("List source %s failed for %s: %s", src, row.query, exc)
+                _note(stats, f"{SOURCE_LABELS.get(src, src)} did not answer for “{row.query}”. Moving on.")
+                continue
+            if src == "places" and step.requests_used:
+                with _db() as session:
+                    record_places_request(session, step.requests_used)
+            source_steps_this_run[key] = source_steps_this_run.get(key, 0) + 1
+            if step.note:
+                _note(stats, step.note)
+            if step.skipped_without_website and src == "places":
+                _note(stats, f"{step.skipped_without_website} listings had no website and were not used.")
+
+            jobs = _queue_candidates(step.candidates, row, src)
+            _save_source_cursor(
+                cursor_row,
+                cursor=step.next_cursor,
+                exhausted=step.exhausted,
+                candidates=len(step.candidates),
+            )
+            if jobs:
+                _note(stats, f"{len(jobs)} new companies from {SOURCE_LABELS.get(src, src)}. Reading their websites.")
+                saved = await _enrich_batch(jobs, row)
+                _note(stats, f"{SOURCE_LABELS.get(src, src).capitalize()} page done: {saved} saved from {len(jobs)} companies.")
+            elif step.candidates:
+                _note(stats, f"Every company on that {SOURCE_LABELS.get(src, src)} page was already known.")
+            if not step.exhausted and source_steps_this_run[key] < max_steps_per_source:
+                queue.append((row, plan, src))
+
+    # One page of each list source per line first, so every hunt gets registry
+    # and map companies even when the web search phase runs long.
+    await _run_list_sources(1)
+
     # ---- Main fair pagination loop ----
-    serper_credits_out = False
+    # Without a Serper key every page is a free-search page from the start.
+    serper_credits_out = not bool(settings.SERPER_API_KEY)
     ddg_html_noted = False
     backup_states: Dict[str, Dict[str, Any]] = {}
     for row in intent_rows:
@@ -1344,6 +1638,15 @@ async def run_paginated_discovery(
         organic = list(report.get("hits") or [])
         provider = str(report.get("provider") or "none")
         search_error = str(report.get("error") or "")
+        if not fallback and organic and provider in FREE_SEARCH_PROVIDERS:
+            # No Serper key. The free engine still answered, so this is a
+            # backup page, not a failed Google page.
+            serper_credits_out = True
+            fallback = True
+            search_error = ""
+            if not ddg_html_noted:
+                ddg_html_noted = True
+                _note(stats, "No Google key. This hunt uses free search engines instead.")
         if not fallback and (report.get("out_of_credits") or report.get("timed_out")):
             serper_credits_out = True
             stats.google_requests += 1
@@ -1478,6 +1781,8 @@ async def run_paginated_discovery(
 
         page_domains: List[str] = []
         enrich_jobs: List[Dict[str, Any]] = []
+        directory_urls: List[str] = []
+        page_known = 0
         # Advance the cross-run cursor only after this page is fully handled.
         pending_cursor: Optional[int] = None
 
@@ -1525,12 +1830,17 @@ async def run_paginated_discovery(
                 if classified.get("reject"):
                     session.add(serp)
                     _bump_funnel(stats, intent.search_intent, "junk_filtered")
-                    _note(
-                        stats,
-                        f"Skipped “{(title or domain or 'result')[:80]}” — {classified.get('reject_reason') or 'not a business'}",
-                    )
-                    # Record as seen/irrelevant junk without enrich
-                    if domain:
+                    if classified.get("page_kind") == "directory" and url:
+                        directory_urls.append(url)
+                        _note(stats, f"Reading companies listed on “{(title or domain or 'directory')[:80]}”")
+                    else:
+                        _note(
+                            stats,
+                            f"Skipped “{(title or domain or 'result')[:80]}” — {classified.get('reject_reason') or 'not a business'}",
+                        )
+                    # Only a host that can never be a company is remembered as handled.
+                    # A blog post on a company site must not block that company's homepage.
+                    if domain and classified.get("burn_domain"):
                         _touch_discovered(
                             session,
                             business_id=business_id,
@@ -1559,12 +1869,35 @@ async def run_paginated_discovery(
                     buyers=profile.buyers,
                 )
                 if triage.get("verdict") == "reject":
+                    session.add(serp)
                     _bump_funnel(stats, intent.search_intent, "triage_rejected")
+                    _note(
+                        stats,
+                        f"Skipped “{(title or domain or 'result')[:80]}” — "
+                        f"{triage.get('reason') or 'wrong industry'}",
+                    )
+                    if domain:
+                        _touch_discovered(
+                            session,
+                            business_id=business_id,
+                            domain=domain,
+                            company_name=classified.get("company_name") or title,
+                            website=url,
+                            search_intent=intent.search_intent,
+                            status="irrelevant",
+                            processed=True,
+                        )
+                        if domain not in seen_domains_this_hunt:
+                            _bump_funnel(stats, intent.search_intent, "unique_domains")
+                        seen_domains_this_hunt.add(domain)
+                        stats.unique_domains = len(seen_domains_this_hunt)
+                    continue
 
                 sheet_name = classified.get("company_name") or ""
                 if lead_already_in_sheet(domain, sheet_name, sheet_domains, sheet_names):
                     session.add(serp)
                     stats.already_known_skips += 1
+                    page_known += 1
                     _bump_funnel(stats, intent.search_intent, "already_seen")
                     _note(
                         stats,
@@ -1601,6 +1934,7 @@ async def run_paginated_discovery(
                     serp.already_known = True
                     stats.previously_known += 1
                     stats.already_known_skips += 1
+                    page_known += 1
                     _bump_funnel(stats, intent.search_intent, "already_seen")
                     _note(stats, f"Already opened {domain} on an earlier hunt — skipped")
                     # Still merge search intent memory; do NOT stop pagination
@@ -1763,6 +2097,43 @@ async def run_paginated_discovery(
                         intent_rows[i] = intent
                         break
 
+        if fallback and backup_page_mostly_known(page_known, len(organic)):
+            state = backup_states.get(intent_id) or {}
+            ladder = list(state.get("ladder") or backup_query_ladder(intent.query, intent.location))
+            index = int(state.get("ladder_i") or 0) + 1
+            if index < len(ladder):
+                backup_states[intent_id] = {
+                    "fields": {"engine": "yahoo", "page": "1"},
+                    "batch": 1,
+                    "exhausted": False,
+                    "active_query": ladder[index],
+                    "ladder": ladder,
+                    "ladder_i": index,
+                    "retried": False,
+                }
+                intent.last_page_fingerprint = ""
+                _note(
+                    stats,
+                    f"Most companies on that page were already known. Searching “{ladder[index]}”.",
+                )
+            else:
+                _note(
+                    stats,
+                    "Most companies on that page were already known, and there is no further wording to try.",
+                )
+                _finish_backup_search(stats, intent, business_id, page)
+
+        if directory_urls:
+            mined = await _companies_from_directories(directory_urls[:2])
+            if mined:
+                candidates = [
+                    BusinessCandidate(name="", website=link, source="directory")
+                    for link in mined
+                ]
+                added = _queue_candidates(candidates, intent, "directory")
+                enrich_jobs.extend(added)
+                _note(stats, f"Directory pages listed {len(mined)} company websites; {len(added)} are new.")
+
         # Enrich new domains from this page (bounded concurrency) — incremental save
         if enrich_jobs:
             tasks = [
@@ -1847,6 +2218,14 @@ async def run_paginated_discovery(
                 status="active",
                 ddg_next=ddg_to_store,
             )
+
+    # Remaining list-source pages, now that every search line has had its turn.
+    await _run_list_sources(max(1, int(settings.HUNT_SOURCE_STEPS_PER_INTENT or 1)))
+    if stats.candidates_by_source:
+        parts = []
+        for src, n in sorted(stats.candidates_by_source.items()):
+            parts.append(f"{SOURCE_LABELS.get(src, src)} {n} companies → {stats.leads_by_source.get(src, 0)} leads")
+        _note(stats, "Sources this run: " + "; ".join(parts) + f"; web search → {stats.leads_by_source.get('search', 0)} leads.")
 
     # Finalize remaining active intents — keep cursors for next run
     for row in intent_rows:
@@ -1957,6 +2336,137 @@ def _persist_intent(intent: DiscoverySearchIntent) -> None:
             time.sleep(0.15 * (attempt + 1))
 
 
+def _source_step(source: str, plan: Dict[str, Any], query: str, cursor: str, web: WebSearchTool):
+    """One page from one list source. Runs in a worker thread."""
+    from app.services.business_sources import (
+        companies_house_step,
+        directory_step,
+        directory_urls_for_plan,
+        osm_step,
+        places_step,
+    )
+
+    if source == "directory":
+        return directory_step(urls=directory_urls_for_plan(plan), cursor=cursor)
+    if source == "places":
+        return places_step(query, cursor, region_code=plan.get("iso") or "")
+    if source == "companies_house":
+        def _lookup(q: str) -> List[Dict[str, str]]:
+            # DuckDuckGo answers empty when it is rate limiting. Yahoo is the second try.
+            hits: List[Dict[str, str]] = []
+            try:
+                hits = web._duckduckgo(q, allow_html=True)[:8]
+            except Exception:
+                hits = []
+            if not hits:
+                try:
+                    hits = web._yahoo_hits(q, 1)[:8]
+                except Exception:
+                    hits = []
+            return hits
+
+        return companies_house_step(
+            product=plan.get("product") or "",
+            role=plan.get("role") or "",
+            city=plan.get("city") or "",
+            cursor=cursor,
+            searcher=_lookup,
+        )
+    if source == "osm":
+        return osm_step(
+            family=plan.get("family") or "",
+            city=plan.get("city") or "",
+            iso=plan.get("iso") or "",
+            country_label=(plan.get("country") or "").title(),
+        )
+    raise ValueError(f"Unknown list source {source}")
+
+
+def _load_source_cursor(business_id: str, source: str, query: str, location: str) -> HuntSourceCursor:
+    key = _query_key(query)
+    with _db() as session:
+        row = session.exec(
+            select(HuntSourceCursor).where(
+                HuntSourceCursor.business_id == business_id,
+                HuntSourceCursor.source == source,
+                HuntSourceCursor.query_key == key,
+            )
+        ).first()
+        if row:
+            return row
+        row = HuntSourceCursor(
+            id=f"src-{uuid4().hex[:12]}",
+            business_id=business_id,
+            source=source,
+            query_key=key,
+            query=query,
+            cursor="",
+            status="active",
+            steps=0,
+            candidates=0,
+            updated_at=_now(),
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return row
+
+
+def _save_source_cursor(row: HuntSourceCursor, *, cursor: str, exhausted: bool, candidates: int) -> None:
+    for attempt in range(4):
+        try:
+            with _db() as session:
+                live = session.get(HuntSourceCursor, row.id)
+                if not live:
+                    return
+                live.cursor = cursor or ""
+                live.status = "exhausted" if exhausted else "active"
+                live.steps = int(live.steps or 0) + 1
+                live.candidates = int(live.candidates or 0) + int(candidates or 0)
+                live.updated_at = _now()
+                session.add(live)
+                session.commit()
+                row.status = live.status
+                row.cursor = live.cursor
+                return
+        except Exception as exc:
+            log.warning("Source cursor save failed (%s): %s", attempt, exc)
+            time.sleep(0.15 * (attempt + 1))
+
+
+async def _companies_from_directories(urls: List[str], limit: int = 12) -> List[str]:
+    """Company websites linked from directory pages. The directory itself is not a lead."""
+    import httpx
+
+    from app.agents.serp_classifier import extract_directory_companies
+    from app.tools.web_search import HEADERS
+
+    async def one(url: str) -> List[str]:
+        try:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=HEADERS) as client:
+                res = await client.get(url)
+            if res.status_code != 200 or not res.text:
+                return []
+            return extract_directory_companies(res.text, str(res.url), limit=limit)
+        except Exception as exc:
+            log.warning("Directory read failed for %s: %s", url, exc)
+            return []
+
+    groups = await asyncio.gather(*[one(url) for url in urls[:2]])
+    found: List[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for link in group:
+            host = _domain(link)
+            if not host or host in seen:
+                continue
+            seen.add(host)
+            found.append(link)
+            if len(found) >= limit:
+                return found
+    return found
+
+
 def _touch_discovered(
     session: Session,
     *,
@@ -2047,6 +2557,8 @@ def _telemetry_payload(
         "emailsFound": stats.emails_found,
         "leadsSaved": stats.leads_saved,
         "alreadyKnown": stats.already_known_skips,
+        "candidatesBySource": dict(stats.candidates_by_source or {}),
+        "leadsBySource": dict(stats.leads_by_source or {}),
         "huntLog": list(stats.logs),
         # The finished summary is added when the hunt actually ends.
         "stopSummary": "",

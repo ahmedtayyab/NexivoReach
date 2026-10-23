@@ -599,7 +599,7 @@ def test_keeps_shopify_product_page_as_business():
     assert row["entity_type"] == "company"
 
 
-def test_company_blog_page_is_still_the_business():
+def test_company_blog_page_is_skipped_without_blocking_the_domain():
     from app.agents.serp_classifier import classify_serp_row
 
     row = classify_serp_row(
@@ -613,7 +613,8 @@ def test_company_blog_page_is_still_the_business():
         hunting_buyers=True,
         target_places=["New Jersey"],
     )
-    assert row["reject"] is False
+    assert row["reject"] is True
+    assert row["burn_domain"] is False
 
 
 def test_accepts_lifting_straps_serp():

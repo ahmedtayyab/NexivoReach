@@ -71,6 +71,14 @@ def test_duckduckgo_stops_after_the_first_empty_later_page():
     assert should_stop_backup_after_empty(had_results=False, page=1) is False
 
 
+def test_backup_page_stops_when_most_companies_are_already_known():
+    from app.services.paginated_discovery import backup_page_mostly_known
+
+    assert backup_page_mostly_known(8, 10) is True
+    assert backup_page_mostly_known(4, 10) is False
+    assert backup_page_mostly_known(5, 5) is False  # too few results to judge
+
+
 def test_sheet_company_is_skipped_and_new_details_stay_on_that_row():
     from app.integrations.sheets import merge_existing_lead_row
     from app.services.paginated_discovery import lead_already_in_sheet

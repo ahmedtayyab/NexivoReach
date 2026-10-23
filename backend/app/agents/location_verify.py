@@ -411,10 +411,14 @@ def verify_business_location(
 
     def _wrong(reason: str) -> Dict[str, Any]:
         result["match"] = False
-        result["should_reject"] = False
         result["location_verdict"] = "WRONG_LOCATION"
         result["reject_reason"] = reason
         result["confidence"] = "high"
+        # Another country is not a lead. Another city in the same country stays recorded.
+        result["should_reject"] = reason in (
+            "location_mismatch_country",
+            "foreign_business_serving_target_area",
+        )
         return result
 
     def _uncertain(reason: str = "uncertain_location") -> Dict[str, Any]:

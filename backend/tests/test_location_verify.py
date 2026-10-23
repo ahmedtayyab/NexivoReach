@@ -65,7 +65,7 @@ def test_fail_lahore_pakistan():
         row_location="New York, United States",  # stamped hunt place — must be ignored
         phones=["+92 42 111 222 333"],
     )
-    assert v["should_reject"] is False
+    assert v["should_reject"] is True
     assert v["reject_reason"] == "location_mismatch_country"
     assert "pakistan" in (v["business_location"] or "").lower() or "lahore" in (
         v["business_location"] or ""
@@ -99,7 +99,7 @@ def test_fail_ships_to_new_york_from_pakistan():
         title="Premier Straps Co",
         snippet="Exporter",
     )
-    assert v["should_reject"] is False
+    assert v["should_reject"] is True
     assert v["reject_reason"] in (
         "location_mismatch_country",
         "foreign_business_serving_target_area",
@@ -206,7 +206,7 @@ def test_qualify_keeps_pakistan_lead_and_records_real_location():
             "Our factory produces weightlifting belts. Call +92 52 3555555."
         ),
     )
-    assert q["shouldPersist"] is True
+    assert q["shouldPersist"] is False
     assert (q.get("fitBreakdown") or {}).get("locationVerdict") == "WRONG_LOCATION"
     assert "new york" not in (q.get("location") or "").lower()
     assert (q.get("fitBreakdown") or {}).get("requestedLocation")
