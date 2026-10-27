@@ -38,6 +38,19 @@ GIANT_HOSTS = (
     "harbingerfitness.com", "rehband.com", "cerberus-strength.com",
     "tuffwraps.com", "ironbullstrength.com", "nordiclifting.com",
     "hayabusa.com", "academy.com",
+    # National pharmacy / grocery / big-box — any country. They will not
+    # import from a small sports exporter; opening them freezes the hunt.
+    "shoppersdrugmart.ca", "shoppersdrugmart.com",
+    "cvs.com", "walgreens.com", "boots.com", "boots.co.uk",
+    "tesco.com", "tesco.co.uk", "sainsburys.co.uk", "asda.com",
+    "costco.com", "costco.ca", "costco.co.uk",
+    "target.com", "walmart.ca",
+    "canadiantire.ca", "sportchek.ca", "atmosphere.ca",
+    "rebelsport.com.au", "rebel.com.au",
+    "bigw.com.au", "kmart.com.au", "kmart.com",
+    "carrefour.fr", "carrefour.com",
+    "johnlewis.com", "argos.co.uk",
+    "bestbuy.com", "bestbuy.ca",
 )
 # Business directories. Companies linked from the page are worth reading; the page itself is not a lead.
 DIRECTORY_HOSTS = (
@@ -48,6 +61,7 @@ DIRECTORY_HOSTS = (
     "scoot.co.uk", "192.com", "manta.com", "bbb.org", "globalsources.com", "tradekey.com",
     "exportersindia.com", "ec21.com", "wlw.de", "wlw.co.uk", "ensun.io", "4imprint.com",
     "elevatearena.com", "fibo.com", "ispovo.com", "bodypower.com",
+    "deviceinformed.com",
 )
 _STOCKIST_PATH = re.compile(
     r"/(stockists?|dealers?|distributors?|where-to-buy|find[-_]a[-_]dealer|"

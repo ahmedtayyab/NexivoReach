@@ -161,7 +161,7 @@ def website_relevance(
             "level": "irrelevant",
             "relevant": False,
             "confidence": 0.45,
-            "reason": "The website did not load, so this result was not accepted as a business.",
+            "reason": "The website did not load in 10s. Left open for a later hunt.",
             "evidence": "",
             "decision": "UNCERTAIN_REQUIRES_MORE_EVIDENCE",
         }
@@ -255,7 +255,7 @@ def website_relevance(
             "level": "irrelevant",
             "relevant": False,
             "confidence": 0.45,
-            "reason": "The website did not load, so this result was not accepted as a business.",
+            "reason": "The website did not load in 10s. Left open for a later hunt.",
             "evidence": "",
             "decision": "UNCERTAIN_REQUIRES_MORE_EVIDENCE",
         }

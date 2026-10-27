@@ -52,10 +52,9 @@ export function estimateHuntSeconds(
 ): { low: number; high: number } {
   const lines = Math.max(1, Math.min(40, Math.floor(lineCount || 1)));
   const leads = Math.max(20, Math.min(200, Math.floor(leadsPerRun || 100)));
-  // Inspect/enrich dominates; many SERP hits are skipped after a short look.
-  // Calibrated from live runs (~10–20s/site, several sites per saved lead).
-  const low = Math.max(180, Math.round(90 + lines * 12 + leads * 7));
-  const high = Math.max(low + 180, Math.round(150 + lines * 20 + leads * 12));
+  // 8 lines on free search: about 15–35 min. Each live site is capped at 10s.
+  const low = Math.max(900, Math.round(300 + lines * 90 + Math.min(leads, 40) * 4));
+  const high = Math.max(low + 600, Math.round(600 + lines * 180 + Math.min(leads, 40) * 8));
   return { low, high };
 }
 

@@ -416,6 +416,7 @@ class HuntStats:
     funnel: Dict[str, int] = field(default_factory=_empty_funnel)
     funnel_by_intent: Dict[str, Dict[str, int]] = field(default_factory=dict)
     logs: List[str] = field(default_factory=list)
+    last_log_at: float = field(default_factory=time.time)
     # Companies handed to the pipeline and leads saved, per source.
     candidates_by_source: Dict[str, int] = field(default_factory=dict)
     leads_by_source: Dict[str, int] = field(default_factory=dict)
@@ -438,6 +439,7 @@ def _note(stats: HuntStats, message: str) -> None:
     stats.logs.append(line)
     if len(stats.logs) > 500:
         del stats.logs[: len(stats.logs) - 500]
+    stats.last_log_at = time.time()
     log.info("HUNT %s", message)
 
 
@@ -940,6 +942,8 @@ async def run_paginated_discovery(
         intent_id: str = "",
         source: str = "search",
         location_seed: str = "",
+        site_index: int = 0,
+        site_count: int = 0,
     ) -> Optional[Dict[str, Any]]:
         nonlocal stats
         async with enrich_sem:
@@ -954,7 +958,13 @@ async def run_paginated_discovery(
             contacts: List[Dict[str, Any]] = []
             email_status = "email_not_found"
             email_source = ""
-            _note(stats, f"Reading {domain}")
+            if site_count:
+                _note(
+                    stats,
+                    f"Reading {domain} ({site_index} of {site_count} on this page, 10s max)",
+                )
+            else:
+                _note(stats, f"Reading {domain} (10s max)")
             _update_job(
                 job_id,
                 status="running",
@@ -1116,6 +1126,12 @@ async def run_paginated_discovery(
                     if decision == "REJECT_WRONG_LOCATION":
                         where = loc_check.get("business_location") or "another country"
                         _note(stats, f"Skipped {company_name or domain} — located in {where}, outside the hunt country")
+                    elif decision == "UNCERTAIN_REQUIRES_MORE_EVIDENCE":
+                        _note(
+                            stats,
+                            f"Skipped {company_name or domain} — site did not load in 10s. "
+                            "Left open for a later hunt.",
+                        )
                     else:
                         _bump_funnel(stats, search_intent, "irrelevant")
                         _note(stats, f"Skipped {company_name or domain} — {graded.get('reason') or 'not a business in this trade'}")
@@ -1405,49 +1421,63 @@ async def run_paginated_discovery(
             session.commit()
         return jobs
 
+    def _record_enrich_result(res: Any, intent: DiscoverySearchIntent) -> None:
+        nonlocal saved_front
+        if isinstance(res, Exception) or not res or res.get("skippedSheet"):
+            return
+        pid = res.get("id")
+        prospect = res.get("prospect")
+        if pid and prospect and not res.get("merged"):
+            if pid not in saved_ids:
+                saved_ids.append(pid)
+                saved_front.append(prospect)
+            with _db() as session:
+                it = session.get(DiscoverySearchIntent, intent.id)
+                if it:
+                    it.relevant_leads = int(it.relevant_leads or 0) + 1
+                    intent.relevant_leads = it.relevant_leads
+                    session.add(it)
+                    session.commit()
+        elif pid and prospect and res.get("merged") and res.get("changed"):
+            if pid not in saved_ids:
+                saved_ids.append(pid)
+            saved_front = [p for p in saved_front if p.get("id") != pid] + [prospect]
+
     async def _enrich_batch(jobs: List[Dict[str, Any]], intent: DiscoverySearchIntent) -> int:
-        """Open, read, and save a batch of queued companies. Returns leads saved."""
+        """Open one company at a time so a hung site cannot hide the rest of the page."""
         if not jobs:
             return 0
         before = stats.leads_saved
-        tasks = [asyncio.create_task(_enrich_and_maybe_save(**job)) for job in jobs]
-        results = await call_with_deadline(
-            asyncio.gather(*tasks, return_exceptions=True),
-            max(24.0, len(tasks) * 14.0),
-            [],
-        ) or []
-        gc.collect()
-        for res in results:
-            if isinstance(res, Exception) or not res or res.get("skippedSheet"):
-                continue
-            pid = res.get("id")
-            prospect = res.get("prospect")
-            if pid and prospect and not res.get("merged"):
-                if pid not in saved_ids:
-                    saved_ids.append(pid)
-                    saved_front.append(prospect)
-                with _db() as session:
-                    it = session.get(DiscoverySearchIntent, intent.id)
-                    if it:
-                        it.relevant_leads = int(it.relevant_leads or 0) + 1
-                        intent.relevant_leads = it.relevant_leads
-                        session.add(it)
-                        session.commit()
-        _update_job(
-            job_id,
-            status="running",
-            phase=_phase_from_stats(
-                stats, intent.query, sum(1 for r in intent_rows if r.status != "active"),
-                len(intent_rows), leads_cap=budget.leads_per_run,
-            ),
-            progress=_progress_pct(
-                stats, budget, sum(1 for r in intent_rows if r.status != "active"), len(intent_rows),
-            ),
-            found_count=stats.leads_saved,
-            skipped_existing=stats.already_known_skips,
-            result_prospect_ids=saved_ids[-200:],
-            telemetry=_telemetry_payload(stats, intent_rows, intent.query, budget),
-        )
+        total = len(jobs)
+        for i, job in enumerate(jobs, start=1):
+            hit_reasons: List[str] = []
+            if _budget_hit(hit_reasons):
+                _note(stats, _STOP_TEXT.get(hit_reasons[0], hit_reasons[0]))
+                break
+            payload = {**job, "site_index": i, "site_count": total}
+            res = await call_with_deadline(
+                _enrich_and_maybe_save(**payload),
+                16.0,
+                None,
+            )
+            _record_enrich_result(res, intent)
+            gc.collect()
+            _update_job(
+                job_id,
+                status="running",
+                phase=_phase_from_stats(
+                    stats, intent.query, sum(1 for r in intent_rows if r.status != "active"),
+                    len(intent_rows), leads_cap=budget.leads_per_run,
+                ),
+                progress=_progress_pct(
+                    stats, budget, sum(1 for r in intent_rows if r.status != "active"),
+                    len(intent_rows),
+                ),
+                found_count=stats.leads_saved,
+                skipped_existing=stats.already_known_skips,
+                result_prospect_ids=saved_ids[-200:],
+                telemetry=_telemetry_payload(stats, intent_rows, intent.query, budget),
+            )
         return stats.leads_saved - before
 
     source_steps_this_run: Dict[Tuple[str, str], int] = {}
@@ -1624,7 +1654,29 @@ async def run_paginated_discovery(
         report["searched_query"] = search_query
         return report
     _note(stats, "Searching the web for companies.")
+    places_on_hunt = sorted({
+        (row.location or "").strip() for row in intent_rows if (row.location or "").strip()
+    })
+    place_bit = ", ".join(places_on_hunt) if places_on_hunt else "the country on each hunt line"
+    typical_low = max(12, 6 + len(intent_rows) * 2)
+    typical_high = max(typical_low + 10, 18 + len(intent_rows) * 3)
+    _note(
+        stats,
+        f"This hunt is global: the country stays on every search ({place_bit}), "
+        "not a Canada-only filter. "
+        f"Typical time for {len(intent_rows)} lines: about {typical_low}–{typical_high} minutes. "
+        "Each website is given 10 seconds. Chains, marketplaces, and companies already in your sheet are skipped.",
+    )
     while True:
+        if time.time() - float(stats.last_log_at or start) >= 25:
+            finished = sum(1 for r in intent_rows if r.status != "active")
+            elapsed_min = int((time.time() - start) / 60)
+            _note(
+                stats,
+                f"Still working: {stats.leads_saved} leads saved, {stats.websites_inspected} sites read, "
+                f"{finished} of {len(intent_rows)} searches finished, {elapsed_min} min elapsed. "
+                "A quiet log means a website is being opened.",
+            )
         hit_reasons: List[str] = []
         if _budget_hit(hit_reasons):
             reason = hit_reasons[0] if hit_reasons else "budget"
@@ -1868,6 +1920,10 @@ async def run_paginated_discovery(
         enrich_jobs: List[Dict[str, Any]] = []
         directory_urls: List[str] = []
         page_known = 0
+        page_leads0 = stats.leads_saved
+        page_known0 = stats.already_known_skips
+        page_fail0 = int(stats.funnel.get("fetch_failed") or 0)
+        page_junk0 = int(stats.funnel.get("junk_filtered") or 0)
         # Advance the cross-run cursor only after this page is fully handled.
         pending_cursor: Optional[int] = None
 
@@ -2223,44 +2279,9 @@ async def run_paginated_discovery(
                 enrich_jobs.extend(added)
                 _note(stats, f"Directory pages listed {len(mined)} company websites; {len(added)} are new.")
 
-        # Enrich new domains from this page (bounded concurrency) — incremental save
+        # Enrich new domains from this page, one site at a time.
         if enrich_jobs:
-            tasks = [
-                asyncio.create_task(_enrich_and_maybe_save(**job))
-                for job in enrich_jobs
-            ]
-            results = await call_with_deadline(
-                asyncio.gather(*tasks, return_exceptions=True),
-                max(24.0, len(tasks) * 14.0),
-                [],
-            ) or []
-            gc.collect()
-            for res in results:
-                if isinstance(res, Exception) or not res:
-                    continue
-                if res.get("skippedSheet"):
-                    continue
-                pid = res.get("id")
-                prospect = res.get("prospect")
-                if pid and prospect and not res.get("merged"):
-                    if pid not in saved_ids:
-                        saved_ids.append(pid)
-                        saved_front.append(prospect)
-                elif pid and prospect and res.get("merged") and res.get("changed"):
-                    if pid not in saved_ids:
-                        saved_ids.append(pid)
-                    # refresh front copy
-                    saved_front = [p for p in saved_front if p.get("id") != pid] + [prospect]
-
-                # bump intent relevant count
-                with _db() as session:
-                    it = session.get(DiscoverySearchIntent, intent_id)
-                    if it and not res.get("merged"):
-                        it.relevant_leads = int(it.relevant_leads or 0) + 1
-                        intent.relevant_leads = it.relevant_leads
-                        session.add(it)
-                        session.commit()
-
+            await _enrich_batch(enrich_jobs, intent)
             if stats.leads_saved >= budget.leads_per_run:
                 for row in intent_rows:
                     if row.status == "active":
@@ -2275,26 +2296,38 @@ async def run_paginated_discovery(
                             status="active",
                         )
 
-            _update_job(
-                job_id,
-                phase=_phase_from_stats(
-                    stats,
-                    current_q,
-                    sum(1 for r in intent_rows if r.status != "active"),
-                    len(intent_rows),
-                    leads_cap=budget.leads_per_run,
-                ),
-                progress=_progress_pct(
-                    stats,
-                    budget,
-                    sum(1 for r in intent_rows if r.status != "active"),
-                    len(intent_rows),
-                ),
-                found_count=stats.leads_saved,
-                skipped_existing=stats.already_known_skips,
-                result_prospect_ids=saved_ids[-200:],
-                telemetry=_telemetry_payload(stats, intent_rows, current_q, budget),
-            )
+        saved_n = stats.leads_saved - page_leads0
+        known_n = stats.already_known_skips - page_known0
+        fail_n = int(stats.funnel.get("fetch_failed") or 0) - page_fail0
+        junk_n = int(stats.funnel.get("junk_filtered") or 0) - page_junk0
+        finished_n = sum(1 for r in intent_rows if r.status != "active")
+        elapsed_min = int((time.time() - start) / 60)
+        _note(
+            stats,
+            f"Page summary — {saved_n} new lead(s), {known_n} already known, "
+            f"{fail_n} site(s) did not load, {junk_n} skipped as not a buyer. "
+            f"{finished_n} of {len(intent_rows)} searches finished, {elapsed_min} min elapsed.",
+        )
+        _update_job(
+            job_id,
+            phase=_phase_from_stats(
+                stats,
+                current_q,
+                finished_n,
+                len(intent_rows),
+                leads_cap=budget.leads_per_run,
+            ),
+            progress=_progress_pct(
+                stats,
+                budget,
+                finished_n,
+                len(intent_rows),
+            ),
+            found_count=stats.leads_saved,
+            skipped_existing=stats.already_known_skips,
+            result_prospect_ids=saved_ids[-200:],
+            telemetry=_telemetry_payload(stats, intent_rows, current_q, budget),
+        )
 
         if pending_cursor is not None and not fallback:
             _save_cursor_page(

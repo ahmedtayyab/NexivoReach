@@ -95,6 +95,35 @@ def test_industry_giant_homepage_is_skipped_and_burned():
     assert "giant" in page["reason"].lower()
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.shoppersdrugmart.ca/en/health-and-pharmacy",
+        "https://www.boots.co.uk/",
+        "https://www.cvs.com/",
+        "https://www.canadiantire.ca/en.html",
+        "https://www.costco.ca/",
+        "https://www.sportchek.ca/",
+        "https://www.rebelsport.com.au/",
+        "https://www.carrefour.fr/",
+    ],
+)
+def test_national_chain_retailers_are_skipped_in_every_country(url):
+    page = classify_page(url, "Gym knee sleeves")
+    assert page["page_kind"] == "article"
+    assert page["burn_domain"] is True
+    assert "giant" in page["reason"].lower()
+
+
+def test_deviceinformed_is_a_directory_not_a_lead():
+    page = classify_page(
+        "https://deviceinformed.com/knee-sleeves-distributors-in-canada",
+        "Knee sleeves distributors in Canada",
+    )
+    assert page["page_kind"] == "directory"
+    assert page["burn_domain"] is False
+
+
 def test_giant_stockist_page_is_a_directory_not_a_lead():
     page = classify_page("https://www.sbdapparel.com/pages/stockists", "SBD Stockists")
     assert page["page_kind"] == "directory"
