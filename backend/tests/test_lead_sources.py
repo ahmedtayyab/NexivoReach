@@ -33,6 +33,9 @@ from app.services.paginated_discovery import lead_save_decision
         "https://www.strath.ac.uk/sport/strength-and-conditioning/",
         "https://sportsci.edu.au/papers/grip.pdf",
         "https://www.madeinchina.com/product/knee-sleeve.html",
+        "https://travel.gc.ca/",
+        "https://www.canada.ca/en.html",
+        "https://www.tagvenue.com/venues/london",
     ],
 )
 def test_non_business_hosts_are_never_companies(url):
@@ -67,6 +70,22 @@ def test_giant_stockist_page_is_a_directory_not_a_lead():
     page = classify_page("https://www.sbdapparel.com/pages/stockists", "SBD Stockists")
     assert page["page_kind"] == "directory"
     assert page["burn_domain"] is False
+
+
+def test_directory_extraction_skips_show_page_chrome():
+    html = """
+    <header><a href="https://www.eventbrite.com/e/elevate">Tickets</a></header>
+    <a href="https://www.primegearsports.co.uk/">Prime Gear Sports</a>
+    <footer>
+      <a href="https://travel.gc.ca/">Travel.gc.ca</a>
+      <a href="https://www.tagvenue.com/">Tagvenue</a>
+      <a href="https://www.accommodationcanada.com/">Hotels</a>
+    </footer>
+    """
+    links = extract_directory_companies(
+        html, "https://www.elevatearena.com/london/exhibitors/2026-exhibitors",
+    )
+    assert links == ["https://www.primegearsports.co.uk/"]
 
 
 def test_directory_links_skip_industry_giants():

@@ -40,7 +40,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-STALE_RUNNING_SEC = 240.0
+STALE_RUNNING_SEC = 720.0
 
 
 def hunt_job_is_stale(

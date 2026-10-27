@@ -26,6 +26,10 @@ NON_BUSINESS_HOSTS = (
     "dnb.com", "bloomberg.com", "opencorporates.com", "companieshouse.gov.uk",
     "find-and-update.company-information.service.gov.uk", "endole.co.uk", "companycheck.co.uk",
     "bizstats.co.uk", "trustpilot.com", "tripadvisor.com",
+    "gc.ca", "canada.ca", "gov.uk", "gov.au",
+    "tagvenue.com", "eventbrite.com", "eventbrite.co.uk", "eventdata.uk",
+    "thecpdregister.com", "accommodationcanada.com", "booking.com",
+    "airbnb.com", "hotels.com", "expedia.com",
 )
 # First-page industry giants. They will not buy from a smaller exporter.
 # Homepages are skipped so enrich time goes to independent shops. Their
@@ -66,7 +70,13 @@ ARTICLE_PATH = re.compile(
     re.I,
 )
 _INSTITUTION_HOST = re.compile(
-    r"(^|\.)(edu|mil)(\.[a-z]{2})?$|(^|\.)ac\.[a-z]{2}$|(^|\.)gov(\.[a-z]{2})?$|(^|\.)edu\.[a-z]{2}$",
+    r"(^|\.)(edu|mil)(\.[a-z]{2})?$|"
+    r"(^|\.)ac\.[a-z]{2}$|"
+    r"(^|\.)gov(\.[a-z]{2})?$|"
+    r"(^|\.)edu\.[a-z]{2}$|"
+    r"(^|\.)gc\.ca$|"
+    r"(^|\.)canada\.ca$|"
+    r"(^|\.)govt\.nz$",
     re.I,
 )
 _DOCUMENT_EXT = (".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx")
@@ -204,7 +214,9 @@ def extract_directory_companies(html: str, page_url: str, limit: int = 20) -> Li
     except Exception:
         return []
     page_host = _host(page_url)
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup((html or "")[:180_000], "html.parser")
+    for chrome in soup.select("nav, footer, header, [role='navigation']"):
+        chrome.decompose()
     found: List[str] = []
     seen: set[str] = set()
     skip_hosts = SEARCH_HOSTS + ARTICLE_HOSTS + NON_BUSINESS_HOSTS + DIRECTORY_HOSTS + GIANT_HOSTS

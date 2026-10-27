@@ -187,7 +187,7 @@ def test_running_hunt_is_stale_after_silence():
 
     now = datetime(2026, 10, 27, 18, 20, tzinfo=timezone.utc)
     fresh = (now - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    old = (now - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    old = (now - timedelta(minutes=13)).strftime("%Y-%m-%dT%H:%M:%SZ")
     assert hunt_job_is_stale(fresh, now=now) is False
     assert hunt_job_is_stale(old, now=now) is True
     assert hunt_job_is_stale("", now=now) is False

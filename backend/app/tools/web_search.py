@@ -999,25 +999,26 @@ class WebSearchTool:
                 res = await c.get(url, headers=HEADERS, timeout=5.0)
                 if res.status_code != 200 or not res.text:
                     return {"text": "", "title": "", "url": str(res.url), "ok": False, "location": ""}
-                soup = BeautifulSoup(res.text, "html.parser")
+                html = _parseable_html(res.text)
+                soup = BeautifulSoup(html, "html.parser")
                 title = ""
                 if soup.title and soup.title.get_text(strip=True):
                     title = soup.title.get_text(strip=True)[:160]
                 meta = soup.find("meta", attrs={"name": "description"})
                 desc = (meta.get("content") or "") if meta else ""
-                location = _location_from_html(res.text)
+                location = _location_from_html(html)
                 emails: List[str] = []
                 phones: List[str] = []
                 contact_urls: List[str] = []
                 try:
                     from app.tools.contact_finder import _extract_from_html, _domain as _cf_domain
-                    contact_bits = _extract_from_html(res.text, str(res.url), _cf_domain(str(res.url)))
+                    contact_bits = _extract_from_html(html, str(res.url), _cf_domain(str(res.url)))
                     emails = list(contact_bits.get("emails") or [])
                     phones = list(contact_bits.get("phones") or [])
                     contact_urls = list(contact_bits.get("contact_urls") or [])
                 except Exception:
                     pass
-                text = _html_to_text(res.text, limit=limit)
+                text = _html_to_text(html, limit=limit)
                 if desc:
                     text = f"{desc}\n{text}"[:limit]
                 if not location:
@@ -1034,7 +1035,7 @@ class WebSearchTool:
                     "contact_urls": contact_urls,
                 }
                 if keep_html:
-                    out["html"] = res.text
+                    out["html"] = html
                 return out
 
             if client is not None:
@@ -2205,8 +2206,16 @@ def _pagination_urls(html: str, page_url: str) -> List[str]:
     return found[:CATALOG_PAGINATION_CAP]
 
 
+PARSE_HTML_CAP = 180_000
+
+
+def _parseable_html(html: str) -> str:
+    """Huge government/news pages freeze the hunt if BeautifulSoup sees all of them."""
+    return (html or "")[:PARSE_HTML_CAP]
+
+
 def _html_to_text(html: str, limit: int = 12000) -> str:
-    soup = BeautifulSoup(html or "", "html.parser")
+    soup = BeautifulSoup(_parseable_html(html), "html.parser")
     for tag in soup(["script", "style", "noscript", "svg", "nav", "form"]):
         tag.decompose()
     text = soup.get_text(separator="\n")
@@ -2215,7 +2224,7 @@ def _html_to_text(html: str, limit: int = 12000) -> str:
 
 def _location_from_html(html: str) -> str:
     """Prefer address-looking footer / contact blocks for a display location."""
-    soup = BeautifulSoup(html or "", "html.parser")
+    soup = BeautifulSoup(_parseable_html(html), "html.parser")
     for tag in soup(["script", "style", "noscript", "svg"]):
         tag.decompose()
     chunks: List[str] = []
