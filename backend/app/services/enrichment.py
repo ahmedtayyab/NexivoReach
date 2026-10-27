@@ -68,6 +68,7 @@ async def enrich_website(
     seed_phone: str = "",
     seed_contacts: list | None = None,
     use_hunter: bool = True,
+    use_browser: bool = True,
 ) -> dict[str, Any]:
     """
     Enrich a company website for public contact emails/phones.
@@ -116,6 +117,7 @@ async def enrich_website(
         homepage_url=(page.get("url") if isinstance(page, dict) else None) or website,
         seed_phone=phone,
         seed_emails=list((page.get("emails") or []) if isinstance(page, dict) else []),
+        use_browser=use_browser,
     )
     homepage_html = ""
     if found.get("email"):

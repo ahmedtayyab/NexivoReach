@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { BusinessInfo, IdealCustomerProfile, Prospect, AgentRunLog, Product } from '../types';
-import { Check, Copy, FileSpreadsheet, Loader2, RotateCcw, Search, X } from 'lucide-react';
+import { Check, Copy, FileSpreadsheet, FileText, Loader2, RotateCcw, Search, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { useConfirm } from './ConfirmDialog';
 import {
@@ -36,7 +36,9 @@ type RecentHunt = {
   userPrompt?: string;
   foundCount?: number;
   createdAt?: string;
+  phase?: string;
   requestPayload?: { user_prompt?: string };
+  telemetry?: { huntLog?: string[]; stopSummary?: string };
 };
 
 const HUNT_PHASE_SECONDS = [0, 8, 18, 35];
@@ -293,7 +295,14 @@ export default function FindBuyersPanel({
       const resp = await apiFetch('/api/discovery/jobs?limit=8');
       if (!resp.ok) return;
       const rows = (await resp.json()) as RecentHunt[];
-      setRecentHunts(Array.isArray(rows) ? rows : []);
+      const list = Array.isArray(rows) ? rows : [];
+      setRecentHunts(list);
+      if (isHuntRunning()) return;
+      const latestWithLog = list.find(h => (h.telemetry?.huntLog || []).length);
+      if (latestWithLog?.telemetry?.huntLog?.length) {
+        setHuntLog(latestWithLog.telemetry.huntLog);
+        setStopSummary(latestWithLog.telemetry.stopSummary || latestWithLog.phase || '');
+      }
     } catch {
       /* ignore */
     }
@@ -357,11 +366,13 @@ export default function FindBuyersPanel({
         // Prospects / navigation are handled by the App-level huntRunner subscriber
         // so switching tabs mid-hunt still saves leads.
       },
-      onError: message => {
+      onError: (message, meta) => {
         setIsRunning(false);
         setServerProgress(0);
         setServerPhase('');
         setTelemetryHint('');
+        if (meta?.huntLog?.length) setHuntLog(meta.huntLog);
+        if (meta?.stopSummary) setStopSummary(meta.stopSummary);
         setStatusText(message);
         notifyHuntFinishedInTab(0, true);
       },
@@ -775,8 +786,21 @@ export default function FindBuyersPanel({
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={() => setLogOpen(true)}
-              disabled={huntLog.length === 0}
+              onClick={() => {
+                if (!huntLog.length) {
+                  const latest = recentHunts.find(h => (h.telemetry?.huntLog || []).length);
+                  if (latest?.telemetry?.huntLog?.length) {
+                    setHuntLog(latest.telemetry.huntLog);
+                    setStopSummary(latest.telemetry.stopSummary || latest.phase || '');
+                  }
+                }
+                setLogOpen(true);
+              }}
+              disabled={
+                huntLog.length === 0 &&
+                !stopSummary &&
+                !recentHunts.some(h => (h.telemetry?.huntLog || []).length)
+              }
               title="What this hunt searched and why it stopped"
             >
               Hunt log
@@ -920,6 +944,20 @@ export default function FindBuyersPanel({
                       {count !== null ? ` · ${count} leads` : ''}
                       {hunt.status && hunt.status !== 'completed' ? ` · ${hunt.status}` : ''}
                     </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="saved-hunts__rerun"
+                    disabled={!(hunt.telemetry?.huntLog || []).length && !hunt.telemetry?.stopSummary}
+                    aria-label={`View log: ${summary.title}`}
+                    title="View hunt log"
+                    onClick={() => {
+                      setHuntLog(hunt.telemetry?.huntLog || []);
+                      setStopSummary(hunt.telemetry?.stopSummary || hunt.phase || '');
+                      setLogOpen(true);
+                    }}
+                  >
+                    <FileText className="w-3.5 h-3.5" />
                   </button>
                   <button
                     type="button"

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.services.paginated_discovery import (
     HuntBudget,
     _build_intents_from_prompt,
@@ -156,8 +158,39 @@ def test_yahoo_region_follows_the_hunt_country():
 
     assert yahoo_region_for_iso("GB") == "uk-en"
     assert yahoo_region_for_iso("AU") == "au-en"
+    assert yahoo_region_for_iso("CA") == "ca-en"
     assert yahoo_region_for_iso("US") == "us-en"
     assert yahoo_region_for_iso("") == "us-en"
+
+
+@pytest.mark.asyncio
+async def test_call_with_deadline_moves_on_when_a_task_hangs():
+    import asyncio
+
+    from app.services.paginated_discovery import call_with_deadline
+
+    async def hang():
+        await asyncio.sleep(30)
+        return "done"
+
+    started = asyncio.get_event_loop().time()
+    result = await call_with_deadline(hang(), 0.2, "skipped")
+    elapsed = asyncio.get_event_loop().time() - started
+    assert result == "skipped"
+    assert elapsed < 2.0
+
+
+def test_running_hunt_is_stale_after_silence():
+    from datetime import datetime, timedelta, timezone
+
+    from app.api.discovery import hunt_job_is_stale
+
+    now = datetime(2026, 10, 27, 18, 20, tzinfo=timezone.utc)
+    fresh = (now - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    old = (now - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert hunt_job_is_stale(fresh, now=now) is False
+    assert hunt_job_is_stale(old, now=now) is True
+    assert hunt_job_is_stale("", now=now) is False
 
 
 def test_serper_out_of_credits_is_detected():

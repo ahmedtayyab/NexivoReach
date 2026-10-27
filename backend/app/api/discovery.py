@@ -40,6 +40,47 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+STALE_RUNNING_SEC = 240.0
+
+
+def hunt_job_is_stale(
+    updated_at: str,
+    *,
+    now: Optional[datetime] = None,
+    limit_sec: float = STALE_RUNNING_SEC,
+) -> bool:
+    """True when a running hunt has not written progress for too long."""
+    raw = (updated_at or "").strip()
+    if not raw:
+        return False
+    try:
+        stamped = datetime.strptime(raw, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except Exception:
+        return False
+    clock = now or datetime.now(timezone.utc)
+    return (clock - stamped).total_seconds() >= float(limit_sec)
+
+
+def _fail_stale_job(session: Session, job: DiscoveryJob) -> DiscoveryJob:
+    if job.status not in ("running", "queued"):
+        return job
+    if not hunt_job_is_stale(job.updated_at or job.created_at):
+        return job
+    job.status = "failed"
+    job.error = "stalled"
+    job.phase = "Hunt stopped responding. Saved leads were kept. Run it again to continue."
+    job.progress = 100
+    job.completed_at = _now()
+    job.updated_at = _now()
+    tel = dict(job.telemetry or {})
+    tel["stopSummary"] = job.phase
+    job.telemetry = tel
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return job
+
+
 def _domain(url: str) -> str:
     host = (urlparse(url or "").hostname or "").lower()
     if host.startswith("www."):
@@ -300,6 +341,7 @@ def list_discovery_jobs(
         ).all()
         out = []
         for job in rows:
+            job = _fail_stale_job(session, job)
             item = _job_to_dict(job)
             payload = job.request_payload or {}
             item["requestPayload"] = {
@@ -316,6 +358,7 @@ def get_discovery_job(job_id: str, request: Request, user: AuthUser = Depends(ge
         job = session.get(DiscoveryJob, job_id)
         if not job or job.business_id != business_id:
             raise HTTPException(status_code=404, detail="Hunt job not found")
+        job = _fail_stale_job(session, job)
         prospects = []
         agent_log = None
         if job.status == "completed" and job.result_prospect_ids:

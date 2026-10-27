@@ -64,6 +64,36 @@ from app.tools.web_search import WebSearchTool, run_search, yahoo_region_for_iso
 
 log = logging.getLogger(__name__)
 
+_EMPTY_ENRICH = {"email": "", "phone": "", "contacts": [], "site_text": "", "sources": []}
+
+
+async def call_with_deadline(coro, timeout: float, default: Any = None) -> Any:
+    """Wait for coro, but do not stall the hunt if it ignores cancellation.
+
+    asyncio.wait_for waits until a cancelled task actually finishes. A hung
+    Yahoo search or Chromium page can ignore cancel and freeze the run.
+    """
+    task = asyncio.create_task(coro)
+
+    def _silence(done: asyncio.Task) -> None:
+        try:
+            done.exception()
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    done, _pending = await asyncio.wait({task}, timeout=max(0.1, float(timeout)))
+    if task in done:
+        if task.cancelled():
+            return default
+        exc = task.exception()
+        if exc is not None:
+            log.warning("Timed call failed: %s", exc)
+            return default
+        return task.result()
+    task.add_done_callback(_silence)
+    task.cancel()
+    return default
+
 
 def _db() -> Session:
     """Hunt opens many short sessions; keep attrs usable after commit (no DetachedInstanceError)."""
@@ -902,25 +932,31 @@ async def run_paginated_discovery(
             contacts: List[Dict[str, Any]] = []
             email_status = "email_not_found"
             email_source = ""
-            try:
-                found = await asyncio.wait_for(
-                    enrich_website(
-                        website,
-                        seed_email="",
-                        seed_phone="",
-                        seed_contacts=[],
-                        use_hunter=False,
-                    ),
-                    timeout=14.0,
-                )
-            except Exception:
-                found = {"email": "", "phone": "", "contacts": [], "site_text": "", "sources": []}
-                _bump_funnel(stats, search_intent, "fetch_failed")
+            _note(stats, f"Reading {domain}")
+            _update_job(
+                job_id,
+                status="running",
+                phase=f"Reading {domain}",
+                found_count=stats.leads_saved,
+                skipped_existing=stats.already_known_skips,
+                telemetry=_telemetry_payload(stats, intent_rows, search_intent, budget),
+            )
+            found = await call_with_deadline(
+                enrich_website(
+                    website,
+                    seed_email="",
+                    seed_phone="",
+                    seed_contacts=[],
+                    use_hunter=False,
+                    use_browser=False,
+                ),
+                12.0,
+                dict(_EMPTY_ENRICH),
+            ) or dict(_EMPTY_ENRICH)
+            if (found.get("site_text") or "").strip():
+                _bump_funnel(stats, search_intent, "fetch_ok")
             else:
-                if (found.get("site_text") or "").strip():
-                    _bump_funnel(stats, search_intent, "fetch_ok")
-                else:
-                    _bump_funnel(stats, search_intent, "fetch_failed")
+                _bump_funnel(stats, search_intent, "fetch_failed")
             stats.websites_inspected += 1
             site_text = (found.get("site_text") or "")[:8000]
             phone = found.get("phone") or ""
@@ -1360,7 +1396,11 @@ async def run_paginated_discovery(
             return 0
         before = stats.leads_saved
         tasks = [asyncio.create_task(_enrich_and_maybe_save(**job)) for job in jobs]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await call_with_deadline(
+            asyncio.gather(*tasks, return_exceptions=True),
+            max(24.0, len(tasks) * 14.0),
+            [],
+        ) or []
         gc.collect()
         for res in results:
             if isinstance(res, Exception) or not res or res.get("skippedSheet"):
@@ -1463,10 +1503,16 @@ async def run_paginated_discovery(
 
             _note(stats, f"{SOURCE_LABELS.get(src, src).capitalize()}: {row.query}")
             try:
-                step = await asyncio.to_thread(_source_step, src, plan, row.query, cursor_row.cursor, web)
+                step = await call_with_deadline(
+                    asyncio.to_thread(_source_step, src, plan, row.query, cursor_row.cursor, web),
+                    28.0,
+                    None,
+                )
             except Exception as exc:
                 log.warning("List source %s failed for %s: %s", src, row.query, exc)
-                _note(stats, f"{SOURCE_LABELS.get(src, src)} did not answer for “{row.query}”. Moving on.")
+                step = None
+            if step is None:
+                _note(stats, f"{SOURCE_LABELS.get(src, src)} did not finish in time for “{row.query}”. Moving on.")
                 continue
             if src == "places" and step.requests_used:
                 with _db() as session:
@@ -1543,7 +1589,7 @@ async def run_paginated_discovery(
         search_query = str(state.get("active_query") or query)
         try:
             report = await run_search(
-                web.search_backup_page, search_query, 1, state.get("fields"), timeout=22.0,
+                web.search_backup_page, search_query, 1, state.get("fields"), timeout=16.0,
             )
         except TimeoutError:
             report = {
@@ -2142,7 +2188,11 @@ async def run_paginated_discovery(
                 _finish_backup_search(stats, intent, business_id, page)
 
         if directory_urls:
-            mined = await _companies_from_directories(directory_urls[:2])
+            mined = await call_with_deadline(
+                _companies_from_directories(directory_urls[:2]),
+                22.0,
+                [],
+            ) or []
             if mined:
                 candidates = [
                     BusinessCandidate(name="", website=link, source="directory")
@@ -2158,7 +2208,11 @@ async def run_paginated_discovery(
                 asyncio.create_task(_enrich_and_maybe_save(**job))
                 for job in enrich_jobs
             ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            results = await call_with_deadline(
+                asyncio.gather(*tasks, return_exceptions=True),
+                max(24.0, len(tasks) * 14.0),
+                [],
+            ) or []
             gc.collect()
             for res in results:
                 if isinstance(res, Exception) or not res:

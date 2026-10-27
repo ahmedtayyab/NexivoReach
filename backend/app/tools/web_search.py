@@ -5,6 +5,7 @@ import html as html_lib
 import json
 import logging
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 from functools import partial
@@ -20,7 +21,8 @@ log = logging.getLogger(__name__)
 
 # A search that ignores its own timeout must not fill the process thread pool.
 _SEARCH_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=3, thread_name_prefix="web-search")
-SERPER_WAIT_SEC = 18.0
+_YAHOO_GATE = threading.BoundedSemaphore(1)
+SERPER_WAIT_SEC = 16.0
 
 # ddgs / Yahoo / DuckDuckGo HTML region codes. Default US was ranking US giants
 # even when the hunt was United Kingdom, Australia, etc.
@@ -54,13 +56,19 @@ def yahoo_region_for_iso(iso: str) -> str:
     return YAHOO_REGION_BY_ISO.get((iso or "").strip().upper(), "us-en")
 
 
-async def run_search(func, *args, timeout: float = 22.0):
-    """Run a blocking search off the event loop, and stop waiting if it hangs."""
+async def run_search(func, *args, timeout: float = 16.0):
+    """Run a blocking search off the event loop, and stop waiting if it hangs.
+
+    asyncio.wait_for waits for a cancelled inner task to finish. Yahoo/ddgs
+    can ignore that, which freezes the hunt. Wait with a deadline and move on
+    even if the worker thread is still busy.
+    """
     loop = asyncio.get_running_loop()
-    return await asyncio.wait_for(
-        loop.run_in_executor(_SEARCH_POOL, partial(func, *args)),
-        timeout=timeout,
-    )
+    fut = loop.run_in_executor(_SEARCH_POOL, partial(func, *args))
+    done, _pending = await asyncio.wait({fut}, timeout=max(0.1, float(timeout)))
+    if fut in done:
+        return fut.result()
+    raise TimeoutError
 
 # Shared hosts (CSF/LFD, Imunify360) auto-ban IPs that burst. Stay under their radar.
 CATALOG_CONCURRENCY = 5
@@ -844,27 +852,32 @@ class WebSearchTool:
     def _yahoo_hits(self, query: str, page: int) -> List[Dict[str, str]]:
         from ddgs.engines.yahoo import Yahoo
 
-        engine = Yahoo(timeout=15)
-        rows = engine.search(
-            query,
-            region=getattr(self, "search_region", None) or "us-en",
-            safesearch="moderate",
-            timelimit=None,
-            page=max(1, int(page or 1)),
-        )
-        if rows is None:
-            raise RuntimeError("Yahoo did not answer")
-        hits: List[Dict[str, str]] = []
-        for row in rows:
-            href = str(getattr(row, "href", "") or "")
-            if not href.startswith("http") or "bing.com/aclick" in href or "r.search.yahoo.com" in href:
-                continue
-            hits.append({
-                "title": str(getattr(row, "title", "") or ""),
-                "href": href,
-                "body": str(getattr(row, "body", "") or ""),
-            })
-        return hits
+        if not _YAHOO_GATE.acquire(blocking=False):
+            raise RuntimeError("Yahoo is still answering the previous search")
+        try:
+            engine = Yahoo(timeout=12)
+            rows = engine.search(
+                query,
+                region=getattr(self, "search_region", None) or "us-en",
+                safesearch="moderate",
+                timelimit=None,
+                page=max(1, int(page or 1)),
+            )
+            if rows is None:
+                raise RuntimeError("Yahoo did not answer")
+            hits: List[Dict[str, str]] = []
+            for row in rows:
+                href = str(getattr(row, "href", "") or "")
+                if not href.startswith("http") or "bing.com/aclick" in href or "r.search.yahoo.com" in href:
+                    continue
+                hits.append({
+                    "title": str(getattr(row, "title", "") or ""),
+                    "href": href,
+                    "body": str(getattr(row, "body", "") or ""),
+                })
+            return hits
+        finally:
+            _YAHOO_GATE.release()
 
     def _serper(self, query: str, page: int = 1, num: int = 20) -> List[Dict[str, str]]:
         if not settings.SERPER_API_KEY:

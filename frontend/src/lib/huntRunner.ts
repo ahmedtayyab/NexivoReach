@@ -58,7 +58,10 @@ export type HuntResult = {
 type HuntListener = {
   onProgress?: (p: HuntProgress) => void;
   onComplete?: (r: HuntResult) => void;
-  onError?: (message: string, meta: { jobId?: string; userPrompt: string }) => void;
+  onError?: (
+    message: string,
+    meta: { jobId?: string; userPrompt: string; huntLog?: string[]; stopSummary?: string },
+  ) => void;
 };
 
 type ActiveHunt = {
@@ -215,6 +218,24 @@ async function pollUntilDone(job: ActiveHunt): Promise<void> {
     }
 
     if (data.status === 'failed') {
+      const huntLog = Array.isArray(data.telemetry?.huntLog) ? data.telemetry.huntLog : [];
+      const stopSummary =
+        data.telemetry?.stopSummary || data.phase || data.error || 'Discovery failed';
+      if (data.error === 'stalled') {
+        emitComplete({
+          jobId: job.jobId,
+          foundCount: Number(data.foundCount || 0),
+          skippedExisting: Number(data.skippedExisting || 0),
+          prospects: Array.isArray(data.prospects) ? data.prospects : [],
+          agentLog: data.agent_log || null,
+          error: data.error,
+          userPrompt: job.userPrompt,
+          phase: data.phase || stopSummary,
+          huntLog,
+          stopSummary,
+        });
+        return;
+      }
       throw new Error(data.error || 'Discovery failed');
     }
 
@@ -234,7 +255,12 @@ async function pollUntilDone(job: ActiveHunt): Promise<void> {
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Discovery failed';
-    emitError(message, { jobId: job.jobId, userPrompt: job.userPrompt });
+    emitError(message, {
+      jobId: job.jobId,
+      userPrompt: job.userPrompt,
+      huntLog: Array.isArray(data.telemetry?.huntLog) ? data.telemetry.huntLog : [],
+      stopSummary: data.telemetry?.stopSummary || data.phase || '',
+    });
   } finally {
     if (active?.jobId === job.jobId) {
       active = null;
