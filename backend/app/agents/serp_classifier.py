@@ -26,10 +26,6 @@ NON_BUSINESS_HOSTS = (
     "dnb.com", "bloomberg.com", "opencorporates.com", "companieshouse.gov.uk",
     "find-and-update.company-information.service.gov.uk", "endole.co.uk", "companycheck.co.uk",
     "bizstats.co.uk", "trustpilot.com", "tripadvisor.com",
-    "gc.ca", "canada.ca", "gov.uk", "gov.au",
-    "tagvenue.com", "eventbrite.com", "eventbrite.co.uk", "eventdata.uk",
-    "thecpdregister.com", "accommodationcanada.com", "booking.com",
-    "airbnb.com", "hotels.com", "expedia.com",
 )
 # First-page industry giants. They will not buy from a smaller exporter.
 # Homepages are skipped so enrich time goes to independent shops. Their
@@ -69,16 +65,51 @@ ARTICLE_PATH = re.compile(
     r"/(blog|blogs|news|press|articles?|wiki|reviews?|guides?|roundups?|jobs|careers)(/|$)",
     re.I,
 )
-_INSTITUTION_HOST = re.compile(
-    r"(^|\.)(edu|mil)(\.[a-z]{2})?$|"
-    r"(^|\.)ac\.[a-z]{2}$|"
-    r"(^|\.)gov(\.[a-z]{2})?$|"
-    r"(^|\.)edu\.[a-z]{2}$|"
-    r"(^|\.)gc\.ca$|"
-    r"(^|\.)canada\.ca$|"
-    r"(^|\.)govt\.nz$",
+# Public-sector hosts worldwide: education + the government second-level
+# domains each country uses (.gov, .gouv.fr, .gob.mx, .gc.ca, .go.jp, …).
+_EDU_HOST = re.compile(
+    r"(^|\.)(edu|mil)(\.[a-z]{2,3})?$|(^|\.)ac\.[a-z]{2,3}$|(^|\.)edu\.[a-z]{2,3}$",
     re.I,
 )
+_GOV_SLD = re.compile(
+    r"(^|\.)(gov|gob|gouv|govt|mil)(\.[a-z]{2,3})?$"
+    r"|(^|\.)gc\.[a-z]{2}$"
+    r"|(^|\.)go\.(jp|kr|th|id|ke|ug|tz|ng)$",
+    re.I,
+)
+# National portals that sit on a normal ccTLD instead of a .gov-style SLD.
+NATIONAL_PORTALS = (
+    "canada.ca", "overheid.nl", "service-public.fr", "admin.ch",
+    "bund.de", "bundesregierung.de", "europa.eu", "nhs.uk", "nhs.net",
+    "police.uk", "mod.uk", "parliament.uk",
+)
+# Hotels, tickets, venue hire — never a B2B buyer, in any country.
+_PLATFORM_HOST = re.compile(
+    r"(^|\.)("
+    r"booking|expedia|airbnb|agoda|trivago|kayak|hotels|"
+    r"tripadvisor|eventbrite|ticketmaster|eventim|meetup|tagvenue|"
+    r"marriott|hilton|hyatt"
+    r")(\.[a-z0-9.-]+)$",
+    re.I,
+)
+_CHROME_LINK_TEXT = re.compile(
+    r"^(tickets?|register|registration|hotels?|travel|venue|venues|"
+    r"accommodation|visitors?|media|sponsors?|floorplan|"
+    r"privacy|cookies?|login|sign in|billetterie|entradas?)$",
+    re.I,
+)
+
+
+def is_non_buyer_host(host: str) -> bool:
+    """True for governments, universities, and consumer booking/event platforms."""
+    h = (host or "").lower()
+    if h.startswith("www."):
+        h = h[4:]
+    if not h:
+        return False
+    if _EDU_HOST.search(h) or _GOV_SLD.search(h) or _PLATFORM_HOST.search(h):
+        return True
+    return any(h == p or h.endswith("." + p) for p in NATIONAL_PORTALS)
 _DOCUMENT_EXT = (".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx")
 MFR_RE = re.compile(
     r"\b(manufacturer|manufacturing|factory|factories|oem|odm|textile mill|foundry)\b",
@@ -114,7 +145,7 @@ def classify_page(url: str, title: str = "") -> Dict[str, Any]:
     """
     host = _host(url)
     path = (urlparse(url or "").path or "").lower()
-    if host and (_endswith_any(host, NON_BUSINESS_HOSTS) or _INSTITUTION_HOST.search(host)):
+    if host and (_endswith_any(host, NON_BUSINESS_HOSTS) or is_non_buyer_host(host)):
         return {"page_kind": "article", "burn_domain": True, "reason": "Not a company website"}
     if host and _endswith_any(host, DIRECTORY_HOSTS):
         return {"page_kind": "directory", "burn_domain": False, "reason": "Directory page"}
@@ -230,7 +261,12 @@ def extract_directory_companies(html: str, page_url: str, limit: int = 20) -> Li
         host = _host(absolute)
         if not host or host == page_host or host.endswith("." + page_host) or _endswith_any(host, skip_hosts):
             continue
-        if classify_page(absolute, link.get_text(" ", strip=True))["page_kind"] != "company":
+        if is_non_buyer_host(host):
+            continue
+        label = link.get_text(" ", strip=True)
+        if label and _CHROME_LINK_TEXT.match(label.strip()):
+            continue
+        if classify_page(absolute, label)["page_kind"] != "company":
             continue
         if host in seen:
             continue

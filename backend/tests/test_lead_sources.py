@@ -33,14 +33,36 @@ from app.services.paginated_discovery import lead_save_decision
         "https://www.strath.ac.uk/sport/strength-and-conditioning/",
         "https://sportsci.edu.au/papers/grip.pdf",
         "https://www.madeinchina.com/product/knee-sleeve.html",
-        "https://travel.gc.ca/",
-        "https://www.canada.ca/en.html",
-        "https://www.tagvenue.com/venues/london",
     ],
 )
 def test_non_business_hosts_are_never_companies(url):
     page = classify_page(url, "Weightlifting straps")
     assert page["page_kind"] == "article"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://travel.gc.ca/",
+        "https://www.canada.ca/en.html",
+        "https://www.gov.uk/guidance/importing",
+        "https://www.service-public.fr/",
+        "https://www.gob.mx/",
+        "https://www.mofa.go.jp/",
+        "https://www.overheid.nl/",
+        "https://www.moe.gov.cn/",
+        "https://www.usa.gov/",
+        "https://www.booking.com/hotel/ca/example.html",
+        "https://www.eventbrite.fr/e/salon",
+        "https://www.ticketmaster.de/",
+        "https://www.tagvenue.com/venues/london",
+        "https://www.agoda.com/",
+    ],
+)
+def test_governments_and_booking_platforms_are_never_companies(url):
+    page = classify_page(url, "Directory")
+    assert page["page_kind"] == "article"
+    assert page["burn_domain"] is True
 
 
 def test_documents_are_skipped_without_burning_the_host():
@@ -57,6 +79,8 @@ def test_directory_page_is_recognised():
 
 def test_company_homepage_is_a_company():
     assert classify_page("https://www.primegearsports.co.uk/", "Prime Gear Sports")["page_kind"] == "company"
+    assert classify_page("https://www.tiendafitness.mx/", "Tienda Fitness")["page_kind"] == "company"
+    assert classify_page("https://www.liftingshop.co.jp/", "Lifting Shop")["page_kind"] == "company"
 
 
 def test_industry_giant_homepage_is_skipped_and_burned():
