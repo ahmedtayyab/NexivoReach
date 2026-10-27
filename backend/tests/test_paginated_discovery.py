@@ -39,8 +39,9 @@ def test_backup_ladder_keeps_the_product_words():
 
     knee = backup_query_ladder("fitness knee sleeves importers Ohio", "Ohio")
     assert knee[0] == "fitness knee sleeves importers Ohio"
-    assert "fitness knee sleeves importers" in knee
-    assert "fitness knee sleeves importer" in knee
+    assert "fitness knee sleeves importer Ohio" in knee
+    assert all("Ohio" in item for item in knee)
+    assert "fitness knee sleeves importers" not in knee
     assert "knee sleeves importers" not in knee
     hooks = backup_query_ladder(
         "weightlifting hooks distributors United Kingdom",
@@ -48,11 +49,18 @@ def test_backup_ladder_keeps_the_product_words():
     )
     assert "hooks distributors" not in [item.lower() for item in hooks]
     assert all("weightlifting" in item.lower() for item in hooks)
+    assert all("united kingdom" in item.lower() for item in hooks)
     wraps = backup_query_ladder("wrist wraps weightlifting distributors Ohio", "Ohio")
-    assert "wrist wraps weightlifting distributors" in wraps
+    assert wraps[0] == "wrist wraps weightlifting distributors Ohio"
+    assert all("Ohio" in item for item in wraps)
+    assert "wrist wraps weightlifting distributors" not in wraps
     assert "wraps weightlifting distributors" not in [item.lower() for item in wraps]
+    canada = backup_query_ladder("gym knee sleeves wholesale Canada", "Canada")
+    assert all(item.endswith("Canada") for item in canada)
     assert resume_backup_query("straps distributors", hooks) == 0
     assert resume_backup_query(hooks[0], hooks) == 0
+    # An old cursor that dropped the country starts the kept-place ladder over.
+    assert resume_backup_query("fitness knee sleeves importers", knee) == 0
 
 
 def test_saved_more_results_cursor_resumes_the_next_batch():

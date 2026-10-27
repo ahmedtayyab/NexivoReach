@@ -506,8 +506,9 @@ def _ddg_cursor_json(
 def backup_query_ladder(query: str, place: str) -> List[str]:
     """Exact search first, then the same product with a shorter buyer role.
 
-    The product words stay. Dropping "weightlifting" or "fitness" turns the
-    search into cargo straps and crane hooks.
+    The product words stay. The hunt country / city stays on every rung.
+    Dropping the place sent Yahoo to US giants already in the sheet.
+    Dropping "weightlifting" or "fitness" turns the search into cargo straps.
     """
     from app.agents.geo import _VOLUME_ROLE_SHORT
 
@@ -525,15 +526,18 @@ def backup_query_ladder(query: str, place: str) -> List[str]:
     _add(full)
     place_clean = _clean(place)
     if place_clean and full.lower().endswith(" " + place_clean.lower()):
-        _add(full[: -(len(place_clean) + 1)])
-    seeds = list(ladder)
-    for seed in seeds:
-        words = seed.split()
-        if not words:
-            continue
-        short = _VOLUME_ROLE_SHORT.get(words[-1].lower(), "")
-        if short and short != words[-1].lower():
-            _add(" ".join(words[:-1] + [short]))
+        head = full[: -(len(place_clean) + 1)]
+        words = head.split()
+        if words:
+            short = _VOLUME_ROLE_SHORT.get(words[-1].lower(), "")
+            if short and short != words[-1].lower():
+                _add(" ".join(words[:-1] + [short, place_clean]))
+    else:
+        words = full.split()
+        if words:
+            short = _VOLUME_ROLE_SHORT.get(words[-1].lower(), "")
+            if short and short != words[-1].lower():
+                _add(" ".join(words[:-1] + [short]))
     return ladder
 
 
@@ -1036,7 +1040,7 @@ async def run_paginated_discovery(
                 company_name=company_name,
                 title=title,
                 snippet=snippet,
-                site_text=site_text or f"{title}\n{snippet}",
+                site_text=site_text,
                 categories=list(profile.categories or []),
             )
 
@@ -1096,7 +1100,7 @@ async def run_paginated_discovery(
                     profile=profile,
                     products=products,
                     triage=triage,
-                    site_text=site_text or f"{title}\n{snippet}",
+                    site_text=site_text,
                 )
                 decision = lead_save_decision(
                     relevant=relevant,
@@ -1454,26 +1458,29 @@ async def run_paginated_discovery(
     if sources_in_use:
         _note(
             stats,
-            "Business lists on: " + ", ".join(SOURCE_LABELS.get(s, s) for s in sources_in_use)
-            + ". Each company still gets its website read before it is saved.",
+            "Web search runs first. Extra lists ("
+            + ", ".join(SOURCE_LABELS.get(s, s) for s in sources_in_use)
+            + ") run after, with a time limit. Each company still gets its website read before it is saved.",
         )
     else:
         _note(
             stats,
-            "No extra business list is on. Trade directories still run. "
+            "No extra business list is on. Web search still runs. "
             "For UK distributor hunts, add a free Companies House key at "
             "developer.company-information.service.gov.uk — there is no bill.",
         )
 
-    async def _run_list_sources(max_steps_per_source: int) -> None:
+    async def _run_list_sources(max_steps_per_source: int, *, max_sec: float = 90.0) -> None:
         """
-        Walk Companies House, OpenStreetMap, and trade directories for every
-        hunt line, one page at a time, round-robin. Places only runs when a
-        key is set. Each page's companies go through the same read / email /
-        dedup / save path as a search result.
+        Walk stockists, Companies House, OpenStreetMap, and trade directories
+        after web search. One page at a time, round-robin, time-boxed so a
+        JS directory cannot eat the run. Places only runs when a key is set.
+        Each page's companies go through the same read / email / dedup / save
+        path as a search result.
         """
         if max_steps_per_source <= 0:
             return
+        deadline = time.time() + max(20.0, float(max_sec or 0) or 90.0)
         queue: List[Tuple[DiscoverySearchIntent, Dict[str, Any], str]] = [
             (row, plan, src)
             for row, plan in source_plans
@@ -1482,6 +1489,12 @@ async def run_paginated_discovery(
         ]
         exhausted_noted: set[Tuple[str, str]] = set()
         while queue:
+            if time.time() >= deadline:
+                _note(
+                    stats,
+                    "Stopped extra business lists so this hunt can finish. The next hunt continues them.",
+                )
+                return
             hit_reasons: List[str] = []
             if _budget_hit(hit_reasons):
                 _note(stats, _STOP_TEXT.get(hit_reasons[0], hit_reasons[0]))
@@ -1557,11 +1570,7 @@ async def run_paginated_discovery(
             if not step.exhausted and source_steps_this_run[key] < max_steps_per_source:
                 queue.append((row, plan, src))
 
-    # One page of each list source per line first, so every hunt gets registry
-    # and map companies even when the web search phase runs long.
-    await _run_list_sources(1)
-
-    # ---- Main fair pagination loop ----
+    # ---- Main fair pagination loop (web search first) ----
     # Without a Serper key every page is a free-search page from the start.
     serper_credits_out = not bool(settings.SERPER_API_KEY)
     ddg_html_noted = False
@@ -1614,6 +1623,7 @@ async def run_paginated_discovery(
         report["already_finished"] = False
         report["searched_query"] = search_query
         return report
+    _note(stats, "Searching the web for companies.")
     while True:
         hit_reasons: List[str] = []
         if _budget_hit(hit_reasons):
@@ -2302,8 +2312,12 @@ async def run_paginated_discovery(
                 ddg_next=ddg_to_store,
             )
 
-    # Remaining list-source pages, now that every search line has had its turn.
-    await _run_list_sources(max(1, int(settings.HUNT_SOURCE_STEPS_PER_INTENT or 1)))
+    # Extra lists after every hunt line has had a search turn. Time-boxed so
+    # a JS exhibitor or directory page cannot stall the finish.
+    await _run_list_sources(
+        max(1, int(settings.HUNT_SOURCE_STEPS_PER_INTENT or 1)),
+        max_sec=float(settings.HUNT_LIST_SOURCE_SECONDS or 90),
+    )
     if stats.candidates_by_source:
         parts = []
         for src, n in sorted(stats.candidates_by_source.items()):

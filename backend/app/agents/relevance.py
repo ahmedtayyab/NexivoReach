@@ -155,6 +155,16 @@ def website_relevance(
     cats = list(categories or [])
     if product and product not in cats:
         cats = [product, *cats]
+    if not (site_text or "").strip():
+        # SERP title/snippet is not a loaded website. Hold the result open.
+        return {
+            "level": "irrelevant",
+            "relevant": False,
+            "confidence": 0.45,
+            "reason": "The website did not load, so this result was not accepted as a business.",
+            "evidence": "",
+            "decision": "UNCERTAIN_REQUIRES_MORE_EVIDENCE",
+        }
     blob = f"{company_name}\n{title}\n{snippet}\n{site_text or ''}"
     role = (buyer_type or "").strip().lower().rstrip("s")
     role_hit = bool(role and re.search(rf"\b{re.escape(role)}s?\b", blob, re.I))

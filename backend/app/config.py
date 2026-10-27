@@ -77,10 +77,13 @@ class Settings(BaseSettings):
     DIRECTORY_SOURCE_ENABLED: bool = True
     # Brand stockist / authorised-dealer locators. Independent shops, not the brand.
     STOCKIST_SOURCE_ENABLED: bool = True
-    # Trade-show exhibitor lists (Elevate, FIBO, BodyPower). No key, never billed.
-    EXHIBITOR_SOURCE_ENABLED: bool = True
+    # Trade-show exhibitor lists (Elevate, FIBO, BodyPower). Off by default —
+    # those pages are JS shells that ate the hunt before web search ran.
+    EXHIBITOR_SOURCE_ENABLED: bool = False
     # List-source steps per hunt line per run (one step = one page of a source).
     HUNT_SOURCE_STEPS_PER_INTENT: int = 4
+    # Seconds left for stockists / directories after web search has had its turn.
+    HUNT_LIST_SOURCE_SECONDS: int = 90
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:3000/api/auth/google/callback"

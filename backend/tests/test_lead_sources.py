@@ -269,6 +269,19 @@ def test_source_plan_uses_osm_for_shops_and_gyms(monkeypatch):
     assert gyms["family"] == "gym"
 
 
+def test_source_plan_omits_exhibitors_unless_enabled(monkeypatch):
+    monkeypatch.setattr(bs.settings, "COMPANIES_HOUSE_API_KEY", "")
+    monkeypatch.setattr(bs.settings, "GOOGLE_PLACES_API_KEY", "")
+    monkeypatch.setattr(bs.settings, "DIRECTORY_SOURCE_ENABLED", True)
+    monkeypatch.setattr(bs.settings, "STOCKIST_SOURCE_ENABLED", True)
+    monkeypatch.setattr(bs.settings, "EXHIBITOR_SOURCE_ENABLED", False)
+    plan = bs.source_plan_for_intent(
+        "weightlifting straps distributors Canada", "Canada",
+    )
+    assert "exhibitors" not in plan["sources"]
+    assert plan["sources"] == ["stockists", "directory"]
+
+
 def test_places_is_opt_in(monkeypatch):
     monkeypatch.setattr(bs.settings, "GOOGLE_PLACES_API_KEY", "")
     monkeypatch.setattr(bs.settings, "COMPANIES_HOUSE_API_KEY", "")

@@ -201,8 +201,9 @@ def source_plan_for_intent(query: str, place: str) -> Dict[str, Any]:
     # on just because some other Google key is present.
     if settings.GOOGLE_PLACES_API_KEY:
         sources.append("places")
-    # Stockists and exhibitors list independent shops and regional dealers —
-    # the companies more likely to buy than the industry giants on page 1.
+    # Stockists list independent shops and regional dealers — the companies
+    # more likely to buy than the industry giants on page 1. Exhibitors stay
+    # last and off by default; those show sites are JS shells.
     if settings.STOCKIST_SOURCE_ENABLED:
         sources.append("stockists")
     if settings.EXHIBITOR_SOURCE_ENABLED:
