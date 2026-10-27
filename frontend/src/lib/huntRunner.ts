@@ -55,13 +55,17 @@ export type HuntResult = {
   stopSummary?: string;
 };
 
+type HuntErrorMeta = {
+  jobId?: string;
+  userPrompt: string;
+  huntLog?: string[];
+  stopSummary?: string;
+};
+
 type HuntListener = {
   onProgress?: (p: HuntProgress) => void;
   onComplete?: (r: HuntResult) => void;
-  onError?: (
-    message: string,
-    meta: { jobId?: string; userPrompt: string; huntLog?: string[]; stopSummary?: string },
-  ) => void;
+  onError?: (message: string, meta: HuntErrorMeta) => void;
 };
 
 type ActiveHunt = {
@@ -83,7 +87,7 @@ function emitComplete(r: HuntResult) {
   listeners.forEach(l => l.onComplete?.(r));
 }
 
-function emitError(message: string, meta: { jobId?: string; userPrompt: string }) {
+function emitError(message: string, meta: HuntErrorMeta) {
   listeners.forEach(l => l.onError?.(message, meta));
 }
 
@@ -181,19 +185,19 @@ async function pollUntilDone(job: ActiveHunt): Promise<void> {
     userPrompt: job.userPrompt,
   });
 
-  try {
-    let data: {
-      status?: string;
-      phase?: string;
-      progress?: number;
-      prospects?: Prospect[];
-      foundCount?: number;
-      skippedExisting?: number;
-      agent_log?: AgentRunLog;
-      error?: string;
-      telemetry?: HuntTelemetry;
-    } = { status: 'running' };
+  let data: {
+    status?: string;
+    phase?: string;
+    progress?: number;
+    prospects?: Prospect[];
+    foundCount?: number;
+    skippedExisting?: number;
+    agent_log?: AgentRunLog;
+    error?: string;
+    telemetry?: HuntTelemetry;
+  } = { status: 'running' };
 
+  try {
     while (data.status !== 'completed' && data.status !== 'failed') {
       if (job.abort) return;
       await new Promise(r => window.setTimeout(r, 1200));
