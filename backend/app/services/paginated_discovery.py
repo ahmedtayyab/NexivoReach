@@ -67,6 +67,24 @@ log = logging.getLogger(__name__)
 _EMPTY_ENRICH = {"email": "", "phone": "", "contacts": [], "site_text": "", "sources": []}
 
 
+def _enrich_site_isolated(website: str) -> Dict[str, Any]:
+    """Fetch a site on a private event loop in a worker thread.
+
+    A hung DNS/SSL/HTML parse must not block the hunt loop, or the whole
+    run freezes until the stale-job timer fires.
+    """
+    return asyncio.run(
+        enrich_website(
+            website,
+            seed_email="",
+            seed_phone="",
+            seed_contacts=[],
+            use_hunter=False,
+            use_browser=False,
+        )
+    )
+
+
 async def call_with_deadline(coro, timeout: float, default: Any = None) -> Any:
     """Wait for coro, but do not stall the hunt if it ignores cancellation.
 
@@ -942,15 +960,8 @@ async def run_paginated_discovery(
                 telemetry=_telemetry_payload(stats, intent_rows, search_intent, budget),
             )
             found = await call_with_deadline(
-                enrich_website(
-                    website,
-                    seed_email="",
-                    seed_phone="",
-                    seed_contacts=[],
-                    use_hunter=False,
-                    use_browser=False,
-                ),
-                12.0,
+                asyncio.to_thread(_enrich_site_isolated, website),
+                10.0,
                 dict(_EMPTY_ENRICH),
             ) or dict(_EMPTY_ENRICH)
             if (found.get("site_text") or "").strip():

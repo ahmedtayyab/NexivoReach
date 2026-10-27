@@ -83,13 +83,24 @@ NATIONAL_PORTALS = (
     "bund.de", "bundesregierung.de", "europa.eu", "nhs.uk", "nhs.net",
     "police.uk", "mod.uk", "parliament.uk",
 )
-# Hotels, tickets, venue hire — never a B2B buyer, in any country.
+# Hotels, tickets, venue hire, show software — never a B2B buyer, in any country.
 _PLATFORM_HOST = re.compile(
     r"(^|\.)("
     r"booking|expedia|airbnb|agoda|trivago|kayak|hotels|"
     r"tripadvisor|eventbrite|ticketmaster|eventim|meetup|tagvenue|"
-    r"marriott|hilton|hyatt"
+    r"marriott|hilton|hyatt|"
+    r"jumbula|cvent|hopin|bizzabo|splashthat|whova|eventcube|"
+    r"on24|goldcast|typeform|surveymonkey|"
+    r"cookiebot|onetrust|cookielaw"
     r")(\.[a-z0-9.-]+)$",
+    re.I,
+)
+_TOURISM_HOST = re.compile(
+    r"(^|\.)(visit|tourisme|turismo)[a-z0-9-]*\.[a-z.]+$",
+    re.I,
+)
+_SHOW_CHROME_HOST = re.compile(
+    r"exhibitor[s_-]?handbook|handbook[s_-]?exhibitor",
     re.I,
 )
 _CHROME_LINK_TEXT = re.compile(
@@ -107,7 +118,13 @@ def is_non_buyer_host(host: str) -> bool:
         h = h[4:]
     if not h:
         return False
-    if _EDU_HOST.search(h) or _GOV_SLD.search(h) or _PLATFORM_HOST.search(h):
+    if (
+        _EDU_HOST.search(h)
+        or _GOV_SLD.search(h)
+        or _PLATFORM_HOST.search(h)
+        or _TOURISM_HOST.search(h)
+        or _SHOW_CHROME_HOST.search(h)
+    ):
         return True
     return any(h == p or h.endswith("." + p) for p in NATIONAL_PORTALS)
 _DOCUMENT_EXT = (".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx")

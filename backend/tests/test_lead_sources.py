@@ -57,6 +57,11 @@ def test_non_business_hosts_are_never_companies(url):
         "https://www.ticketmaster.de/",
         "https://www.tagvenue.com/venues/london",
         "https://www.agoda.com/",
+        "https://www.visitcanada.com/",
+        "https://www.visitbritain.com/",
+        "https://fibonacci-virtual-online-campus.jumbula.com/register",
+        "https://theexhibitorshandbook.ca/",
+        "https://www.cvent.com/venues",
     ],
 )
 def test_governments_and_booking_platforms_are_never_companies(url):
@@ -660,8 +665,13 @@ def test_exhibitor_step_extracts_company_sites_and_names():
     from app.services.buyer_lists import exhibitor_step, extract_exhibitor_names
 
     html = """
-    <h3>Prime Gear Sports</h3>
-    <a href="https://www.primegearsports.co.uk/">Website</a>
+    <div class="exhibitor-card">
+      <h3>Prime Gear Sports</h3>
+      <a href="https://www.primegearsports.co.uk/">Website</a>
+    </div>
+    <a href="https://www.visitcanada.com/">Visit Canada</a>
+    <a href="https://campus.jumbula.com/event">Register</a>
+    <a href="https://theexhibitorshandbook.ca/">Handbook</a>
     <h3>Exhibitors</h3>
     """
     assert "Prime Gear Sports" in extract_exhibitor_names(html)
@@ -679,3 +689,23 @@ def test_exhibitor_step_extracts_company_sites_and_names():
     assert [c.website for c in step.candidates] == ["https://www.primegearsports.co.uk/"]
     assert step.next_cursor == "1"
     assert step.exhausted is False
+
+
+def test_exhibitor_step_ignores_page_chrome_without_cards():
+    from app.services.buyer_lists import exhibitor_step
+
+    html = """
+    <a href="https://www.visitcanada.com/">Visit</a>
+    <a href="https://partnersinternational.ca/">Partners</a>
+    <a href="https://theexhibitorshandbook.ca/">Handbook</a>
+    <a href="https://campus.jumbula.com/x">Campus</a>
+    """
+
+    step = exhibitor_step(
+        urls=["https://www.fibo.com/germany/en-gb/exhibitor-directory.html"],
+        cursor="0",
+        searcher=lambda _q: [],
+        fetch_html=lambda _url: html,
+        resolve_limit=0,
+    )
+    assert step.candidates == []

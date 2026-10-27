@@ -17,7 +17,11 @@ from urllib.parse import urlparse
 
 import httpx
 
-from app.agents.serp_classifier import classify_page, extract_directory_companies
+from app.agents.serp_classifier import (
+    classify_page,
+    extract_directory_companies,
+    is_non_buyer_host,
+)
 from app.services.business_sources import (
     USER_AGENT,
     BusinessCandidate,
@@ -198,6 +202,49 @@ def exhibitor_urls_for_plan(plan: Dict[str, Any]) -> List[str]:
     return list(EXHIBITOR_URLS)
 
 
+def extract_exhibitor_websites(html: str, page_url: str, limit: int = 20) -> List[str]:
+    """Company sites from exhibitor cards only — not partners, tickets, or page chrome."""
+    if not html or not page_url:
+        return []
+    try:
+        from urllib.parse import urljoin
+
+        from bs4 import BeautifulSoup
+    except Exception:
+        return []
+    soup = BeautifulSoup((html or "")[:180_000], "html.parser")
+    for chrome in soup.select("nav, footer, header, [role='navigation']"):
+        chrome.decompose()
+    cards = soup.select(
+        "[class*='exhibitor'] a[href], [id*='exhibitor'] a[href], "
+        "[class*='Exhibitor'] a[href], [data-exhibitor] a[href]"
+    )
+    page_host = _host(page_url)
+    found: List[str] = []
+    seen: set[str] = set()
+    for link in cards:
+        href = str(link.get("href") or "").strip()
+        if not href or href.startswith(("#", "mailto:", "javascript:", "tel:")):
+            continue
+        absolute = urljoin(page_url, href)
+        if not absolute.lower().startswith(("http://", "https://")):
+            continue
+        host = _host(absolute)
+        if not host or host == page_host or host.endswith("." + page_host):
+            continue
+        if is_non_buyer_host(host):
+            continue
+        if classify_page(absolute, link.get_text(" ", strip=True))["page_kind"] != "company":
+            continue
+        if host in seen:
+            continue
+        seen.add(host)
+        found.append(absolute.split("#", 1)[0])
+        if len(found) >= max(1, limit):
+            break
+    return found
+
+
 def extract_exhibitor_names(html: str, limit: int = 40) -> List[str]:
     """Company names printed on a show directory when outbound websites are missing."""
     if not html:
@@ -210,8 +257,9 @@ def extract_exhibitor_names(html: str, limit: int = 40) -> List[str]:
     names: List[str] = []
     seen: set[str] = set()
     skip = re.compile(
-        r"^(exhibitors?|stand|hall|sponsor|media|register|contact|home|about|"
-        r"floorplan|tickets?|dates?|visitors?)$",
+        r"\b(exhibitors?|stand|hall|sponsors?|media|register|contact|home|about|"
+        r"floorplan|tickets?|dates?|visitors?|partners?|handbook|enquiry|"
+        r"inquiry|virtual\s+campus|visit\s+\w+)\b",
         re.I,
     )
     for tag in soup.select("h2, h3, h4, a, [class*='exhibitor'], [class*='Exhibitor']"):
@@ -279,7 +327,7 @@ def exhibitor_step(
         if own and client is not None:
             client.close()
 
-    from_links = extract_directory_companies(html, url, limit=20)
+    from_links = extract_exhibitor_websites(html, url, limit=20)
     found: List[BusinessCandidate] = [
         BusinessCandidate(name="", website=link, source="exhibitors") for link in from_links
     ]
