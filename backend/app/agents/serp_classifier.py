@@ -27,6 +27,18 @@ NON_BUSINESS_HOSTS = (
     "find-and-update.company-information.service.gov.uk", "endole.co.uk", "companycheck.co.uk",
     "bizstats.co.uk", "trustpilot.com", "tripadvisor.com",
 )
+# First-page industry giants. They will not buy from a smaller exporter.
+# Homepages are skipped so enrich time goes to independent shops. Their
+# /stockists and /dealers paths stay directories — those list the SMEs.
+GIANT_HOSTS = (
+    "roguefitness.com", "gymreapers.com", "sbdapparel.com", "gymshark.com",
+    "rdxsports.com", "rdxsports.co.uk", "dickssportinggoods.com",
+    "sportsdirect.com", "jdsports.co.uk", "jdsports.com", "decathlon.com",
+    "decathlon.co.uk", "adidas.com", "nike.com", "underarmour.com",
+    "harbingerfitness.com", "rehband.com", "cerberus-strength.com",
+    "tuffwraps.com", "ironbullstrength.com", "nordiclifting.com",
+    "hayabusa.com", "academy.com",
+)
 # Business directories. Companies linked from the page are worth reading; the page itself is not a lead.
 DIRECTORY_HOSTS = (
     "europages.com", "europages.co.uk", "kompass.com", "yell.com",
@@ -35,6 +47,12 @@ DIRECTORY_HOSTS = (
     "cylex-uk.co.uk", "cylex.co.uk", "hotfrog.com", "hotfrog.co.uk", "freeindex.co.uk",
     "scoot.co.uk", "192.com", "manta.com", "bbb.org", "globalsources.com", "tradekey.com",
     "exportersindia.com", "ec21.com", "wlw.de", "wlw.co.uk", "ensun.io", "4imprint.com",
+    "elevatearena.com", "fibo.com", "ispovo.com", "bodypower.com",
+)
+_STOCKIST_PATH = re.compile(
+    r"/(stockists?|dealers?|distributors?|where-to-buy|find[-_]a[-_]dealer|"
+    r"store[-_]locator|retailers|authorised[-_]dealers?|authorized[-_]dealers?)",
+    re.I,
 )
 SEARCH_HOSTS = (
     "google.com", "duckduckgo.com", "yahoo.com", "bing.com",
@@ -90,6 +108,14 @@ def classify_page(url: str, title: str = "") -> Dict[str, Any]:
         return {"page_kind": "article", "burn_domain": True, "reason": "Not a company website"}
     if host and _endswith_any(host, DIRECTORY_HOSTS):
         return {"page_kind": "directory", "burn_domain": False, "reason": "Directory page"}
+    if _STOCKIST_PATH.search(path):
+        return {"page_kind": "directory", "burn_domain": False, "reason": "Stockist or dealer list"}
+    if host and _endswith_any(host, GIANT_HOSTS):
+        return {
+            "page_kind": "article",
+            "burn_domain": True,
+            "reason": "Industry giant — not a likely buyer",
+        }
     if path.endswith(_DOCUMENT_EXT):
         return {"page_kind": "article", "burn_domain": False, "reason": "Document, not a company page"}
     if host and (_endswith_any(host, ARTICLE_HOSTS) or "/wiki" in (url or "").lower()):
@@ -167,7 +193,7 @@ def classify_serp_row(
     }
 
 
-def extract_directory_companies(html: str, page_url: str, limit: int = 12) -> List[str]:
+def extract_directory_companies(html: str, page_url: str, limit: int = 20) -> List[str]:
     """Company websites linked from a directory page. The directory page is not a lead."""
     if not html or not page_url:
         return []
@@ -181,7 +207,7 @@ def extract_directory_companies(html: str, page_url: str, limit: int = 12) -> Li
     soup = BeautifulSoup(html, "html.parser")
     found: List[str] = []
     seen: set[str] = set()
-    skip_hosts = SEARCH_HOSTS + ARTICLE_HOSTS + NON_BUSINESS_HOSTS + DIRECTORY_HOSTS
+    skip_hosts = SEARCH_HOSTS + ARTICLE_HOSTS + NON_BUSINESS_HOSTS + DIRECTORY_HOSTS + GIANT_HOSTS
     for link in soup.select("a[href]"):
         href = str(link.get("href") or "").strip()
         if not href or href.startswith(("#", "mailto:", "javascript:", "tel:")):

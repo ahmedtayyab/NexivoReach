@@ -151,6 +151,15 @@ def test_backup_uses_yahoo_when_duckduckgo_returns_nothing():
     assert continued["next_form"]["page"] == "3"
 
 
+def test_yahoo_region_follows_the_hunt_country():
+    from app.tools.web_search import yahoo_region_for_iso
+
+    assert yahoo_region_for_iso("GB") == "uk-en"
+    assert yahoo_region_for_iso("AU") == "au-en"
+    assert yahoo_region_for_iso("US") == "us-en"
+    assert yahoo_region_for_iso("") == "us-en"
+
+
 def test_serper_out_of_credits_is_detected():
     from app.tools.web_search import serper_out_of_credits
 

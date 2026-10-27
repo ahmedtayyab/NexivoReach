@@ -56,6 +56,29 @@ def test_company_homepage_is_a_company():
     assert classify_page("https://www.primegearsports.co.uk/", "Prime Gear Sports")["page_kind"] == "company"
 
 
+def test_industry_giant_homepage_is_skipped_and_burned():
+    page = classify_page("https://www.gymreapers.com/", "Gymreapers")
+    assert page["page_kind"] == "article"
+    assert page["burn_domain"] is True
+    assert "giant" in page["reason"].lower()
+
+
+def test_giant_stockist_page_is_a_directory_not_a_lead():
+    page = classify_page("https://www.sbdapparel.com/pages/stockists", "SBD Stockists")
+    assert page["page_kind"] == "directory"
+    assert page["burn_domain"] is False
+
+
+def test_directory_links_skip_industry_giants():
+    html = """
+    <a href="https://www.gymreapers.com/">Gymreapers</a>
+    <a href="https://www.localgymshop.co.uk/">Local Gym Shop</a>
+    <a href="https://www.roguefitness.com/store-locator">Rogue</a>
+    """
+    links = extract_directory_companies(html, "https://sbdapparel.com/pages/stockists")
+    assert links == ["https://www.localgymshop.co.uk/"]
+
+
 def test_classify_serp_row_marks_pinterest_as_junk_and_burns_it():
     row = classify_serp_row(
         {
@@ -173,13 +196,15 @@ def test_source_plan_uses_companies_house_only_for_uk(monkeypatch):
     monkeypatch.setattr(bs.settings, "GOOGLE_PLACES_API_KEY", "")
     monkeypatch.setattr(bs.settings, "OSM_SOURCE_ENABLED", True)
     monkeypatch.setattr(bs.settings, "DIRECTORY_SOURCE_ENABLED", True)
+    monkeypatch.setattr(bs.settings, "STOCKIST_SOURCE_ENABLED", True)
+    monkeypatch.setattr(bs.settings, "EXHIBITOR_SOURCE_ENABLED", True)
     uk = bs.source_plan_for_intent("weightlifting straps distributors Manchester, United Kingdom", "Manchester, United Kingdom")
     assert uk["product"] == "weightlifting straps"
     assert uk["role"] == "distributors"
-    assert uk["sources"] == ["companies_house", "directory"]  # OSM does not map distributors
+    assert uk["sources"] == ["stockists", "exhibitors", "companies_house", "directory"]
     us = bs.source_plan_for_intent("weightlifting straps distributors Texas", "Texas")
     assert "companies_house" not in us["sources"]
-    assert "directory" in us["sources"]
+    assert us["sources"] == ["stockists", "exhibitors", "directory"]
 
 
 def test_source_plan_uses_osm_for_shops_and_gyms(monkeypatch):
@@ -187,9 +212,11 @@ def test_source_plan_uses_osm_for_shops_and_gyms(monkeypatch):
     monkeypatch.setattr(bs.settings, "GOOGLE_PLACES_API_KEY", "")
     monkeypatch.setattr(bs.settings, "OSM_SOURCE_ENABLED", True)
     monkeypatch.setattr(bs.settings, "DIRECTORY_SOURCE_ENABLED", True)
+    monkeypatch.setattr(bs.settings, "STOCKIST_SOURCE_ENABLED", True)
+    monkeypatch.setattr(bs.settings, "EXHIBITOR_SOURCE_ENABLED", True)
     plan = bs.source_plan_for_intent("boxing gloves retailers Leeds, United Kingdom", "Leeds, United Kingdom")
     assert plan["family"] == "retail"
-    assert plan["sources"] == ["osm", "directory"]
+    assert plan["sources"] == ["stockists", "exhibitors", "osm", "directory"]
     gyms = bs.source_plan_for_intent("boxing gyms London, United Kingdom", "London, United Kingdom")
     assert gyms["family"] == "gym"
 
@@ -198,9 +225,11 @@ def test_places_is_opt_in(monkeypatch):
     monkeypatch.setattr(bs.settings, "GOOGLE_PLACES_API_KEY", "")
     monkeypatch.setattr(bs.settings, "COMPANIES_HOUSE_API_KEY", "")
     monkeypatch.setattr(bs.settings, "DIRECTORY_SOURCE_ENABLED", True)
+    monkeypatch.setattr(bs.settings, "STOCKIST_SOURCE_ENABLED", True)
+    monkeypatch.setattr(bs.settings, "EXHIBITOR_SOURCE_ENABLED", True)
     plan = bs.source_plan_for_intent("weightlifting straps distributors United Kingdom", "United Kingdom")
     assert "places" not in plan["sources"]
-    assert plan["sources"] == ["directory"]
+    assert plan["sources"] == ["stockists", "exhibitors", "directory"]
     monkeypatch.setattr(bs.settings, "GOOGLE_PLACES_API_KEY", "key")
     plan = bs.source_plan_for_intent("weightlifting straps distributors United Kingdom", "United Kingdom")
     assert plan["sources"][0] == "places"
@@ -418,6 +447,7 @@ def test_companies_house_error_does_not_finish_the_source():
     )
     assert step.exhausted is False
     assert step.candidates == []
+    assert "rejected the key" in step.note
 
 
 # --------------------------------------------------------------------------- OpenStreetMap
@@ -466,8 +496,12 @@ def test_source_cursor_key_is_shared_across_similar_hunt_lines():
 
     plan = {"iso": "GB", "family": "channel", "product": "gym knee sleeves", "role": "distributors"}
     other = {"iso": "GB", "family": "channel", "product": "weightlifting knee sleeves", "role": "wholesalers"}
+    boxing = {"iso": "GB", "family": "channel", "product": "boxing gloves", "role": "distributors"}
     assert source_cursor_key("companies_house", "q1", plan) == source_cursor_key("companies_house", "q2", other)
     assert source_cursor_key("directory", "q1", plan) == source_cursor_key("directory", "q2", other)
+    assert source_cursor_key("stockists", "q1", plan) == source_cursor_key("stockists", "q2", other)
+    assert source_cursor_key("stockists", "q1", plan) != source_cursor_key("stockists", "q2", boxing)
+    assert source_cursor_key("exhibitors", "q1", plan) == source_cursor_key("exhibitors", "q2", boxing)
 
 
 def test_ch_cursor_roundtrip():
@@ -525,3 +559,80 @@ def test_directory_step_extracts_companies_and_pages():
     done = bs.directory_step(urls=urls, cursor="2", client=_Client())
     assert done.exhausted is True
     assert done.candidates == []
+
+
+# --------------------------------------------------------------------------- stockists / exhibitors
+
+
+def test_stockist_step_keeps_independent_shops_and_skips_the_brand():
+    from app.services.buyer_lists import stockist_brands, stockist_step
+
+    assert "SBD" in stockist_brands("knee sleeves")
+    html = """
+    <a href="https://www.gymreapers.com/">Gymreapers</a>
+    <a href="https://www.localgymshop.co.uk/">Local Gym Shop</a>
+    <a href="https://www.facebook.com/local">Facebook</a>
+    """
+
+    def searcher(q):
+        assert "SBD" in q
+        assert "United Kingdom" in q
+        return [{"title": "SBD Stockists", "href": "https://sbdapparel.com/pages/stockists"}]
+
+    step = stockist_step(
+        product="knee sleeves",
+        place="United Kingdom",
+        cursor="0",
+        searcher=searcher,
+        fetch_html=lambda _url: html,
+    )
+    sites = [c.website for c in step.candidates]
+    assert sites == ["https://www.localgymshop.co.uk/"]
+    assert step.next_cursor == "1"
+    assert step.exhausted is False
+
+
+def test_stockist_search_also_keeps_a_shop_hit():
+    from app.services.buyer_lists import stockist_step
+
+    def searcher(_q):
+        return [
+            {"title": "North Strength", "href": "https://www.northstrength.co.uk/"},
+            {"title": "Gymreapers", "href": "https://www.gymreapers.com/"},
+        ]
+
+    step = stockist_step(
+        product="wrist wraps",
+        place="United Kingdom",
+        cursor="0",
+        searcher=searcher,
+        fetch_html=lambda _url: "",
+    )
+    sites = [c.website for c in step.candidates]
+    assert "https://www.northstrength.co.uk/" in sites
+    assert not any("gymreapers" in s for s in sites)
+
+
+def test_exhibitor_step_extracts_company_sites_and_names():
+    from app.services.buyer_lists import exhibitor_step, extract_exhibitor_names
+
+    html = """
+    <h3>Prime Gear Sports</h3>
+    <a href="https://www.primegearsports.co.uk/">Website</a>
+    <h3>Exhibitors</h3>
+    """
+    assert "Prime Gear Sports" in extract_exhibitor_names(html)
+
+    def searcher(_q):
+        return []
+
+    step = exhibitor_step(
+        urls=["https://www.elevatearena.com/london/exhibitors/2026-exhibitors", "https://example.com/2"],
+        cursor="0",
+        searcher=searcher,
+        fetch_html=lambda _url: html,
+        resolve_limit=0,
+    )
+    assert [c.website for c in step.candidates] == ["https://www.primegearsports.co.uk/"]
+    assert step.next_cursor == "1"
+    assert step.exhausted is False

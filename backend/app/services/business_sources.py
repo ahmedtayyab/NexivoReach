@@ -201,6 +201,12 @@ def source_plan_for_intent(query: str, place: str) -> Dict[str, Any]:
     # on just because some other Google key is present.
     if settings.GOOGLE_PLACES_API_KEY:
         sources.append("places")
+    # Stockists and exhibitors list independent shops and regional dealers —
+    # the companies more likely to buy than the industry giants on page 1.
+    if settings.STOCKIST_SOURCE_ENABLED:
+        sources.append("stockists")
+    if settings.EXHIBITOR_SOURCE_ENABLED:
+        sources.append("exhibitors")
     if settings.COMPANIES_HOUSE_API_KEY and iso == "GB" and family in SIC_BY_ROLE:
         sources.append("companies_house")
     if settings.OSM_SOURCE_ENABLED and family in ("retail", "gym", "club") and (iso or city):
@@ -594,7 +600,7 @@ def companies_house_step(
     One page of the UK register for this trade and role, with each company
     name resolved to its own website. Names that do not resolve are dropped.
     """
-    key = api_key or settings.COMPANIES_HOUSE_API_KEY
+    key = (api_key or settings.COMPANIES_HOUSE_API_KEY or "").strip().strip("\"'")
     label = f"{product} {role}".strip()
     step = SourceStep(source="companies_house", query=label)
     if not key:
@@ -625,6 +631,14 @@ def companies_house_step(
         step.requests_used = 1
         if res.status_code == 404:
             items: List[BusinessCandidate] = []
+        elif res.status_code == 401:
+            step.exhausted = False
+            step.next_cursor = cursor
+            step.note = (
+                "Companies House rejected the key (401). Create a live REST key "
+                "(not test, not streaming) and paste it again."
+            )
+            return step
         elif res.status_code >= 400:
             step.exhausted = False
             step.next_cursor = cursor

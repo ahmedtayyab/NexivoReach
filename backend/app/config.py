@@ -75,8 +75,12 @@ class Settings(BaseSettings):
     OSM_SOURCE_ENABLED: bool = True
     # Public trade-directory pages (Europages, eSources). No key, never billed.
     DIRECTORY_SOURCE_ENABLED: bool = True
+    # Brand stockist / authorised-dealer locators. Independent shops, not the brand.
+    STOCKIST_SOURCE_ENABLED: bool = True
+    # Trade-show exhibitor lists (Elevate, FIBO, BodyPower). No key, never billed.
+    EXHIBITOR_SOURCE_ENABLED: bool = True
     # List-source steps per hunt line per run (one step = one page of a source).
-    HUNT_SOURCE_STEPS_PER_INTENT: int = 3
+    HUNT_SOURCE_STEPS_PER_INTENT: int = 4
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:3000/api/auth/google/callback"

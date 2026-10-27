@@ -53,13 +53,14 @@ from app.services.app_settings import (
 )
 from app.services.business_sources import (
     BusinessCandidate,
+    hunt_country,
     places_budget_allows,
     places_requests_this_month,
     record_places_request,
     source_plan_for_intent,
 )
 from app.services.enrichment import enrich_website
-from app.tools.web_search import WebSearchTool, run_search
+from app.tools.web_search import WebSearchTool, run_search, yahoo_region_for_iso
 
 log = logging.getLogger(__name__)
 
@@ -378,6 +379,8 @@ SOURCE_LABELS = {
     "places": "Google Places",
     "companies_house": "Companies House",
     "osm": "OpenStreetMap",
+    "stockists": "brand stockists",
+    "exhibitors": "trade-show exhibitors",
 }
 
 
@@ -723,6 +726,9 @@ async def run_paginated_discovery(
     parsed = _ipi(user_prompt or "", place)
     if parsed.get("location"):
         place = parsed["location"]
+    _country_name, hunt_iso = hunt_country(place)
+    web.search_region = yahoo_region_for_iso(hunt_iso)
+    del _country_name
 
     intent_specs = _build_intents_from_prompt(user_prompt, place)
     stats.search_intents = len(intent_specs)
@@ -1468,6 +1474,13 @@ async def run_paginated_discovery(
             source_steps_this_run[key] = source_steps_this_run.get(key, 0) + 1
             if step.note:
                 _note(stats, step.note)
+            if src == "companies_house" and "rejected the key" in (step.note or ""):
+                _note(stats, "Companies House is skipped for the rest of this hunt until the key is a live REST key.")
+                source_plans[:] = [
+                    (r, {**p, "sources": [s for s in p["sources"] if s != "companies_house"]})
+                    for r, p in source_plans
+                ]
+                queue = [(r, p, s) for r, p, s in queue if s != "companies_house"]
             if step.skipped_without_website and src == "places":
                 _note(stats, f"{step.skipped_without_website} listings had no website and were not used.")
 
@@ -1565,6 +1578,9 @@ async def run_paginated_discovery(
         intent = active[rr_index % len(active)]
         rr_index += 1
         intent_id = intent.id or ""
+        _n, intent_iso = hunt_country(intent.location or place)
+        web.search_region = yahoo_region_for_iso(intent_iso)
+        del _n
 
         page = intent.current_page
         # Budget is new pages this run. next_page=11 is not exhausted just because
@@ -2347,26 +2363,45 @@ def _source_step(source: str, plan: Dict[str, Any], query: str, cursor: str, web
         osm_step,
         places_step,
     )
+    from app.services.buyer_lists import (
+        exhibitor_step,
+        exhibitor_urls_for_plan,
+        stockist_step,
+    )
+
+    def _lookup(q: str) -> List[Dict[str, str]]:
+        # DuckDuckGo answers empty when it is rate limiting. Yahoo is the second try.
+        hits: List[Dict[str, str]] = []
+        try:
+            hits = web._duckduckgo(q, allow_html=True)[:8]
+        except Exception:
+            hits = []
+        if not hits:
+            try:
+                hits = web._yahoo_hits(q, 1)[:8]
+            except Exception:
+                hits = []
+        return hits
 
     if source == "directory":
         return directory_step(urls=directory_urls_for_plan(plan), cursor=cursor)
     if source == "places":
         return places_step(query, cursor, region_code=plan.get("iso") or "")
+    if source == "stockists":
+        return stockist_step(
+            product=plan.get("product") or query,
+            place=plan.get("place") or "",
+            cursor=cursor,
+            searcher=_lookup,
+        )
+    if source == "exhibitors":
+        return exhibitor_step(
+            urls=exhibitor_urls_for_plan(plan),
+            cursor=cursor,
+            searcher=_lookup,
+            country_label=(plan.get("country") or "").title(),
+        )
     if source == "companies_house":
-        def _lookup(q: str) -> List[Dict[str, str]]:
-            # DuckDuckGo answers empty when it is rate limiting. Yahoo is the second try.
-            hits: List[Dict[str, str]] = []
-            try:
-                hits = web._duckduckgo(q, allow_html=True)[:8]
-            except Exception:
-                hits = []
-            if not hits:
-                try:
-                    hits = web._yahoo_hits(q, 1)[:8]
-                except Exception:
-                    hits = []
-            return hits
-
         return companies_house_step(
             product=plan.get("product") or "",
             role=plan.get("role") or "",
@@ -2400,12 +2435,21 @@ def source_cursor_key(source: str, query: str, plan: Optional[Dict[str, Any]] = 
         return _query_key(f"dir {plan.get('iso')} {plan.get('family')}")
     if source == "osm":
         return _query_key(f"osm {plan.get('iso')} {plan.get('city')} {plan.get('family')}")
+    if source == "stockists":
+        from app.services.buyer_lists import stockist_brands
+
+        seed = (stockist_brands(str(plan.get("product") or "")) or ["x"])[0]
+        return _query_key(f"stock {plan.get('iso')} {seed}")
+    if source == "exhibitors":
+        return _query_key("exh global")
     return _query_key(query)
 
 
 def _source_cursor_worth_retry(row: HuntSourceCursor) -> bool:
     """A finished source that never handed over a company should run again."""
-    return row.source in {"companies_house", "directory", "osm"} and int(row.candidates or 0) == 0
+    return row.source in {
+        "companies_house", "directory", "osm", "stockists", "exhibitors",
+    } and int(row.candidates or 0) == 0
 
 
 def _reopen_source_cursor(row: HuntSourceCursor) -> HuntSourceCursor:
@@ -2480,7 +2524,7 @@ def _save_source_cursor(row: HuntSourceCursor, *, cursor: str, exhausted: bool, 
             time.sleep(0.15 * (attempt + 1))
 
 
-async def _companies_from_directories(urls: List[str], limit: int = 12) -> List[str]:
+async def _companies_from_directories(urls: List[str], limit: int = 20) -> List[str]:
     """Company websites linked from directory pages. The directory itself is not a lead."""
     import httpx
 

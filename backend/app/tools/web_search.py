@@ -22,6 +22,37 @@ log = logging.getLogger(__name__)
 _SEARCH_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=3, thread_name_prefix="web-search")
 SERPER_WAIT_SEC = 18.0
 
+# ddgs / Yahoo / DuckDuckGo HTML region codes. Default US was ranking US giants
+# even when the hunt was United Kingdom, Australia, etc.
+YAHOO_REGION_BY_ISO = {
+    "GB": "uk-en",
+    "US": "us-en",
+    "AU": "au-en",
+    "CA": "ca-en",
+    "DE": "de-de",
+    "FR": "fr-fr",
+    "NL": "nl-nl",
+    "IN": "in-en",
+    "NZ": "nz-en",
+    "SG": "sg-en",
+    "ZA": "za-en",
+    "IE": "ie-en",
+    "AE": "ae-en",
+    "ES": "es-es",
+    "IT": "it-it",
+    "MX": "mx-es",
+    "BR": "br-pt",
+    "PK": "pk-en",
+    "MY": "my-en",
+    "TR": "tr-tr",
+    "SA": "sa-en",
+    "QA": "qa-en",
+}
+
+
+def yahoo_region_for_iso(iso: str) -> str:
+    return YAHOO_REGION_BY_ISO.get((iso or "").strip().upper(), "us-en")
+
 
 async def run_search(func, *args, timeout: float = 22.0):
     """Run a blocking search off the event loop, and stop waiting if it hangs."""
@@ -412,6 +443,8 @@ class WebSearchTool:
         # Set by scrape_shop_catalog so callers can tell "site unreachable" from "no products".
         self.last_catalog_error: str = ""
         self.catalog_truncated: bool = False
+        # Free-search region (Yahoo / DuckDuckGo). Hunt sets this from the country.
+        self.search_region: str = "us-en"
 
     def name(self) -> str:
         return "WebSearchTool"
@@ -767,7 +800,9 @@ class WebSearchTool:
         form: Optional[Dict[str, str]],
         timeout: float,
     ) -> Dict[str, Any]:
-        data = dict(form) if form else {"q": query, "b": "", "kl": "us-en"}
+        data = dict(form) if form else {
+            "q": query, "b": "", "kl": getattr(self, "search_region", None) or "us-en",
+        }
         with httpx.Client(timeout=timeout, follow_redirects=True, headers={
             **HEADERS,
             "Referer": "https://html.duckduckgo.com/",
@@ -812,7 +847,7 @@ class WebSearchTool:
         engine = Yahoo(timeout=15)
         rows = engine.search(
             query,
-            region="us-en",
+            region=getattr(self, "search_region", None) or "us-en",
             safesearch="moderate",
             timelimit=None,
             page=max(1, int(page or 1)),
@@ -878,8 +913,16 @@ class WebSearchTool:
         page = max(1, int(page or 1))
         try:
             from ddgs import DDGS
+            region = getattr(self, "search_region", None) or "us-en"
             with DDGS() as ddgs:
-                rows = list(ddgs.text(query, max_results=15, page=page, backend="duckduckgo"))
+                try:
+                    rows = list(ddgs.text(
+                        query, max_results=15, page=page, backend="duckduckgo", region=region,
+                    ))
+                except TypeError:
+                    rows = list(ddgs.text(
+                        query, max_results=15, page=page, backend="duckduckgo",
+                    ))
                 return [
                     {"title": r.get("title", ""), "href": r.get("href", ""), "body": r.get("body", "")}
                     for r in rows
@@ -888,8 +931,12 @@ class WebSearchTool:
             pass
         try:
             from duckduckgo_search import DDGS
+            region = getattr(self, "search_region", None) or "us-en"
             with DDGS() as ddgs:
-                rows = list(ddgs.text(query, max_results=15))
+                try:
+                    rows = list(ddgs.text(query, max_results=15, region=region))
+                except TypeError:
+                    rows = list(ddgs.text(query, max_results=15))
                 return [
                     {"title": r.get("title", ""), "href": r.get("href", ""), "body": r.get("body", "")}
                     for r in rows
@@ -902,7 +949,9 @@ class WebSearchTool:
 
     def _duckduckgo_html(self, query: str, page: int = 1) -> List[Dict[str, str]]:
         page = max(1, int(page or 1))
-        data: Dict[str, Any] = {"q": query, "b": ""}
+        data: Dict[str, Any] = {
+            "q": query, "b": "", "kl": getattr(self, "search_region", None) or "us-en",
+        }
         if page > 1:
             data["s"] = str(10 + (page - 2) * 15)
         with httpx.Client(timeout=20.0, follow_redirects=True, headers=HEADERS) as client:
