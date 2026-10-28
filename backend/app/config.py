@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     # List-source steps per hunt line per run (one step = one page of a source).
     HUNT_SOURCE_STEPS_PER_INTENT: int = 4
     # Seconds left for stockists / directories after web search has had its turn.
-    HUNT_LIST_SOURCE_SECONDS: int = 90
+    HUNT_LIST_SOURCE_SECONDS: int = 180
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:3000/api/auth/google/callback"

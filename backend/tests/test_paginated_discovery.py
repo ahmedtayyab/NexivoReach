@@ -74,6 +74,42 @@ def test_listing_matches_hunt_country_uses_cctld_or_snippet():
     )
 
 
+def test_geo_targeted_dotcom_listing_is_keepable_in_a_new_country():
+    from app.services.paginated_discovery import listing_is_keepable_for_hunt
+
+    # UAE / Mexico / Singapore shops mostly use .com and do not say the country
+    # in the snippet. The hunt query already named the country.
+    assert listing_is_keepable_for_hunt(
+        "dubaigymgear.com",
+        "Dubai Gym Gear — knee sleeves",
+        "Wholesale lifting gear",
+        "United Arab Emirates",
+        categories=["knee sleeves"],
+    )
+    assert listing_is_keepable_for_hunt(
+        "tiendafitness.mx",
+        "Tienda Fitness",
+        "Rodilleras y straps",
+        "Mexico",
+        categories=["knee sleeves"],
+    )
+    # A German ccTLD is not a Canadian buyer.
+    assert not listing_is_keepable_for_hunt(
+        "shop.de",
+        "Kniebandagen",
+        "Versand in Deutschland",
+        "Canada",
+        categories=["knee sleeves"],
+    )
+    assert not listing_is_keepable_for_hunt(
+        "jeweler.com",
+        "Diamond rings and gold",
+        "Jewelry store",
+        "United Arab Emirates",
+        categories=["knee sleeves"],
+    )
+
+
 def test_backup_ladder_keeps_the_product_words():
     from app.services.paginated_discovery import backup_query_ladder, resume_backup_query
 

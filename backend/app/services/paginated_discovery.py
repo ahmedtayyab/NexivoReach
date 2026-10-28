@@ -113,6 +113,48 @@ def listing_matches_hunt_country(
     return False
 
 
+def listing_conflicts_hunt_country(
+    domain: str,
+    title: str,
+    snippet: str,
+    hunt_place: str,
+) -> bool:
+    """True when the listing is clearly in a different country than the hunt."""
+    from app.agents.geo import location_conflicts_with_targets
+
+    place = (hunt_place or "").strip()
+    if not place:
+        return False
+    _, iso = hunt_country(place)
+    other = domain_country_iso(domain)
+    if iso and other and other != iso:
+        return True
+    return location_conflicts_with_targets(f"{title} {snippet}", [place])
+
+
+def listing_is_keepable_for_hunt(
+    domain: str,
+    title: str,
+    snippet: str,
+    hunt_place: str,
+    categories: Optional[List[str]] = None,
+) -> bool:
+    """A company result from a country-specific search is a lead unless proven otherwise.
+
+    Most shops in the UAE, Mexico, Singapore, etc. use .com and never say the
+    country in a 160-character snippet. Requiring a ccTLD dropped those hunts.
+    """
+    from app.agents.geo import looks_unrelated_business
+
+    if not (hunt_place or "").strip():
+        return False
+    if listing_conflicts_hunt_country(domain, title, snippet, hunt_place):
+        return False
+    if looks_unrelated_business(f"{title}\n{snippet}", list(categories or [])):
+        return False
+    return True
+
+
 def _enrich_homepage_isolated(website: str) -> Dict[str, Any]:
     """Homepage text only. Contact crawling used to eat the timeout and discard the page."""
     from app.tools.web_search import WebSearchTool
@@ -752,12 +794,12 @@ def lead_save_decision(
     """
     if should_reject:
         return "REJECT_WRONG_LOCATION"
-    if page_loaded:
-        if not relevant:
-            return "REJECT_UNRELATED_BUSINESS"
+    if relevant:
         return "QUALIFIED_BUSINESS"
     if serp_local_trade:
         return "QUALIFIED_BUSINESS"
+    if page_loaded:
+        return "REJECT_UNRELATED_BUSINESS"
     return "UNCERTAIN_REQUIRES_MORE_EVIDENCE"
 
 
@@ -1154,8 +1196,12 @@ async def run_paginated_discovery(
                     site_text=site_text,
                 )
                 page_loaded = bool((site_text or "").strip())
-                serp_local = listing_matches_hunt_country(
-                    domain, title, snippet, location_hint,
+                serp_local = listing_is_keepable_for_hunt(
+                    domain,
+                    title,
+                    snippet,
+                    location_hint,
+                    categories=list(profile.categories or []),
                 )
                 decision = lead_save_decision(
                     relevant=relevant,
@@ -1182,7 +1228,7 @@ async def run_paginated_discovery(
                         _bump_funnel(stats, search_intent, "irrelevant")
                         _note(stats, f"Skipped {company_name or domain} — {graded.get('reason') or 'not a business in this trade'}")
                     return None
-                if not page_loaded:
+                if not page_loaded or not relevant:
                     level = "low"
                     relevant = True
                 if not q.get("shouldPersist"):
@@ -1205,7 +1251,12 @@ async def run_paginated_discovery(
                 if not page_loaded:
                     fb["scrapeBlocked"] = True
                     fb["aiReason"] = (
-                        "Search listing of a local shop; the website blocked scraping."
+                        "Company from this country's search; the website blocked scraping."
+                    )
+                elif fb.get("relevance") == "low" and serp_local:
+                    fb["aiReason"] = (
+                        fb.get("aiReason")
+                        or "Company from this country's search; homepage was thin."
                     )
 
                 # Merge into existing prospect or create
@@ -1359,8 +1410,8 @@ async def run_paginated_discovery(
                 if not page_loaded:
                     _note(
                         stats,
-                        f"Saved lead: {company_name} ({domain}) — site blocked scraping; "
-                        "kept as a local shop in this trade",
+                        f"Saved lead: {company_name} ({domain}) — from this country's search "
+                        "(site blocked scraping)",
                     )
                 else:
                     _note(stats, f"Saved lead: {company_name} ({domain})")
@@ -1565,7 +1616,8 @@ async def run_paginated_discovery(
             "Web search runs first. Extra lists ("
             + ", ".join(SOURCE_LABELS.get(s, s) for s in sources_in_use)
             + ") run after, with a time limit. "
-            "A local shop is saved even if its website blocks scraping.",
+            "A company from this country's search is saved unless it is a giant, "
+            "the wrong industry, or clearly in another country.",
         )
     else:
         _note(
@@ -1741,7 +1793,7 @@ async def run_paginated_discovery(
         "not a Canada-only filter. "
         f"Typical time for {len(intent_rows)} lines: about {typical_low}–{typical_high} minutes. "
         "Homepages are opened a few at a time (6s each). "
-        "Local shops that block scraping are still saved. "
+        "A company result for this country is saved even on .com or if the site blocks scraping. "
         "Chains, marketplaces, and companies already in your sheet are skipped.",
     )
     while True:

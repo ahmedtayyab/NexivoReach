@@ -176,12 +176,15 @@ def test_save_decision_never_turns_a_negative_into_a_save():
     assert lead_save_decision(relevant=True, should_reject=False, page_loaded=True) == "QUALIFIED_BUSINESS"
     assert lead_save_decision(relevant=True, should_reject=True, page_loaded=True) == "REJECT_WRONG_LOCATION"
     assert lead_save_decision(relevant=False, should_reject=False, page_loaded=True) == "REJECT_UNRELATED_BUSINESS"
-    assert lead_save_decision(relevant=True, should_reject=False, page_loaded=False) == "UNCERTAIN_REQUIRES_MORE_EVIDENCE"
+    assert lead_save_decision(relevant=False, should_reject=False, page_loaded=False) == "UNCERTAIN_REQUIRES_MORE_EVIDENCE"
     assert lead_save_decision(
         relevant=False, should_reject=True, page_loaded=False, serp_local_trade=True,
     ) == "REJECT_WRONG_LOCATION"
     assert lead_save_decision(
         relevant=False, should_reject=False, page_loaded=False, serp_local_trade=True,
+    ) == "QUALIFIED_BUSINESS"
+    assert lead_save_decision(
+        relevant=False, should_reject=False, page_loaded=True, serp_local_trade=True,
     ) == "QUALIFIED_BUSINESS"
 
 
