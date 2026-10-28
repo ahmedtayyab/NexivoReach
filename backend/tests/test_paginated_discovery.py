@@ -34,6 +34,46 @@ def test_duckduckgo_more_results_form_is_kept():
     assert parsed["next_form"]["s"] == "10"
 
 
+def test_domain_country_iso_reads_cctld_not_com():
+    from app.services.paginated_discovery import domain_country_iso
+
+    assert domain_country_iso("physiostore.ca") == "CA"
+    assert domain_country_iso("www.fitnessnutrition.ca") == "CA"
+    assert domain_country_iso("shop.co.uk") == "GB"
+    assert domain_country_iso("gym.com.au") == "AU"
+    assert domain_country_iso("example.com") == ""
+    assert domain_country_iso("nordiclifting.com") == ""
+
+
+def test_listing_matches_hunt_country_uses_cctld_or_snippet():
+    from app.services.paginated_discovery import listing_matches_hunt_country
+
+    assert listing_matches_hunt_country(
+        "physiostore.ca",
+        "Knee Sleeves in Canada | Physio Store",
+        "",
+        "Canada",
+    )
+    assert listing_matches_hunt_country(
+        "xtcfitness.ca",
+        "Sling Shot | STrong Knee Sleeves",
+        "",
+        "Canada",
+    )
+    assert listing_matches_hunt_country(
+        "someshop.com",
+        "Gym shop Toronto",
+        "Weightlifting gear in Canada",
+        "Canada",
+    )
+    assert not listing_matches_hunt_country(
+        "randomshop.com",
+        "Knee sleeves for sale",
+        "Free shipping",
+        "Canada",
+    )
+
+
 def test_backup_ladder_keeps_the_product_words():
     from app.services.paginated_discovery import backup_query_ladder, resume_backup_query
 

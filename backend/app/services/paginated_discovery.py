@@ -59,30 +59,81 @@ from app.services.business_sources import (
     record_places_request,
     source_plan_for_intent,
 )
-from app.services.enrichment import enrich_website
 from app.tools.web_search import WebSearchTool, run_search, yahoo_region_for_iso
 
 log = logging.getLogger(__name__)
 
 _EMPTY_ENRICH = {"email": "", "phone": "", "contacts": [], "site_text": "", "sources": []}
 
+# Country code from the public suffix. .com/.net/.org are not a country.
+_CCTLD_ISO = {
+    "ca": "CA", "uk": "GB", "au": "AU", "nz": "NZ", "ie": "IE",
+    "de": "DE", "fr": "FR", "es": "ES", "it": "IT", "nl": "NL",
+    "be": "BE", "ch": "CH", "at": "AT", "se": "SE", "no": "NO",
+    "dk": "DK", "fi": "FI", "pl": "PL", "pt": "PT", "in": "IN",
+    "pk": "PK", "bd": "BD", "ae": "AE", "sa": "SA", "qa": "QA",
+    "sg": "SG", "my": "MY", "jp": "JP", "kr": "KR", "cn": "CN",
+    "hk": "HK", "tw": "TW", "mx": "MX", "br": "BR", "ar": "AR",
+    "za": "ZA", "ng": "NG", "ke": "KE", "us": "US",
+}
 
-def _enrich_site_isolated(website: str) -> Dict[str, Any]:
-    """Fetch a site on a private event loop in a worker thread.
 
-    A hung DNS/SSL/HTML parse must not block the hunt loop, or the whole
-    run freezes until the stale-job timer fires.
-    """
-    return asyncio.run(
-        enrich_website(
-            website,
-            seed_email="",
-            seed_phone="",
-            seed_contacts=[],
-            use_hunter=False,
-            use_browser=False,
-        )
-    )
+def domain_country_iso(domain: str) -> str:
+    """ISO country from a ccTLD (.ca → CA, .co.uk → GB). Blank for .com."""
+    host = (domain or "").lower().split(":")[0]
+    if host.startswith("www."):
+        host = host[4:]
+    labels = [p for p in host.split(".") if p]
+    if len(labels) < 2:
+        return ""
+    return _CCTLD_ISO.get(labels[-1], "")
+
+
+def listing_matches_hunt_country(
+    domain: str,
+    title: str,
+    snippet: str,
+    hunt_place: str,
+) -> bool:
+    """True when the search listing is in the hunt country (ccTLD or place in the snippet)."""
+    from app.agents.geo import place_aliases
+
+    name, iso = hunt_country(hunt_place)
+    if iso and domain_country_iso(domain) == iso:
+        return True
+    blob = f"{title} {snippet}".lower()
+    if not blob.strip():
+        return False
+    for alias in list(place_aliases(hunt_place)) + list(place_aliases(name)):
+        a = (alias or "").strip().lower()
+        if len(a) < 3:
+            continue
+        if a in blob:
+            return True
+    return False
+
+
+def _enrich_homepage_isolated(website: str) -> Dict[str, Any]:
+    """Homepage text only. Contact crawling used to eat the timeout and discard the page."""
+    from app.tools.web_search import WebSearchTool
+
+    async def _run() -> Dict[str, Any]:
+        tool = WebSearchTool()
+        page = await tool.scrape_homepage(website, limit=6000, keep_html=False)
+        if not isinstance(page, dict):
+            return dict(_EMPTY_ENRICH)
+        emails = [e for e in (page.get("emails") or []) if e]
+        phones = [p for p in (page.get("phones") or []) if p]
+        return {
+            "email": emails[0] if emails else "",
+            "phone": phones[0] if phones else "",
+            "contacts": [],
+            "sources": ["site"] if emails else [],
+            "site_text": (page.get("text") or "")[:8000],
+            "location": page.get("location") or "",
+        }
+
+    return asyncio.run(_run())
 
 
 async def call_with_deadline(coro, timeout: float, default: Any = None) -> Any:
@@ -687,20 +738,27 @@ def lead_save_decision(
     relevant: bool,
     should_reject: bool,
     page_loaded: bool,
+    serp_local_trade: bool = False,
 ) -> str:
     """
     The only save gate. A negative decision is never turned into a save.
 
     QUALIFIED_BUSINESS saves the lead. REJECT_* marks the domain as handled.
     UNCERTAIN_REQUIRES_MORE_EVIDENCE leaves the domain open for a later hunt.
+
+    A local shop that blocked scraping is still saved when the search listing
+    is in the hunt country. That is how independent stores get through; their
+    sites often refuse bots.
     """
     if should_reject:
         return "REJECT_WRONG_LOCATION"
-    if not page_loaded:
-        return "UNCERTAIN_REQUIRES_MORE_EVIDENCE"
-    if not relevant:
-        return "REJECT_UNRELATED_BUSINESS"
-    return "QUALIFIED_BUSINESS"
+    if page_loaded:
+        if not relevant:
+            return "REJECT_UNRELATED_BUSINESS"
+        return "QUALIFIED_BUSINESS"
+    if serp_local_trade:
+        return "QUALIFIED_BUSINESS"
+    return "UNCERTAIN_REQUIRES_MORE_EVIDENCE"
 
 
 def _build_intents_from_prompt(user_prompt: str, location: str) -> List[Dict[str, str]]:
@@ -754,13 +812,12 @@ async def run_paginated_discovery(
     try:
         from app.config import database_backend
 
-        if database_backend() == "sqlite" and budget.enrich_concurrency > 3:
-            budget.enrich_concurrency = 3
+        if database_backend() == "sqlite":
+            budget.enrich_concurrency = min(2, max(1, int(budget.enrich_concurrency or 2)))
+        else:
+            budget.enrich_concurrency = min(4, max(2, int(budget.enrich_concurrency or 4)))
     except Exception:
-        pass
-    # This hunt runs inside the web process. One site at a time still opens
-    # every result; it just does not hold two sites and a browser at once.
-    budget.enrich_concurrency = 1
+        budget.enrich_concurrency = min(4, max(1, int(budget.enrich_concurrency or 2)))
     start = time.time()
     stats = HuntStats()
     web = WebSearchTool()
@@ -961,10 +1018,10 @@ async def run_paginated_discovery(
             if site_count:
                 _note(
                     stats,
-                    f"Reading {domain} ({site_index} of {site_count} on this page, 10s max)",
+                    f"Reading {domain} ({site_index} of {site_count} on this page, 6s max)",
                 )
             else:
-                _note(stats, f"Reading {domain} (10s max)")
+                _note(stats, f"Reading {domain} (6s max)")
             _update_job(
                 job_id,
                 status="running",
@@ -974,8 +1031,8 @@ async def run_paginated_discovery(
                 telemetry=_telemetry_payload(stats, intent_rows, search_intent, budget),
             )
             found = await call_with_deadline(
-                asyncio.to_thread(_enrich_site_isolated, website),
-                10.0,
+                asyncio.to_thread(_enrich_homepage_isolated, website),
+                6.0,
                 dict(_EMPTY_ENRICH),
             ) or dict(_EMPTY_ENRICH)
             if (found.get("site_text") or "").strip():
@@ -1009,7 +1066,8 @@ async def run_paginated_discovery(
             if loc_check.get("should_reject"):
                 _bump_funnel(stats, search_intent, "location_rejected")
 
-            # Hunter after the page is read — location is recorded, not a save gate.
+            # Email is optional. Hunter and contact-page crawls ate the clock
+            # and caused real shops to be dropped as "did not load".
             email = ""
             email_status = "email_not_found"
             email_source = ""
@@ -1018,23 +1076,6 @@ async def run_paginated_discovery(
                 email_status = "email_found"
                 email_source = (found.get("sources") or ["website"])[0]
                 stats.emails_found += 1
-            elif website:
-                try:
-                    from app.services.enrichment import hunter_domain_search
-                    from urllib.parse import urlparse
-
-                    host = (urlparse(website).hostname or "").lower()
-                    if host.startswith("www."):
-                        host = host[4:]
-                    hunter = await hunter_domain_search(host)
-                    if hunter.get("email"):
-                        email = hunter["email"]
-                        email_status = "email_found"
-                        email_source = "hunter"
-                        contacts = list(hunter.get("contacts") or []) + contacts
-                        stats.emails_found += 1
-                except Exception:
-                    pass
 
             product, role, _p = __import__(
                 "app.agents.geo", fromlist=["parse_discovery_query"]
@@ -1112,10 +1153,15 @@ async def run_paginated_discovery(
                     triage=triage,
                     site_text=site_text,
                 )
+                page_loaded = bool((site_text or "").strip())
+                serp_local = listing_matches_hunt_country(
+                    domain, title, snippet, location_hint,
+                )
                 decision = lead_save_decision(
                     relevant=relevant,
                     should_reject=bool(loc_check.get("should_reject")),
-                    page_loaded=bool((site_text or "").strip()),
+                    page_loaded=page_loaded,
+                    serp_local_trade=serp_local,
                 )
                 if decision != "QUALIFIED_BUSINESS":
                     # Not a lead. An unread site stays open for a later hunt.
@@ -1129,13 +1175,16 @@ async def run_paginated_discovery(
                     elif decision == "UNCERTAIN_REQUIRES_MORE_EVIDENCE":
                         _note(
                             stats,
-                            f"Skipped {company_name or domain} — site did not load in 10s. "
-                            "Left open for a later hunt.",
+                            f"Skipped {company_name or domain} — site did not load and the listing "
+                            "is not clearly in the hunt country.",
                         )
                     else:
                         _bump_funnel(stats, search_intent, "irrelevant")
                         _note(stats, f"Skipped {company_name or domain} — {graded.get('reason') or 'not a business in this trade'}")
                     return None
+                if not page_loaded:
+                    level = "low"
+                    relevant = True
                 if not q.get("shouldPersist"):
                     # The fit score is advice on the lead, not a second gate.
                     q["shouldPersist"] = True
@@ -1153,6 +1202,11 @@ async def run_paginated_discovery(
                 )[:16]
                 fb["emailStatus"] = email_status
                 fb["emailSource"] = email_source
+                if not page_loaded:
+                    fb["scrapeBlocked"] = True
+                    fb["aiReason"] = (
+                        "Search listing of a local shop; the website blocked scraping."
+                    )
 
                 # Merge into existing prospect or create
                 existing = None
@@ -1302,7 +1356,14 @@ async def run_paginated_discovery(
                 stats.leads_saved += 1
                 stats.leads_by_source[source] = stats.leads_by_source.get(source, 0) + 1
                 _bump_funnel(stats, search_intent, "leads_created")
-                _note(stats, f"Saved lead: {company_name} ({domain})")
+                if not page_loaded:
+                    _note(
+                        stats,
+                        f"Saved lead: {company_name} ({domain}) — site blocked scraping; "
+                        "kept as a local shop in this trade",
+                    )
+                else:
+                    _note(stats, f"Saved lead: {company_name} ({domain})")
                 if intent_id:
                     intent_leads_this_run[intent_id] = intent_leads_this_run.get(intent_id, 0) + 1
                 front = prospect_to_frontend(pr)
@@ -1444,23 +1505,35 @@ async def run_paginated_discovery(
             saved_front = [p for p in saved_front if p.get("id") != pid] + [prospect]
 
     async def _enrich_batch(jobs: List[Dict[str, Any]], intent: DiscoverySearchIntent) -> int:
-        """Open one company at a time so a hung site cannot hide the rest of the page."""
+        """Open several company homepages at once. A hung site is cut off at 8s."""
         if not jobs:
             return 0
         before = stats.leads_saved
         total = len(jobs)
-        for i, job in enumerate(jobs, start=1):
+        n = max(1, int(budget.enrich_concurrency or 1))
+        i = 0
+        while i < total:
             hit_reasons: List[str] = []
             if _budget_hit(hit_reasons):
                 _note(stats, _STOP_TEXT.get(hit_reasons[0], hit_reasons[0]))
                 break
-            payload = {**job, "site_index": i, "site_count": total}
-            res = await call_with_deadline(
-                _enrich_and_maybe_save(**payload),
-                16.0,
-                None,
+            base = i
+            chunk = jobs[base:base + n]
+
+            async def _one(job: Dict[str, Any], idx: int) -> Any:
+                payload = {**job, "site_index": idx, "site_count": total}
+                return await call_with_deadline(
+                    _enrich_and_maybe_save(**payload),
+                    8.0,
+                    None,
+                )
+
+            results = await asyncio.gather(
+                *[_one(job, base + k + 1) for k, job in enumerate(chunk)],
+                return_exceptions=True,
             )
-            _record_enrich_result(res, intent)
+            for res in results:
+                _record_enrich_result(res, intent)
             gc.collect()
             _update_job(
                 job_id,
@@ -1478,6 +1551,7 @@ async def run_paginated_discovery(
                 result_prospect_ids=saved_ids[-200:],
                 telemetry=_telemetry_payload(stats, intent_rows, intent.query, budget),
             )
+            i += n
         return stats.leads_saved - before
 
     source_steps_this_run: Dict[Tuple[str, str], int] = {}
@@ -1490,7 +1564,8 @@ async def run_paginated_discovery(
             stats,
             "Web search runs first. Extra lists ("
             + ", ".join(SOURCE_LABELS.get(s, s) for s in sources_in_use)
-            + ") run after, with a time limit. Each company still gets its website read before it is saved.",
+            + ") run after, with a time limit. "
+            "A local shop is saved even if its website blocks scraping.",
         )
     else:
         _note(
@@ -1658,14 +1733,16 @@ async def run_paginated_discovery(
         (row.location or "").strip() for row in intent_rows if (row.location or "").strip()
     })
     place_bit = ", ".join(places_on_hunt) if places_on_hunt else "the country on each hunt line"
-    typical_low = max(12, 6 + len(intent_rows) * 2)
-    typical_high = max(typical_low + 10, 18 + len(intent_rows) * 3)
+    typical_low = max(8, 5 + len(intent_rows))
+    typical_high = max(typical_low + 6, 12 + len(intent_rows))
     _note(
         stats,
         f"This hunt is global: the country stays on every search ({place_bit}), "
         "not a Canada-only filter. "
         f"Typical time for {len(intent_rows)} lines: about {typical_low}–{typical_high} minutes. "
-        "Each website is given 10 seconds. Chains, marketplaces, and companies already in your sheet are skipped.",
+        "Homepages are opened a few at a time (6s each). "
+        "Local shops that block scraping are still saved. "
+        "Chains, marketplaces, and companies already in your sheet are skipped.",
     )
     while True:
         if time.time() - float(stats.last_log_at or start) >= 25:

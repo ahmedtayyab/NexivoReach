@@ -52,9 +52,9 @@ export function estimateHuntSeconds(
 ): { low: number; high: number } {
   const lines = Math.max(1, Math.min(40, Math.floor(lineCount || 1)));
   const leads = Math.max(20, Math.min(200, Math.floor(leadsPerRun || 100)));
-  // 8 lines on free search: about 15–35 min. Each live site is capped at 10s.
-  const low = Math.max(900, Math.round(300 + lines * 90 + Math.min(leads, 40) * 4));
-  const high = Math.max(low + 600, Math.round(600 + lines * 180 + Math.min(leads, 40) * 8));
+  // 8 lines: about 8–18 min with parallel homepage fetches.
+  const low = Math.max(480, Math.round(180 + lines * 45 + Math.min(leads, 40) * 2));
+  const high = Math.max(low + 360, Math.round(360 + lines * 90 + Math.min(leads, 40) * 4));
   return { low, high };
 }
 
