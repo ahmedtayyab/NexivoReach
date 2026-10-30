@@ -63,7 +63,7 @@ from app.tools.web_search import WebSearchTool, run_search, yahoo_region_for_iso
 
 log = logging.getLogger(__name__)
 
-_EMPTY_ENRICH = {"email": "", "phone": "", "contacts": [], "site_text": "", "sources": []}
+_EMPTY_ENRICH = {"email": "", "phone": "", "contacts": [], "site_text": "", "sources": [], "html": ""}
 
 # Country code from the public suffix. .com/.net/.org are not a country.
 _CCTLD_ISO = {
@@ -156,12 +156,12 @@ def listing_is_keepable_for_hunt(
 
 
 def _enrich_homepage_isolated(website: str) -> Dict[str, Any]:
-    """Homepage text only. Contact crawling used to eat the timeout and discard the page."""
+    """Homepage text + any emails on that page. Contact pages run only after a save."""
     from app.tools.web_search import WebSearchTool
 
     async def _run() -> Dict[str, Any]:
         tool = WebSearchTool()
-        page = await tool.scrape_homepage(website, limit=6000, keep_html=False)
+        page = await tool.scrape_homepage(website, limit=6000, keep_html=True)
         if not isinstance(page, dict):
             return dict(_EMPTY_ENRICH)
         emails = [e for e in (page.get("emails") or []) if e]
@@ -173,6 +173,50 @@ def _enrich_homepage_isolated(website: str) -> Dict[str, Any]:
             "sources": ["site"] if emails else [],
             "site_text": (page.get("text") or "")[:8000],
             "location": page.get("location") or "",
+            "html": (page.get("html") or "")[:180000],
+        }
+
+    return asyncio.run(_run())
+
+
+def _enrich_contacts_isolated(
+    website: str,
+    homepage_html: str,
+    homepage_text: str,
+    seed_emails: List[str],
+    seed_phone: str,
+) -> Dict[str, Any]:
+    """Contact page + Hunter for a company we already decided to save."""
+    from app.services.enrichment import hunter_domain_search
+    from app.tools.contact_finder import discover_contacts
+
+    async def _run() -> Dict[str, Any]:
+        found = await discover_contacts(
+            website,
+            homepage_html=homepage_html or "",
+            homepage_text=homepage_text or "",
+            seed_emails=list(seed_emails or []),
+            seed_phone=seed_phone or "",
+            use_browser=False,
+            max_extra_pages=2,
+            use_social=False,
+        )
+        email = (found.get("email") or "").strip()
+        contacts = list(found.get("contacts") or [])
+        phone = (found.get("phone") or seed_phone or "").strip()
+        source = "site" if email else ""
+        if not email:
+            host = _domain(website)
+            hunter = await hunter_domain_search(host)
+            if hunter.get("email"):
+                email = hunter["email"]
+                source = "hunter"
+                contacts = list(hunter.get("contacts") or []) + contacts
+        return {
+            "email": email,
+            "phone": phone,
+            "contacts": contacts,
+            "source": source,
         }
 
     return asyncio.run(_run())
@@ -652,7 +696,7 @@ def should_stop_backup_after_empty(*, had_results: bool, page: int) -> bool:
     return had_results or int(page or 1) > 1
 
 
-def backup_page_mostly_known(known: int, total: int, *, min_total: int = 6, ratio: float = 0.8) -> bool:
+def backup_page_mostly_known(known: int, total: int, *, min_total: int = 6, ratio: float = 0.9) -> bool:
     """True when a free-search page is mostly companies we already opened."""
     return int(total or 0) >= min_total and (int(known or 0) / int(total)) >= ratio
 
@@ -1108,8 +1152,6 @@ async def run_paginated_discovery(
             if loc_check.get("should_reject"):
                 _bump_funnel(stats, search_intent, "location_rejected")
 
-            # Email is optional. Hunter and contact-page crawls ate the clock
-            # and caused real shops to be dropped as "did not load".
             email = ""
             email_status = "email_not_found"
             email_source = ""
@@ -1152,6 +1194,50 @@ async def run_paginated_discovery(
             triage = serp_triage(row, categories=profile.categories, buyers=profile.buyers)
             level = graded.get("level") or "irrelevant"
             relevant = bool(graded.get("relevant")) and level != "irrelevant"
+            page_loaded = bool((site_text or "").strip())
+            serp_local = listing_is_keepable_for_hunt(
+                domain,
+                title,
+                snippet,
+                location_hint,
+                categories=list(profile.categories or []),
+            )
+            q = qualify_from_fast_decision(
+                row=row,
+                profile=profile,
+                products=products,
+                triage=triage,
+                site_text=site_text,
+            )
+            decision = lead_save_decision(
+                relevant=relevant,
+                should_reject=bool(loc_check.get("should_reject")),
+                page_loaded=page_loaded,
+                serp_local_trade=serp_local,
+            )
+
+            # Email only after we know this is a lead, so junk sites do not eat the clock.
+            if decision == "QUALIFIED_BUSINESS" and not email:
+                _note(stats, f"Looking up email for {domain}")
+                extra = await call_with_deadline(
+                    asyncio.to_thread(
+                        _enrich_contacts_isolated,
+                        website,
+                        found.get("html") or "",
+                        site_text,
+                        [found.get("email")] if found.get("email") else [],
+                        phone,
+                    ),
+                    8.0,
+                    {},
+                ) or {}
+                if extra.get("email"):
+                    email = extra["email"]
+                    email_status = "email_found"
+                    email_source = extra.get("source") or "site"
+                    contacts = list(extra.get("contacts") or []) or contacts
+                    phone = extra.get("phone") or phone
+                    stats.emails_found += 1
 
             with _db() as session:
                 mem = session.exec(
@@ -1188,27 +1274,6 @@ async def run_paginated_discovery(
                 mem.email = email or mem.email or ""
                 mem.email_status = email_status
 
-                q = qualify_from_fast_decision(
-                    row=row,
-                    profile=profile,
-                    products=products,
-                    triage=triage,
-                    site_text=site_text,
-                )
-                page_loaded = bool((site_text or "").strip())
-                serp_local = listing_is_keepable_for_hunt(
-                    domain,
-                    title,
-                    snippet,
-                    location_hint,
-                    categories=list(profile.categories or []),
-                )
-                decision = lead_save_decision(
-                    relevant=relevant,
-                    should_reject=bool(loc_check.get("should_reject")),
-                    page_loaded=page_loaded,
-                    serp_local_trade=serp_local,
-                )
                 if decision != "QUALIFIED_BUSINESS":
                     # Not a lead. An unread site stays open for a later hunt.
                     mem.processed = decision != "UNCERTAIN_REQUIRES_MORE_EVIDENCE"
@@ -1407,14 +1472,16 @@ async def run_paginated_discovery(
                 stats.leads_saved += 1
                 stats.leads_by_source[source] = stats.leads_by_source.get(source, 0) + 1
                 _bump_funnel(stats, search_intent, "leads_created")
-                if not page_loaded:
+                if email:
+                    _note(stats, f"Saved lead: {company_name} ({domain}) · {email}")
+                elif not page_loaded:
                     _note(
                         stats,
                         f"Saved lead: {company_name} ({domain}) — from this country's search "
-                        "(site blocked scraping)",
+                        "(site blocked scraping, no email yet)",
                     )
                 else:
-                    _note(stats, f"Saved lead: {company_name} ({domain})")
+                    _note(stats, f"Saved lead: {company_name} ({domain}) · no public email found")
                 if intent_id:
                     intent_leads_this_run[intent_id] = intent_leads_this_run.get(intent_id, 0) + 1
                 front = prospect_to_frontend(pr)
@@ -1617,7 +1684,8 @@ async def run_paginated_discovery(
             + ", ".join(SOURCE_LABELS.get(s, s) for s in sources_in_use)
             + ") run after, with a time limit. "
             "A company from this country's search is saved unless it is a giant, "
-            "the wrong industry, or clearly in another country.",
+            "the wrong industry, or clearly in another country. "
+            "Email is looked up after a company is accepted.",
         )
     else:
         _note(

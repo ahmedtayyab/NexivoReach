@@ -852,6 +852,8 @@ async def discover_contacts(
     seed_emails: Optional[List[str]] = None,
     *,
     use_browser: bool = True,
+    max_extra_pages: Optional[int] = None,
+    use_social: bool = True,
 ) -> Dict[str, Any]:
     """
     Return public contacts found on the site.
@@ -936,6 +938,8 @@ async def discover_contacts(
     seen_fetch: Set[str] = set()
     extra: List[str] = []
     max_extra = 2 if already_strong else (4 if linked else 5)
+    if max_extra_pages is not None:
+        max_extra = max(0, int(max_extra_pages))
     for u in ordered:
         key = u.rstrip("/").lower()
         if key in seen_fetch:
@@ -1052,7 +1056,7 @@ async def discover_contacts(
 
     # Facebook / social pass when the company site still has no email
     emails_so_far = _rank_scored(all_hits, site_domain)
-    if not emails_so_far and social_urls:
+    if use_social and not emails_so_far and social_urls:
         fb = next(
             (
                 u for u in social_urls

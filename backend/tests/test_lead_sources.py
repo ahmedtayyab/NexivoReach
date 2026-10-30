@@ -220,6 +220,25 @@ def test_unloaded_site_is_uncertain_not_a_lead():
     assert bare["decision"] == "UNCERTAIN_REQUIRES_MORE_EVIDENCE"
 
 
+def test_contact_finder_reads_email_from_homepage_html_without_crawling():
+    import asyncio
+
+    from app.tools.contact_finder import discover_contacts
+
+    html = "<html><body>Email us at sales@localgymshop.co.uk for wholesale.</body></html>"
+    found = asyncio.run(
+        discover_contacts(
+            "https://localgymshop.co.uk/",
+            homepage_html=html,
+            homepage_text="Email us at sales@localgymshop.co.uk for wholesale.",
+            use_browser=False,
+            max_extra_pages=0,
+            use_social=False,
+        )
+    )
+    assert found["email"].lower() == "sales@localgymshop.co.uk"
+
+
 def test_loaded_page_with_no_trade_evidence_is_rejected():
     from app.agents.relevance import website_relevance
 

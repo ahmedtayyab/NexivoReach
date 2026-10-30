@@ -160,7 +160,8 @@ def test_duckduckgo_stops_after_the_first_empty_later_page():
 def test_backup_page_stops_when_most_companies_are_already_known():
     from app.services.paginated_discovery import backup_page_mostly_known
 
-    assert backup_page_mostly_known(8, 10) is True
+    assert backup_page_mostly_known(9, 10) is True
+    assert backup_page_mostly_known(8, 10) is False
     assert backup_page_mostly_known(4, 10) is False
     assert backup_page_mostly_known(5, 5) is False  # too few results to judge
 
