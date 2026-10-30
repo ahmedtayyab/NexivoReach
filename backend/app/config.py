@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     # HUNT_MAX_PAGES_PER_INTENT is new Google pages fetched per line per run, not an
     # absolute page ceiling. A cursor at page 11 still fetches page 11 next time.
     HUNT_LEADS_PER_RUN: int = 100
-    HUNT_MAX_PAGES_PER_INTENT: int = 10
+    HUNT_MAX_PAGES_PER_INTENT: int = 15
     HUNT_MAX_TOTAL_PAGES: int = 150
     HUNT_MAX_GOOGLE_REQUESTS: int = 200
     HUNT_MAX_DOMAINS: int = 2000

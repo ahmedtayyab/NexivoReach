@@ -901,9 +901,11 @@ async def run_paginated_discovery(
         if database_backend() == "sqlite":
             budget.enrich_concurrency = min(2, max(1, int(budget.enrich_concurrency or 2)))
         else:
-            budget.enrich_concurrency = min(4, max(2, int(budget.enrich_concurrency or 4)))
+            budget.enrich_concurrency = min(6, max(3, int(budget.enrich_concurrency or 6)))
     except Exception:
-        budget.enrich_concurrency = min(4, max(1, int(budget.enrich_concurrency or 2)))
+        budget.enrich_concurrency = min(6, max(1, int(budget.enrich_concurrency or 3)))
+    if budget.max_pages_per_intent < 15:
+        budget.max_pages_per_intent = 15
     start = time.time()
     stats = HuntStats()
     web = WebSearchTool()
@@ -1003,7 +1005,7 @@ async def run_paginated_discovery(
         _note(stats, "No Google key (SERPER_API_KEY). This hunt searches with DuckDuckGo and Yahoo.")
     _note(
         stats,
-        f"Starting {len(intent_rows)} search(es). Limit {budget.leads_per_run} new leads, {budget.max_pages_per_intent} new Google pages per search.",
+        f"Starting {len(intent_rows)} search(es). Limit {budget.leads_per_run} new leads, {budget.max_pages_per_intent} pages per search.",
     )
     for row in intent_rows:
         if row.status != "exhausted":
@@ -1029,6 +1031,8 @@ async def run_paginated_discovery(
     empty_streaks: Dict[str, int] = {}
     repeat_streaks: Dict[str, int] = {}
     rr_index = 0
+    focus_id = ""
+    focus_pages = 0
 
     def _budget_hit(reason_holder: List[str]) -> bool:
         elapsed = time.time() - start
@@ -1101,47 +1105,74 @@ async def run_paginated_discovery(
             contacts: List[Dict[str, Any]] = []
             email_status = "email_not_found"
             email_source = ""
-            if site_count:
-                _note(
-                    stats,
-                    f"Reading {domain} ({site_index} of {site_count} on this page, 6s max)",
+            serp_local = listing_is_keepable_for_hunt(
+                domain,
+                title,
+                snippet,
+                location_hint,
+                categories=list(profile.categories or []),
+            )
+            found = dict(_EMPTY_ENRICH)
+            loc_check: Dict[str, Any] = {
+                "should_reject": False,
+                "business_location": "",
+                "location_verdict": "UNCERTAIN",
+            }
+            if serp_local:
+                label = (
+                    f"Keeping {domain} from this country's search"
+                    + (f" ({site_index} of {site_count})" if site_count else "")
+                )
+                _note(stats, label)
+                _update_job(
+                    job_id,
+                    status="running",
+                    phase=f"Saving {domain}",
+                    found_count=stats.leads_saved,
+                    skipped_existing=stats.already_known_skips,
+                    telemetry=_telemetry_payload(stats, intent_rows, search_intent, budget),
                 )
             else:
-                _note(stats, f"Reading {domain} (6s max)")
-            _update_job(
-                job_id,
-                status="running",
-                phase=f"Reading {domain}",
-                found_count=stats.leads_saved,
-                skipped_existing=stats.already_known_skips,
-                telemetry=_telemetry_payload(stats, intent_rows, search_intent, budget),
-            )
-            found = await call_with_deadline(
-                asyncio.to_thread(_enrich_homepage_isolated, website),
-                6.0,
-                dict(_EMPTY_ENRICH),
-            ) or dict(_EMPTY_ENRICH)
-            if (found.get("site_text") or "").strip():
-                _bump_funnel(stats, search_intent, "fetch_ok")
-            else:
-                _bump_funnel(stats, search_intent, "fetch_failed")
-            stats.websites_inspected += 1
-            site_text = (found.get("site_text") or "")[:8000]
-            phone = found.get("phone") or ""
-            contacts = list(found.get("contacts") or [])
+                if site_count:
+                    _note(
+                        stats,
+                        f"Reading {domain} ({site_index} of {site_count} on this page, 6s max)",
+                    )
+                else:
+                    _note(stats, f"Reading {domain} (6s max)")
+                _update_job(
+                    job_id,
+                    status="running",
+                    phase=f"Reading {domain}",
+                    found_count=stats.leads_saved,
+                    skipped_existing=stats.already_known_skips,
+                    telemetry=_telemetry_payload(stats, intent_rows, search_intent, budget),
+                )
+                found = await call_with_deadline(
+                    asyncio.to_thread(_enrich_homepage_isolated, website),
+                    6.0,
+                    dict(_EMPTY_ENRICH),
+                ) or dict(_EMPTY_ENRICH)
+                if (found.get("site_text") or "").strip():
+                    _bump_funnel(stats, search_intent, "fetch_ok")
+                else:
+                    _bump_funnel(stats, search_intent, "fetch_failed")
+                stats.websites_inspected += 1
+                site_text = (found.get("site_text") or "")[:8000]
+                phone = found.get("phone") or ""
+                contacts = list(found.get("contacts") or [])
 
-            # Note the site's own location. The hunt place stays in the Google query only.
-            from app.agents.location_verify import verify_business_location
+                from app.agents.location_verify import verify_business_location
 
-            loc_check = verify_business_location(
-                requested_places=list(profile.places or []),
-                site_text=site_text,
-                title=title,
-                snippet=snippet,
-                row_location=str(found.get("location") or location_seed or ""),
-                phones=[phone] if phone else [],
-                website=website,
-            )
+                loc_check = verify_business_location(
+                    requested_places=list(profile.places or []),
+                    site_text=site_text,
+                    title=title,
+                    snippet=snippet,
+                    row_location=str(found.get("location") or location_seed or ""),
+                    phones=[phone] if phone else [],
+                    website=website,
+                )
             verdict = str(loc_check.get("location_verdict") or "UNCERTAIN")
             if verdict == "MATCH":
                 _bump_funnel(stats, search_intent, "location_match")
@@ -1195,13 +1226,6 @@ async def run_paginated_discovery(
             level = graded.get("level") or "irrelevant"
             relevant = bool(graded.get("relevant")) and level != "irrelevant"
             page_loaded = bool((site_text or "").strip())
-            serp_local = listing_is_keepable_for_hunt(
-                domain,
-                title,
-                snippet,
-                location_hint,
-                categories=list(profile.categories or []),
-            )
             q = qualify_from_fast_decision(
                 row=row,
                 profile=profile,
@@ -1853,15 +1877,13 @@ async def run_paginated_discovery(
         (row.location or "").strip() for row in intent_rows if (row.location or "").strip()
     })
     place_bit = ", ".join(places_on_hunt) if places_on_hunt else "the country on each hunt line"
-    typical_low = max(8, 5 + len(intent_rows))
-    typical_high = max(typical_low + 6, 12 + len(intent_rows))
     _note(
         stats,
         f"This hunt is global: the country stays on every search ({place_bit}), "
         "not a Canada-only filter. "
-        f"Typical time for {len(intent_rows)} lines: about {typical_low}–{typical_high} minutes. "
-        "Homepages are opened a few at a time (6s each). "
-        "A company result for this country is saved even on .com or if the site blocks scraping. "
+        f"Aiming for up to {budget.leads_per_run} leads. "
+        "Each search stays on later pages (that is where independent shops rank) instead of repeating eight page-1 giant lists. "
+        "A company from this country's search is saved, then email is looked up. "
         "Chains, marketplaces, and companies already in your sheet are skipped.",
     )
     while True:
@@ -1890,9 +1912,17 @@ async def run_paginated_discovery(
             _note(stats, "Every search has stopped.")
             break
 
-        # Round-robin across searches. The 100-lead cap is hunt-wide, not per search.
-        intent = active[rr_index % len(active)]
-        rr_index += 1
+        # Stay on one search for several pages. Eight page-1 giant lists
+        # never reach the independent shops on later Yahoo batches.
+        focused = next((r for r in active if r.id == focus_id), None)
+        if focused is not None and focus_pages < 4:
+            intent = focused
+            focus_pages += 1
+        else:
+            intent = active[rr_index % len(active)]
+            rr_index += 1
+            focus_id = intent.id or ""
+            focus_pages = 1
         intent_id = intent.id or ""
         _n, intent_iso = hunt_country(intent.location or place)
         web.search_region = yahoo_region_for_iso(intent_iso)
@@ -2435,7 +2465,12 @@ async def run_paginated_discovery(
                         intent_rows[i] = intent
                         break
 
-        if fallback and backup_page_mostly_known(page_known, len(organic)):
+        if (
+            fallback
+            and not enrich_jobs
+            and backup_page_mostly_known(page_known, len(organic))
+            and int(ddg_batch or 1) >= 5
+        ):
             state = backup_states.get(intent_id) or {}
             ladder = list(state.get("ladder") or backup_query_ladder(intent.query, intent.location))
             index = int(state.get("ladder_i") or 0) + 1
@@ -2460,6 +2495,16 @@ async def run_paginated_discovery(
                     "Most companies on that page were already known, and there is no further wording to try.",
                 )
                 _finish_backup_search(stats, intent, business_id, page)
+        elif (
+            fallback
+            and not enrich_jobs
+            and backup_page_mostly_known(page_known, len(organic))
+            and int(ddg_batch or 1) < 5
+        ):
+            _note(
+                stats,
+                "Most of this page was already known. Opening later results of the same search — that is where independent shops rank.",
+            )
 
         if directory_urls:
             mined = await call_with_deadline(

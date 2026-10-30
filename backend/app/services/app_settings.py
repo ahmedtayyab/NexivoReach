@@ -67,7 +67,7 @@ def hunt_leads_per_run() -> int:
 def hunt_max_pages_per_intent() -> int:
     return _int_setting(
         KEY_MAX_PAGES_PER_INTENT,
-        int(settings.HUNT_MAX_PAGES_PER_INTENT or 10),
+        int(settings.HUNT_MAX_PAGES_PER_INTENT or 15),
         lo=1,
         hi=50,
     )
@@ -81,7 +81,7 @@ def get_hunt_settings() -> Dict[str, Any]:
         "maxPagesPerIntent": pages,
         "defaults": {
             "leadsPerRun": int(settings.HUNT_LEADS_PER_RUN or 100),
-            "maxPagesPerIntent": int(settings.HUNT_MAX_PAGES_PER_INTENT or 10),
+            "maxPagesPerIntent": int(settings.HUNT_MAX_PAGES_PER_INTENT or 15),
         },
     }
 
@@ -99,7 +99,7 @@ def update_hunt_settings(
 
 
 def ensure_hunt_setting_defaults() -> None:
-    """Seed DB keys; bump legacy default of 40 → 100 once."""
+    """Seed DB keys; bump legacy lead cap 40 → 100 and pages 10 → 15 once."""
     raw = get_setting(KEY_LEADS_PER_RUN, "")
     if raw == "":
         set_setting(KEY_LEADS_PER_RUN, str(int(settings.HUNT_LEADS_PER_RUN or 100)))
@@ -108,7 +108,9 @@ def ensure_hunt_setting_defaults() -> None:
         set_setting(KEY_LEADS_PER_RUN, "100")
     pages = get_setting(KEY_MAX_PAGES_PER_INTENT, "")
     if pages == "":
-        set_setting(KEY_MAX_PAGES_PER_INTENT, str(int(settings.HUNT_MAX_PAGES_PER_INTENT or 10)))
+        set_setting(KEY_MAX_PAGES_PER_INTENT, str(int(settings.HUNT_MAX_PAGES_PER_INTENT or 15)))
+    elif pages.strip() in ("8", "10"):
+        set_setting(KEY_MAX_PAGES_PER_INTENT, "15")
 
 
 def leads_per_intent_share(leads_per_run: int, intent_count: int) -> int:

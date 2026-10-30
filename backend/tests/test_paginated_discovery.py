@@ -164,6 +164,7 @@ def test_backup_page_stops_when_most_companies_are_already_known():
     assert backup_page_mostly_known(8, 10) is False
     assert backup_page_mostly_known(4, 10) is False
     assert backup_page_mostly_known(5, 5) is False  # too few results to judge
+    # A page with new companies to open must keep paginating the same query.
 
 
 def test_sheet_company_is_skipped_and_new_details_stay_on_that_row():
