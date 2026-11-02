@@ -371,7 +371,21 @@ def test_rejects_obviously_unrelated_business_serp():
         ),
         categories=["lifting hooks"],
     )
-    assert sports_ai["relevant"] is True
+    assert sports_ai["relevant"] is False
+
+    hooks_ai = heuristic_relevance(
+        product="lifting hooks",
+        buyer_type="distributors",
+        location="Chicago",
+        company_name="XYZ Sports & Fitness Distributors",
+        title="XYZ Sports & Fitness – Wholesale lifting hooks",
+        snippet="Distributor of lifting hooks for retailers.",
+        site_text=(
+            "XYZ Sports & Fitness wholesales lifting hooks and gym accessories to sporting goods retailers."
+        ),
+        categories=["lifting hooks"],
+    )
+    assert hooks_ai["relevant"] is True
 
 
 def test_wholesale_bags_are_a_business_not_a_wrong_industry():
@@ -492,8 +506,8 @@ def test_product_hunt_runs_web_search_without_maps(monkeypatch):
     assert calls["maps"] == 0
 
 
-def test_qualify_keeps_fitness_distributor_without_exact_product_on_homepage():
-    """A legitimate sports distributor may list lifting hooks deeper in the catalog."""
+def test_qualify_keeps_distributor_that_lists_the_hunted_product():
+    """A sports wholesaler is a lead only when the page overlaps this hunt's product."""
     import asyncio
     from app.agents.relevance import qualify_account_with_ai
     from app.agents.search_planner import SellerProfile
@@ -526,7 +540,7 @@ def test_qualify_keeps_fitness_distributor_without_exact_product_on_homepage():
         },
         site_text=(
             "XYZ Sports & Fitness is a wholesale distributor serving gyms and sporting goods "
-            "retailers. Browse our full catalog of strength training accessories."
+            "retailers. Catalog: lifting hooks, weightlifting straps, and other gym accessories."
         ),
         profile=profile,
         products=[],
@@ -538,6 +552,27 @@ def test_qualify_keeps_fitness_distributor_without_exact_product_on_homepage():
     matches = q["fitBreakdown"]["huntMatches"]
     assert {"product": "lifting hooks", "buyer": "distributors"} in matches
     assert {"product": "weightlifting straps", "buyer": "wholesalers"} in matches
+
+    skip = asyncio.run(qualify_account_with_ai(
+        row={
+            "company_name": "XYZ Sports & Fitness Distributors",
+            "website": "https://xyzsportsfitness.example/",
+            "snippet": "Wholesale distributor Chicago",
+            "source": "web",
+            "location": "",
+            "discovery_query": "lifting hooks distributors in Chicago",
+        },
+        site_text=(
+            "XYZ Sports & Fitness is a wholesale distributor serving gyms and sporting goods "
+            "retailers. Browse our full catalog of strength training accessories."
+        ),
+        profile=profile,
+        products=[],
+        page_url="https://xyzsportsfitness.example/",
+        provider=FallbackProvider(),
+        seller_brief="Fitness/gym products exporter",
+    ))
+    assert skip["shouldPersist"] is False
 
 
 def test_keeps_lead_when_homepage_omits_hunt_city():
@@ -569,7 +604,7 @@ def test_keeps_lead_when_homepage_omits_hunt_city():
             "location": "",
             "discovery_query": "lifting hooks distributors in Chicago",
         },
-        site_text="Wholesale distributor of gym and strength-training accessories for retailers nationwide.",
+        site_text="Wholesale distributor of lifting hooks and strength-training accessories for retailers nationwide.",
         profile=profile,
         products=[],
         page_url="https://midwestfitness.example/",

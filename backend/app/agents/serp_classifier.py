@@ -27,6 +27,8 @@ NON_BUSINESS_HOSTS = (
     "indiamart.com", "walmart.com", "temu.com", "wish.com",
     "reddit.com", "pinterest.com", "pinterest.co.uk", "facebook.com", "instagram.com",
     "twitter.com", "x.com", "tiktok.com", "youtube.com", "youtu.be", "linkedin.com",
+    "microsoft.com", "calculator.com", "imdb.com", "accuweather.com", "timeanddate.com",
+    "zhihu.com", "theweathernetwork.com", "weather.com",
     "scribd.com", "slideshare.net", "issuu.com", "academia.edu", "researchgate.net",
     "glassdoor.com", "indeed.com", "indeed.co.uk", "crunchbase.com", "zoominfo.com",
     "dnb.com", "bloomberg.com", "opencorporates.com", "companieshouse.gov.uk",
@@ -84,7 +86,10 @@ ARTICLE_TITLE = re.compile(
     r"top\s+\d+|best\s+\d+|complete guide|how to|"
     r"what is|what (they|it) are|what muscles|"
     r"definition|meaning|anatomy|resistivity|"
-    r"product review|buyer'?s guide|science backed"
+    r"product review|buyer'?s guide|science backed|"
+    r"workout plan|workout program|workout routine|"
+    r"\d+\s*-?\s*week|"
+    r"yoga pose"
     r")\b",
     re.I,
 )

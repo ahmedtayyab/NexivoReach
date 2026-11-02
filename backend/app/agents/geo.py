@@ -891,9 +891,14 @@ PRODUCT_HEAD_NEGATIVES: dict[str, tuple[str, ...]] = {
 PRODUCT_MOD_SYNONYMS: dict[str, tuple[str, ...]] = {
     "weightlifting": ("weightlifting", "weight lifting", "lifting", "powerlifting"),
     "wrist": ("wrist", "forearm"),
-    "knee": ("knee",),
+    "knee": ("knee", "rodilla", "rodilleras", "rodillera"),
     "martial": ("martial", "karate", "bjj", "jiu-jitsu", "jiujitsu", "taekwondo"),
     "lifting": ("lifting", "weightlifting", "deadlift"),
+    "restriction": ("restriction", "occlusion", "kaatsu", "bfr"),
+    "occlusion": ("occlusion", "restriction", "kaatsu", "bfr"),
+    "bfr": ("bfr", "occlusion", "kaatsu", "restriction"),
+    "glute": ("glute", "glutes", "gluteal"),
+    "sleeves": ("sleeves", "sleeve", "mangas", "rodilleras"),
 }
 
 # Businesses that are obviously a different trade from sports / fitness / combat gear.
@@ -903,6 +908,8 @@ UNRELATED_INDUSTRY_RE = re.compile(
     r"jewel+ery|jewelry|jewelers?|gemstones?|diamonds?|gold buyers?|"
     r"dental|dentist|medical|healthcare|health care|pharmac\w*|clinic|hospital|surgical|"
     r"automotive|auto parts|auto repair|car dealer|tires?|"
+    r"toyota|used cars?|new cars?|\bsuvs?\b|\bvehicles?\b|"
+    r"windows update|microsoft support|"
     r"construction|roofing|plumbing|hvac|electrical contractor|lumber|"
     r"restaurant|catering|bakery|cafe|coffee shop|"
     r"real estate|realtor|mortgage|property management|"

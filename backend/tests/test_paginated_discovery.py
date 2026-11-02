@@ -162,6 +162,14 @@ def test_city_hunt_is_not_keepable_from_country_serp_alone():
     )
     assert listing_is_keepable_for_hunt(
         "torontogymgear.com",
+        "Toronto Gym Gear — knee sleeves",
+        "Wholesale lifting gear",
+        "Toronto, Canada",
+        categories=["knee sleeves"],
+    )
+    # City + shop without the hunted product is not an auto-save.
+    assert not listing_is_keepable_for_hunt(
+        "torontogymgear.com",
         "Toronto Gym Gear",
         "Wholesale lifting gear",
         "Toronto, Canada",
@@ -235,6 +243,15 @@ def test_backup_page_stops_when_most_companies_are_already_known():
     assert backup_page_mostly_known(4, 10) is False
     assert backup_page_mostly_known(5, 5) is False  # too few results to judge
     # A page with new companies to open must keep paginating the same query.
+
+
+def test_backup_page_stops_when_every_result_is_unrelated():
+    from app.services.paginated_discovery import serp_page_is_off_topic
+
+    assert serp_page_is_off_topic(queued=0, known=0, total=10) is True
+    assert serp_page_is_off_topic(queued=1, known=0, total=10) is False
+    assert serp_page_is_off_topic(queued=0, known=2, total=10) is False
+    assert serp_page_is_off_topic(queued=0, known=0, total=4) is False
 
 
 def test_sheet_company_is_skipped_and_new_details_stay_on_that_row():
@@ -364,6 +381,15 @@ def test_search_http_get_uses_the_scrape_proxy(monkeypatch):
     assert seen["headers"].get("X-Proxy-Token") == "tok"
 
 
+def test_bing_stops_paging_before_the_junk_tail():
+    from app.tools.web_search import bing_next_page_form
+
+    assert bing_next_page_form(1) == {"engine": "bing", "page": "2"}
+    assert bing_next_page_form(5) == {"engine": "bing", "page": "6"}
+    assert bing_next_page_form(6) is None
+    assert bing_next_page_form(20) is None
+
+
 def test_bing_market_follows_the_hunt_country():
     from app.tools.web_search import bing_mkt_for_iso
 
@@ -443,12 +469,16 @@ def test_first_backup_batch_dedupes_engines_by_host():
 
 
 def test_country_serp_skips_textbooks_but_opens_plain_shops():
-    from app.services.paginated_discovery import hunt_offer_categories, serp_listing_score
+    from app.services.paginated_discovery import (
+        hunt_offer_categories,
+        listing_is_keepable_for_hunt,
+        serp_listing_score,
+    )
 
     assert hunt_offer_categories(
         "resistance bands distributors Canada",
         ["knee sleeves"],
-    )[0] == "resistance bands"
+    ) == ["resistance bands"]
     assert serp_listing_score(
         "phys.libretexts.org",
         "9.4: Resistivity and Resistance",
@@ -456,14 +486,14 @@ def test_country_serp_skips_textbooks_but_opens_plain_shops():
         "Canada",
         categories=["resistance bands"],
     ) == "NOISE"
-    # A company result without a shop/product word still gets a homepage, not a skip.
+    # A name that merely sounds athletic is not this hunt.
     assert serp_listing_score(
         "mapleleafathletics.ca",
         "Maple Leaf Athletics",
         "Home",
         "Canada",
         categories=["resistance bands"],
-    ) == "WARM"
+    ) == "NOISE"
     assert serp_listing_score(
         "bandwholesale.ca",
         "Resistance band wholesale — Canada",
@@ -471,6 +501,57 @@ def test_country_serp_skips_textbooks_but_opens_plain_shops():
         "Canada",
         categories=["resistance bands"],
     ) == "HOT"
+    cats = ["blood flow restriction bands"]
+    assert listing_is_keepable_for_hunt(
+        "occlusionwholesale.ca",
+        "Occlusion training bands wholesale",
+        "BFR cuffs for gyms",
+        "Canada",
+        categories=cats,
+    )
+    assert serp_listing_score(
+        "yogastudio.ca",
+        "Heron Pose - Yoga",
+        "Beginner yoga poses",
+        "Canada",
+        categories=cats,
+    ) == "NOISE"
+    # A generic gym wholesaler is opened, not auto-saved as a BFR lead.
+    assert serp_listing_score(
+        "gymwholesale.ca",
+        "Gym Equipment Wholesale Canada",
+        "Distributor of strength machines",
+        "Canada",
+        categories=cats,
+    ) == "WARM"
+    assert not listing_is_keepable_for_hunt(
+        "gymwholesale.ca",
+        "Gym Equipment Wholesale Canada",
+        "Distributor of strength machines",
+        "Canada",
+        categories=cats,
+    )
+    assert serp_listing_score(
+        "support.microsoft.com",
+        "Install Windows Updates | Microsoft Support",
+        "Check for updates",
+        "Canada",
+        categories=cats,
+    ) == "NOISE"
+    assert not listing_is_keepable_for_hunt(
+        "certified.toyota.ca",
+        "Toyota Certified Used Vehicles - Used Cars, SUVs & Trucks",
+        "Find a dealer near you",
+        "Canada",
+        categories=cats,
+    )
+    assert not listing_is_keepable_for_hunt(
+        "shop.rocknrollercart.com",
+        "RockNRoller Multi-Cart - Move ALL Your Gear In One Trip!",
+        "Folding equipment carts",
+        "Canada",
+        categories=cats,
+    )
 
 
 @pytest.mark.asyncio

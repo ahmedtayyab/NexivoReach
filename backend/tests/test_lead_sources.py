@@ -102,6 +102,11 @@ def test_company_homepage_is_a_company():
     assert classify_page("https://www.primegearsports.co.uk/", "Prime Gear Sports")["page_kind"] == "company"
     assert classify_page("https://www.tiendafitness.mx/", "Tienda Fitness")["page_kind"] == "company"
     assert classify_page("https://www.liftingshop.co.jp/", "Lifting Shop")["page_kind"] == "company"
+    assert classify_page("https://support.microsoft.com/windows", "Install Windows Updates")["page_kind"] == "article"
+    assert classify_page(
+        "https://bedtobody.com/plan",
+        "6-Week Summer Body Plan | At-Home Bodyweight Program",
+    )["page_kind"] == "article"
 
 
 def test_industry_giant_homepage_is_skipped_and_burned():

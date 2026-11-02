@@ -25,8 +25,8 @@ Would it make commercial sense for a company exporting this specific product to 
 
 Rules:
 - Search used the exact product phrase. Do NOT broaden the product yourself.
-- The company need NOT list the exact product SKU on the homepage. A fitness/sports/gym equipment distributor is often relevant for weightlifting accessories (straps, belts, wraps, sleeves, lifting hooks, martial arts belts).
-- Reject clearly unrelated industries (jewelry, medical/dental, automotive, construction, restaurants, real estate, industrial crane/rigging hardware, cargo/truck straps, etc.) when they are not also a sports/fitness business.
+- Keep the company only if the page overlaps that product (or a clear synonym: occlusion/BFR, rodilleras/knee sleeves). A generic gym, yoga studio, or sports shop that never names the hunted product is not a lead.
+- Reject clearly unrelated industries (jewelry, medical/dental, automotive, construction, restaurants, real estate, industrial crane/rigging hardware, cargo/truck straps, etc.).
 - Industrial "lifting hooks" / rigging / crane / shackles are NOT fitness lifting hooks.
 - Missing location on the website is NOT a reason to reject — Google already applied the place to the search. Only reject for a clear contradictory address in a different city/region when that conflicts with the hunt location.
 - Keep the answer simple. Do not score sales potential or invent ICP dimensions.
@@ -225,22 +225,6 @@ def website_relevance(
             "reason": f"Website overlaps hunt product “{product_label}”.",
             "evidence": f"Product match={offer}.",
         }
-    if has_related_trade_context(blob, cats) and b2b:
-        return {
-            "level": "medium",
-            "relevant": True,
-            "confidence": 0.68 if role_hit else 0.6,
-            "reason": "Fitness/sports trade context with wholesale/distributor signals.",
-            "evidence": "Related trade + B2B.",
-        }
-    if has_related_trade_context(blob, cats):
-        return {
-            "level": "low",
-            "relevant": True,
-            "confidence": 0.52,
-            "reason": "Sports/fitness trade context; exact SKU not confirmed on inspected pages.",
-            "evidence": "Related trade context.",
-        }
     if b2b and (site_text or "").strip() and _category_word_hit(blob, cats):
         return {
             "level": "medium",
@@ -263,7 +247,7 @@ def website_relevance(
         "level": "irrelevant",
         "relevant": False,
         "confidence": 0.55,
-        "reason": "The page loaded, but nothing on it points to the sports or fitness trade.",
+        "reason": "The page loaded, but it does not mention the product from this hunt.",
         "evidence": "",
         "decision": "REJECT_UNRELATED_BUSINESS",
     }

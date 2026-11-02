@@ -72,6 +72,17 @@ def bing_mkt_for_iso(iso: str) -> str:
     return BING_MKT_BY_ISO.get((iso or "").strip().upper(), "en-US")
 
 
+# Bing RSS `first=` past ~60 results returns unrelated pages (Windows Update, YouTube).
+BING_MAX_PAGES = 6
+
+
+def bing_next_page_form(page: int) -> Optional[Dict[str, str]]:
+    page = max(1, int(page or 1))
+    if page >= BING_MAX_PAGES:
+        return None
+    return {"engine": "bing", "page": str(page + 1)}
+
+
 def _hit_host(url: str) -> str:
     host = (urlparse(url or "").hostname or "").lower()
     if host.startswith("www."):
@@ -1072,7 +1083,7 @@ class WebSearchTool:
             }
         return {
             "hits": hits,
-            "next_form": {"engine": "bing", "page": str(page + 1)},
+            "next_form": bing_next_page_form(page),
             "provider": "bing",
             "error": "",
             "fallback": True,

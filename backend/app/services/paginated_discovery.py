@@ -189,14 +189,26 @@ def looks_like_reference_listing(title: str, snippet: str, domain: str) -> bool:
     return False
 
 
+_SKIP_OFFER_TOKENS = frozenset({
+    "the", "and", "for", "of", "with", "from", "into",
+    "distributor", "distributors", "wholesale", "wholesaler", "wholesalers",
+    "importer", "importers", "supplier", "suppliers", "dealer", "dealers",
+    "retailer", "retailers", "buyer", "buyers", "shop", "store",
+})
+_WEAK_OFFER_TOKENS = frozenset({
+    "fitness", "gym", "sports", "sport", "training", "workout", "equipment",
+    "gear", "accessories", "accessory", "product", "products",
+})
+
+
 def hunt_offer_categories(query: str, profile_categories: Optional[List[str]] = None) -> List[str]:
-    """Product on this hunt line first, then the seller profile categories."""
+    """Product named on this hunt line. Profile categories are the fallback only."""
     from app.agents.geo import parse_discovery_query
 
-    out: List[str] = []
     product, _role, _place = parse_discovery_query(query or "")
     if (product or "").strip():
-        out.append(product.strip())
+        return [product.strip()]
+    out: List[str] = []
     for cat in profile_categories or []:
         text = (cat or "").strip()
         if text and text not in out:
@@ -204,20 +216,50 @@ def hunt_offer_categories(query: str, profile_categories: Optional[List[str]] = 
     return out
 
 
-def listing_has_trade_signal(
+def listing_has_shop_language(title: str, snippet: str) -> bool:
+    """Shop/wholesale words in the visible listing — not a subdomain like shop.cart.com."""
+    return bool(_SHOP_HINT_RE.search(f"{title or ''} {snippet or ''}"))
+
+
+def _product_stem_in_domain(domain: str, stem: str) -> bool:
+    token = (stem or "").strip().lower()
+    if len(token) < 4:
+        return False
+    host = (domain or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return any(label.startswith(token) for label in re.split(r"[.-]", host) if label)
+
+
+def _offer_words(phrase: str) -> List[str]:
+    return [
+        w for w in re.findall(r"[a-z0-9]+", (phrase or "").lower())
+        if len(w) >= 3 and w not in _SKIP_OFFER_TOKENS
+    ]
+
+
+def _token_in_blob(token: str, blob: str) -> bool:
+    from app.agents.geo import PRODUCT_MOD_SYNONYMS
+
+    forms = [token, *PRODUCT_MOD_SYNONYMS.get(token, ())]
+    for form in dict.fromkeys(forms):
+        if re.search(rf"\b{re.escape(form)}s?\b", blob):
+            return True
+    return False
+
+
+def listing_mentions_hunt_product(
     title: str,
     snippet: str,
     domain: str,
     categories: Optional[List[str]] = None,
 ) -> bool:
-    """True when the listing names the product, or reads like a shop — not a dictionary hit."""
-    from app.agents.geo import product_phrases_from_profile_categories
+    """True when the listing is about this hunt's product, not a nearby gym or a 'shop.' subdomain."""
+    from app.agents.geo import AMBIGUOUS_PRODUCT_HEADS, product_phrases_from_profile_categories
 
     blob = f"{title} {snippet} {domain}".lower()
     if not blob.strip():
         return False
-    if _SHOP_HINT_RE.search(blob):
-        return True
     phrases = product_phrases_from_profile_categories(list(categories or [])) or [
         re.sub(r"\s+", " ", (c or "").strip().lower()) for c in (categories or []) if c
     ]
@@ -227,16 +269,36 @@ def listing_has_trade_signal(
             continue
         if p in blob:
             return True
-        words = [w for w in p.split() if len(w) > 2]
+        words = _offer_words(p)
         if not words:
             continue
-        head = words[-1]
-        if head in blob:
+        distinctive = [
+            w for w in words
+            if w not in _WEAK_OFFER_TOKENS and w not in AMBIGUOUS_PRODUCT_HEADS
+        ]
+        if distinctive and any(_token_in_blob(w, blob) for w in distinctive):
             return True
-        stem = head[:-1] if head.endswith("s") and len(head) > 3 else head
-        if stem and len(stem) >= 3 and stem in blob:
-            return True
+        if not distinctive:
+            hits = sum(1 for w in words if _token_in_blob(w, blob))
+            if hits >= min(2, len(words)):
+                return True
+        for w in distinctive or words:
+            stem = w[:-1] if w.endswith("s") and len(w) > 3 else w
+            if _product_stem_in_domain(domain, stem):
+                return True
     return False
+
+
+def listing_has_trade_signal(
+    title: str,
+    snippet: str,
+    domain: str,
+    categories: Optional[List[str]] = None,
+) -> bool:
+    """True when the listing names the product, or reads like a shop — not a dictionary hit."""
+    return listing_has_shop_language(title, snippet) or listing_mentions_hunt_product(
+        title, snippet, domain, categories
+    )
 
 
 def quote_backup_search_query(query: str) -> str:
@@ -283,7 +345,8 @@ def listing_is_keepable_for_hunt(
     check have to confirm it.
 
     A dictionary or textbook hit is never keepable, even on a country search.
-    The listing still needs a product word or a shop/wholesale signal.
+    Auto-save only when the listing is about this hunt's product. A generic
+    gym shop with no product words is opened (WARM), not saved from the SERP.
     """
     from app.agents.geo import looks_unrelated_business
 
@@ -295,7 +358,7 @@ def listing_is_keepable_for_hunt(
         return False
     if looks_like_reference_listing(title, snippet, domain):
         return False
-    if not listing_has_trade_signal(title, snippet, domain, categories):
+    if not listing_mentions_hunt_product(title, snippet, domain, categories):
         return False
     if not listing_mentions_hunt_city(title, snippet, domain, hunt_place):
         return False
@@ -310,11 +373,25 @@ def serp_listing_score(
     categories: Optional[List[str]] = None,
 ) -> str:
     """HOT = save without a homepage. WARM = open the site. NOISE = skip the listing."""
+    from app.agents.geo import looks_unrelated_business
+
+    cats = list(categories or [])
     if looks_like_reference_listing(title, snippet, domain):
+        return "NOISE"
+    if looks_unrelated_business(f"{title}\n{snippet}", cats):
         return "NOISE"
     if listing_is_keepable_for_hunt(domain, title, snippet, hunt_place, categories):
         return "HOT"
-    return "WARM"
+    if listing_has_shop_language(title, snippet) or listing_mentions_hunt_product(
+        title, snippet, domain, categories
+    ):
+        return "WARM"
+    return "NOISE"
+
+
+def serp_page_is_off_topic(*, queued: int, known: int, total: int) -> bool:
+    """True when a free-search page is unrelated junk, not shops we already know."""
+    return int(total or 0) >= 8 and int(queued or 0) == 0 and int(known or 0) == 0
 
 
 def _enrich_homepage_isolated(website: str) -> Dict[str, Any]:
@@ -1396,7 +1473,7 @@ async def run_paginated_discovery(
                 title=title,
                 snippet=snippet,
                 site_text=site_text,
-                categories=list(profile.categories or []),
+                categories=cats,
             )
 
             row = {
@@ -1411,7 +1488,7 @@ async def run_paginated_discovery(
                 "phone": phone,
                 "source": "web",
             }
-            triage = serp_triage(row, categories=profile.categories, buyers=profile.buyers)
+            triage = serp_triage(row, categories=cats, buyers=profile.buyers)
             level = graded.get("level") or "irrelevant"
             relevant = bool(graded.get("relevant")) and level != "irrelevant"
             page_loaded = bool((site_text or "").strip())
@@ -2445,7 +2522,7 @@ async def run_paginated_discovery(
                         "discovery_query": intent.query,
                         "website": url,
                     },
-                    categories=profile.categories,
+                    categories=hunt_offer_categories(intent.query, profile.categories),
                     buyers=profile.buyers,
                 )
                 if triage.get("verdict") == "reject":
@@ -2693,7 +2770,47 @@ async def run_paginated_discovery(
                         intent_rows[i] = intent
                         break
 
-        if (
+        if fallback and serp_page_is_off_topic(
+            queued=len(enrich_jobs),
+            known=page_known,
+            total=len(organic),
+        ):
+            state = backup_states.get(intent_id) or {}
+            ladder = list(state.get("ladder") or backup_query_ladder(intent.query, intent.location))
+            index = int(state.get("ladder_i") or 0) + 1
+            searched = str(state.get("active_query") or intent.query)
+            if index < len(ladder):
+                backup_states[intent_id] = {
+                    "fields": None,
+                    "batch": 1,
+                    "exhausted": False,
+                    "active_query": ladder[index],
+                    "ladder": ladder,
+                    "ladder_i": index,
+                    "retried": False,
+                }
+                intent.last_page_fingerprint = ""
+                ddg_to_store = _ddg_cursor_json(
+                    fields=None,
+                    batch=1,
+                    active_query=ladder[index],
+                )
+                _note(
+                    stats,
+                    f"“{searched}” stopped returning shops. Searching “{ladder[index]}”.",
+                )
+            else:
+                backup_states[intent_id] = {
+                    "fields": None,
+                    "batch": ddg_batch,
+                    "exhausted": True,
+                }
+                ddg_to_store = _ddg_cursor_json(
+                    fields=None, batch=ddg_batch, exhausted=True,
+                )
+                _note(stats, f"“{searched}” stopped returning shops.")
+                _finish_backup_search(stats, intent, business_id, page)
+        elif (
             fallback
             and not enrich_jobs
             and backup_page_mostly_known(page_known, len(organic))
