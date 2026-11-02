@@ -161,6 +161,96 @@ def listing_mentions_hunt_city(
     return False
 
 
+_SHOP_HINT_RE = re.compile(
+    r"\b("
+    r"wholesale|wholesaler|distributor|importer|supplier|dealer|stockist|"
+    r"shop|store|tienda|magasin|loja|negozio|winkel|butik|boutique|"
+    r"warehouse|showroom"
+    r")\b",
+    re.I,
+)
+_REFERENCE_LISTING_RE = re.compile(
+    r"\b("
+    r"definition|meaning|resistivity|anatomy|"
+    r"what is|what muscles|what they are|"
+    r"dictionary|encyclopedia|textbook|libretexts"
+    r")\b",
+    re.I,
+)
+
+
+def looks_like_reference_listing(title: str, snippet: str, domain: str) -> bool:
+    """Dictionaries, textbooks, and 'what is X' pages are not buyers."""
+    blob = f"{title} {snippet} {domain}"
+    if _REFERENCE_LISTING_RE.search(blob):
+        return True
+    if re.match(r"^\s*\d+\.\d+\s*:", title or ""):
+        return True
+    return False
+
+
+def listing_has_trade_signal(
+    title: str,
+    snippet: str,
+    domain: str,
+    categories: Optional[List[str]] = None,
+) -> bool:
+    """True when the listing names the product, or reads like a shop — not a dictionary hit."""
+    from app.agents.geo import product_phrases_from_profile_categories
+
+    blob = f"{title} {snippet} {domain}".lower()
+    if not blob.strip():
+        return False
+    if _SHOP_HINT_RE.search(blob):
+        return True
+    phrases = product_phrases_from_profile_categories(list(categories or [])) or [
+        re.sub(r"\s+", " ", (c or "").strip().lower()) for c in (categories or []) if c
+    ]
+    for phrase in phrases:
+        p = (phrase or "").strip().lower()
+        if not p:
+            continue
+        if p in blob:
+            return True
+        words = [w for w in p.split() if len(w) > 2]
+        if not words:
+            continue
+        head = words[-1]
+        if head in blob:
+            return True
+        stem = head[:-1] if head.endswith("s") and len(head) > 3 else head
+        if stem and len(stem) >= 3 and stem in blob:
+            return True
+    return False
+
+
+def quote_backup_search_query(query: str) -> str:
+    """Quote the product so Yahoo does not search physics 'resistance' or gym directories."""
+    from app.agents.geo import PRODUCT_HEAD_NEGATIVES, parse_discovery_query
+
+    text = re.sub(r"\s+", " ", (query or "").strip())
+    if not text:
+        return text
+    negatives = ["-wikipedia", "-dictionary"]
+    product, role, place = parse_discovery_query(text)
+    head = (product or "").strip().split()[-1].lower() if product else ""
+    negatives.extend(PRODUCT_HEAD_NEGATIVES.get(head, ()))
+    neg = " ".join(dict.fromkeys(negatives))
+    if '"' in text:
+        if "-wikipedia" in text.lower():
+            return text
+        return f"{text} {neg}".strip()
+    if product and " " in product:
+        bits = [f'"{product}"']
+        if role:
+            bits.append(role)
+        if place:
+            bits.append(place)
+        bits.append(neg)
+        return " ".join(bits)
+    return f"{text} {neg}".strip()
+
+
 def listing_is_keepable_for_hunt(
     domain: str,
     title: str,
@@ -176,6 +266,9 @@ def listing_is_keepable_for_hunt(
     A city hunt is stricter: the listing itself must name the city. A country
     SERP hit with no city evidence is not keepable — the homepage and location
     check have to confirm it.
+
+    A dictionary or textbook hit is never keepable, even on a country search.
+    The listing still needs a product word or a shop/wholesale signal.
     """
     from app.agents.geo import looks_unrelated_business
 
@@ -184,6 +277,10 @@ def listing_is_keepable_for_hunt(
     if listing_conflicts_hunt_country(domain, title, snippet, hunt_place):
         return False
     if looks_unrelated_business(f"{title}\n{snippet}", list(categories or [])):
+        return False
+    if looks_like_reference_listing(title, snippet, domain):
+        return False
+    if not listing_has_trade_signal(title, snippet, domain, categories):
         return False
     if not listing_mentions_hunt_city(title, snippet, domain, hunt_place):
         return False
@@ -1910,7 +2007,7 @@ async def run_paginated_discovery(
                 "already_finished": True,
                 "searched_query": state.get("active_query") or query,
             }
-        search_query = str(state.get("active_query") or query)
+        search_query = quote_backup_search_query(str(state.get("active_query") or query))
         try:
             report = await run_search(
                 web.search_backup_page, search_query, 1, state.get("fields"), timeout=16.0,

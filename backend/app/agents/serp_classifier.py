@@ -11,6 +11,12 @@ ARTICLE_HOSTS = (
     "wikipedia.org", "medium.com", "quora.com",
     "reuters.com", "techcrunch.com", "forbes.com",
     "businessinsider.com", "prnewswire.com", "globenewswire.com",
+    "merriam-webster.com", "dictionary.com", "britannica.com",
+    "cambridge.org", "thesaurus.com", "vocabulary.com",
+    "healthline.com", "verywellfit.com", "webmd.com",
+    "mayoclinic.org", "clevelandclinic.org", "wikihow.com",
+    "thoughtco.com", "investopedia.com", "khanacademy.org",
+    "libretexts.org", "physicsclassroom.com",
 )
 # Hosts that are never a company website. A hit here is skipped and the host is remembered.
 NON_BUSINESS_HOSTS = (
@@ -72,9 +78,15 @@ SEARCH_HOSTS = (
     "google.com", "duckduckgo.com", "yahoo.com", "bing.com",
 )
 ARTICLE_TITLE = re.compile(
-    r"\b(top\s+\d+|best\s+\d+|complete guide|how to|what is|product review|buyer'?s guide)\b",
+    r"\b("
+    r"top\s+\d+|best\s+\d+|complete guide|how to|"
+    r"what is|what (they|it) are|what muscles|"
+    r"definition|meaning|anatomy|resistivity|"
+    r"product review|buyer'?s guide|science backed"
+    r")\b",
     re.I,
 )
+_TEXTBOOK_TITLE = re.compile(r"^\s*\d+\.\d+\s*:")
 ARTICLE_PATH = re.compile(
     r"/(blog|blogs|news|press|articles?|wiki|reviews?|guides?|roundups?|jobs|careers)(/|$)",
     re.I,
@@ -82,7 +94,18 @@ ARTICLE_PATH = re.compile(
 # Public-sector hosts worldwide: education + the government second-level
 # domains each country uses (.gov, .gouv.fr, .gob.mx, .gc.ca, .go.jp, …).
 _EDU_HOST = re.compile(
-    r"(^|\.)(edu|mil)(\.[a-z]{2,3})?$|(^|\.)ac\.[a-z]{2,3}$|(^|\.)edu\.[a-z]{2,3}$",
+    r"(^|\.)(edu|mil)(\.[a-z]{2,3})?$|(^|\.)ac\.[a-z]{2,3}$|(^|\.)edu\.[a-z]{2,3}$"
+    r"|(^|\.)libretexts\.org$",
+    re.I,
+)
+# Dictionaries, textbooks, and consumer health encyclopedias — never a buyer.
+_REFERENCE_HOST = re.compile(
+    r"(^|\.)("
+    r"merriam-webster|dictionary|britannica|thesaurus|vocabulary|"
+    r"healthline|verywellfit|webmd|mayoclinic|clevelandclinic|"
+    r"khanacademy|physicsclassroom|thoughtco|investopedia|wikihow|"
+    r"libretexts"
+    r")(\.[a-z0-9.-]+)$",
     re.I,
 )
 _GOV_SLD = re.compile(
@@ -134,6 +157,7 @@ def is_non_buyer_host(host: str) -> bool:
         return False
     if (
         _EDU_HOST.search(h)
+        or _REFERENCE_HOST.search(h)
         or _GOV_SLD.search(h)
         or _PLATFORM_HOST.search(h)
         or _TOURISM_HOST.search(h)
@@ -194,7 +218,7 @@ def classify_page(url: str, title: str = "") -> Dict[str, Any]:
         return {"page_kind": "article", "burn_domain": True, "reason": "Article or wiki page"}
     if ARTICLE_PATH.search(path) or "/best-" in path:
         return {"page_kind": "article", "burn_domain": False, "reason": "Article, review, or jobs URL"}
-    if ARTICLE_TITLE.search(title or ""):
+    if ARTICLE_TITLE.search(title or "") or _TEXTBOOK_TITLE.search(title or ""):
         return {"page_kind": "article", "burn_domain": False, "reason": "Article or listicle title"}
     return {"page_kind": "company", "burn_domain": False, "reason": ""}
 

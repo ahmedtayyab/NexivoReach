@@ -883,6 +883,8 @@ PRODUCT_HEAD_NEGATIVES: dict[str, tuple[str, ...]] = {
     "hook": ("-crane", "-rigging"),
     "sleeves": ("-pipe", "-cable"),
     "sleeve": ("-pipe", "-cable"),
+    "bands": ("-electrical", "-ohm", "-resistivity", "-physics"),
+    "band": ("-electrical", "-ohm", "-resistivity", "-physics"),
 }
 
 # Soft synonyms so "lifting straps" still matches hunt "weightlifting straps"

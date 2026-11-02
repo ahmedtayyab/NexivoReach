@@ -110,6 +110,45 @@ def test_geo_targeted_dotcom_listing_is_keepable_in_a_new_country():
     )
 
 
+def test_quote_backup_search_keeps_the_product_together():
+    from app.services.paginated_discovery import quote_backup_search_query
+
+    q = quote_backup_search_query("resistance bands distributors Canada")
+    assert q.startswith('"resistance bands"')
+    assert "distributors" in q
+    assert "Canada" in q
+    assert "-wikipedia" in q
+    assert "-electrical" in q
+    # Hunt lines stay unquoted; only the engine query is wrapped.
+    assert quote_backup_search_query('"glute bands" wholesalers Mexico').startswith('"glute bands"')
+
+
+def test_dictionary_and_textbook_listings_are_not_keepable():
+    from app.services.paginated_discovery import listing_is_keepable_for_hunt
+
+    assert not listing_is_keepable_for_hunt(
+        "phys.libretexts.org",
+        "9.4: Resistivity and Resistance - Physics LibreTexts",
+        "Ohm's law and resistivity",
+        "Canada",
+        categories=["resistance bands"],
+    )
+    assert not listing_is_keepable_for_hunt(
+        "biologyinsights.com",
+        "What Muscles Are in Your Butt: Glutes and Beyond",
+        "Anatomy of the gluteal muscles",
+        "Canada",
+        categories=["glute bands"],
+    )
+    assert listing_is_keepable_for_hunt(
+        "bandwholesale.ca",
+        "Resistance band wholesale — Canada",
+        "Distributors of gym bands",
+        "Canada",
+        categories=["resistance bands"],
+    )
+
+
 def test_city_hunt_is_not_keepable_from_country_serp_alone():
     from app.services.paginated_discovery import listing_is_keepable_for_hunt
 

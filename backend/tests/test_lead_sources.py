@@ -41,6 +41,21 @@ def test_non_business_hosts_are_never_companies(url):
 
 
 @pytest.mark.parametrize(
+    "url,title",
+    [
+        ("https://phys.libretexts.org/Bookshelves/9.4_Resistivity", "9.4: Resistivity and Resistance"),
+        ("https://www.merriam-webster.com/dictionary/resistance", "RESISTANCE Definition & Meaning"),
+        ("https://www.britannica.com/science/electrical-resistance", "Electrical Resistance"),
+        ("https://www.healthline.com/health/fitness", "What Is Fitness?"),
+        ("https://www.biologyinsights.com/glutes", "What Muscles Are in Your Butt: Glutes and Beyond"),
+    ],
+)
+def test_dictionaries_and_textbooks_are_never_companies(url, title):
+    page = classify_page(url, title)
+    assert page["page_kind"] == "article"
+
+
+@pytest.mark.parametrize(
     "url",
     [
         "https://travel.gc.ca/",
