@@ -324,10 +324,10 @@ def test_source_plan_uses_companies_house_only_for_uk(monkeypatch):
     uk = bs.source_plan_for_intent("weightlifting straps distributors Manchester, United Kingdom", "Manchester, United Kingdom")
     assert uk["product"] == "weightlifting straps"
     assert uk["role"] == "distributors"
-    assert uk["sources"] == ["stockists", "exhibitors", "companies_house", "directory"]
+    assert uk["sources"] == ["stockists", "exhibitors", "companies_house", "wikidata", "directory"]
     us = bs.source_plan_for_intent("weightlifting straps distributors Texas", "Texas")
     assert "companies_house" not in us["sources"]
-    assert us["sources"] == ["stockists", "exhibitors", "directory"]
+    assert us["sources"] == ["stockists", "exhibitors", "wikidata", "directory"]
 
 
 def test_source_plan_uses_osm_for_shops_and_gyms(monkeypatch):
@@ -354,7 +354,7 @@ def test_source_plan_omits_exhibitors_unless_enabled(monkeypatch):
         "weightlifting straps distributors Canada", "Canada",
     )
     assert "exhibitors" not in plan["sources"]
-    assert plan["sources"] == ["stockists", "directory"]
+    assert plan["sources"] == ["stockists", "wikidata", "directory"]
 
 
 def test_places_is_opt_in(monkeypatch):
@@ -365,7 +365,7 @@ def test_places_is_opt_in(monkeypatch):
     monkeypatch.setattr(bs.settings, "EXHIBITOR_SOURCE_ENABLED", True)
     plan = bs.source_plan_for_intent("weightlifting straps distributors United Kingdom", "United Kingdom")
     assert "places" not in plan["sources"]
-    assert plan["sources"] == ["stockists", "exhibitors", "directory"]
+    assert plan["sources"] == ["stockists", "exhibitors", "wikidata", "directory"]
     monkeypatch.setattr(bs.settings, "GOOGLE_PLACES_API_KEY", "key")
     plan = bs.source_plan_for_intent("weightlifting straps distributors United Kingdom", "United Kingdom")
     assert plan["sources"][0] == "places"
@@ -685,15 +685,21 @@ def test_osm_city_step_uses_one_tile_and_keeps_cursor():
 def test_overpass_payload_to_candidates():
     payload = {"elements": [
         {"type": "node", "id": 1, "tags": {"name": "Leeds Boxing Store", "shop": "sports",
-                                             "website": "leedsboxingstore.co.uk", "addr:city": "Leeds"}},
+                                             "website": "leedsboxingstore.co.uk", "addr:city": "Leeds",
+                                             "contact:email": "sales@leedsboxingstore.co.uk"}},
         {"type": "way", "id": 2, "tags": {"name": "Nameless", "shop": "sports"}},
         {"type": "node", "id": 3, "tags": {"name": "Dup", "contact:website": "https://www.leedsboxingstore.co.uk/"}},
+        {"type": "node", "id": 4, "tags": {"name": "Old Gym", "website": "https://oldgym.co.uk/",
+                                             "disused": "yes"}},
+        {"type": "node", "id": 5, "tags": {"name": "Gone Shop", "website": "https://gone.co.uk/",
+                                             "disused:shop": "sports"}},
     ]}
     cands = bs.parse_overpass_payload(payload, "United Kingdom")
     assert len(cands) == 1
     assert cands[0].website == "https://leedsboxingstore.co.uk"
     assert cands[0].address == "Leeds, United Kingdom"
     assert cands[0].ref == "node/1"
+    assert cands[0].email == "sales@leedsboxingstore.co.uk"
 
 
 def test_gym_in_the_product_is_not_the_buyer_role():
@@ -718,6 +724,7 @@ def test_source_cursor_key_is_shared_across_similar_hunt_lines():
     assert source_cursor_key("stockists", "q1", plan) == source_cursor_key("stockists", "q2", other)
     assert source_cursor_key("stockists", "q1", plan) != source_cursor_key("stockists", "q2", boxing)
     assert source_cursor_key("exhibitors", "q1", plan) == source_cursor_key("exhibitors", "q2", boxing)
+    assert source_cursor_key("wikidata", "q1", plan) == source_cursor_key("wikidata", "q2", other)
 
 
 def test_ch_cursor_roundtrip():
@@ -877,3 +884,117 @@ def test_exhibitor_step_ignores_page_chrome_without_cards():
         resolve_limit=0,
     )
     assert step.candidates == []
+
+
+def test_photon_geocoder_when_nominatim_misses():
+    class _Client:
+        def get(self, url, params=None):
+            class _Res:
+                status_code = 200
+
+                def json(self):
+                    if "nominatim" in str(url):
+                        return []
+                    return {
+                        "features": [{
+                            "properties": {"extent": [-79.6, 43.8, -79.1, 43.5]},
+                            "geometry": {"coordinates": [-79.4, 43.65]},
+                        }],
+                    }
+
+            return _Res()
+
+    box = bs.geocode_bbox("Toronto", "CA", client=_Client())
+    assert box == (43.5, -79.6, 43.8, -79.1)
+
+
+def test_wikidata_is_on_channel_hunts_not_shops(monkeypatch):
+    monkeypatch.setattr(bs.settings, "COMPANIES_HOUSE_API_KEY", "")
+    monkeypatch.setattr(bs.settings, "GOOGLE_PLACES_API_KEY", "")
+    monkeypatch.setattr(bs.settings, "OSM_SOURCE_ENABLED", True)
+    monkeypatch.setattr(bs.settings, "WIKIDATA_SOURCE_ENABLED", True)
+    monkeypatch.setattr(bs.settings, "DIRECTORY_SOURCE_ENABLED", False)
+    monkeypatch.setattr(bs.settings, "STOCKIST_SOURCE_ENABLED", False)
+    monkeypatch.setattr(bs.settings, "EXHIBITOR_SOURCE_ENABLED", False)
+    channel = bs.source_plan_for_intent("knee sleeves distributors Canada", "Canada")
+    assert channel["family"] == "channel"
+    assert channel["sources"] == ["wikidata"]
+    shops = bs.source_plan_for_intent("boxing gloves retailers Leeds, United Kingdom", "Leeds, United Kingdom")
+    assert "wikidata" not in shops["sources"]
+    assert "osm" in shops["sources"]
+
+
+def test_wikidata_sparql_avoids_subclass_walk():
+    ql = bs.wikidata_sparql("resistance bands", "CA", offset=40)
+    assert "P279" not in ql
+    assert "P31" not in ql
+    assert 'P297 "CA"' in ql
+    assert "P856" in ql
+    assert "OFFSET 40" in ql
+    assert "resistance" in ql.lower() or "bands" in ql.lower()
+
+
+def test_wikidata_bindings_to_candidates():
+    payload = {
+        "results": {
+            "bindings": [
+                {
+                    "item": {"value": "http://www.wikidata.org/entity/Q1"},
+                    "itemLabel": {"value": "Gym Wholesale Co"},
+                    "website": {"value": "https://gymwholesale.ca/"},
+                },
+                {
+                    "itemLabel": {"value": "No Site"},
+                    "website": {"value": ""},
+                },
+                {
+                    "itemLabel": {"value": "Dup"},
+                    "website": {"value": "https://www.gymwholesale.ca/about"},
+                },
+            ],
+        },
+    }
+    cands = bs.parse_wikidata_bindings(payload, "Canada")
+    assert len(cands) == 1
+    assert cands[0].name == "Gym Wholesale Co"
+    assert cands[0].website == "https://gymwholesale.ca/"
+    assert cands[0].source == "wikidata"
+    assert cands[0].ref == "Q1"
+
+
+def test_wikidata_step_pages_with_offset():
+    class _Client:
+        def __init__(self):
+            self.params = None
+
+        def get(self, url, params=None, headers=None):
+            self.params = params
+
+            class _Res:
+                status_code = 200
+
+                def json(self):
+                    rows = [{
+                        "item": {"value": f"http://www.wikidata.org/entity/Q{i}"},
+                        "itemLabel": {"value": f"Fitness Distributor {i}"},
+                        "website": {"value": f"https://fitdist{i}.ca/"},
+                    } for i in range(bs.WIKIDATA_PAGE)]
+                    return {"results": {"bindings": rows}}
+
+            return _Res()
+
+        def close(self):
+            pass
+
+    client = _Client()
+    step = bs.wikidata_step(
+        product="knee sleeves",
+        iso="CA",
+        country_label="Canada",
+        cursor="",
+        client=client,
+    )
+    assert step.exhausted is False
+    assert json.loads(step.next_cursor)["o"] == bs.WIKIDATA_PAGE
+    assert len(step.candidates) == bs.WIKIDATA_PAGE
+    assert "OFFSET 0" in (client.params or {}).get("query", "")

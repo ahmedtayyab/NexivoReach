@@ -287,6 +287,25 @@ def listing_is_keepable_for_hunt(
     return True
 
 
+def serp_listing_score(
+    domain: str,
+    title: str,
+    snippet: str,
+    hunt_place: str,
+    categories: Optional[List[str]] = None,
+) -> str:
+    """HOT = save without a homepage. WARM = open the site. NOISE = skip."""
+    if looks_like_reference_listing(title, snippet, domain):
+        return "NOISE"
+    if not listing_has_trade_signal(title, snippet, domain, categories):
+        country, _iso = hunt_country(hunt_place)
+        if not hunt_city(hunt_place, country):
+            return "NOISE"
+    if listing_is_keepable_for_hunt(domain, title, snippet, hunt_place, categories):
+        return "HOT"
+    return "WARM"
+
+
 def _enrich_homepage_isolated(website: str) -> Dict[str, Any]:
     """Homepage text + any emails on that page. Contact pages run only after a save."""
     from app.tools.web_search import WebSearchTool
@@ -665,7 +684,7 @@ FUNNEL_KEYS = (
 )
 
 
-FREE_SEARCH_PROVIDERS = {"duckduckgo", "yahoo", "brave", "tavily"}
+FREE_SEARCH_PROVIDERS = {"duckduckgo", "yahoo", "brave", "tavily", "bing", "mojeek"}
 
 
 def _empty_funnel() -> Dict[str, int]:
@@ -704,6 +723,7 @@ SOURCE_LABELS = {
     "places": "Google Places",
     "companies_house": "Companies House",
     "osm": "OpenStreetMap",
+    "wikidata": "Wikidata",
     "stockists": "brand stockists",
     "exhibitors": "trade-show exhibitors",
 }
@@ -788,7 +808,7 @@ def backup_query_ladder(query: str, place: str) -> List[str]:
     Dropping the place sent Yahoo to US giants already in the sheet.
     Dropping "weightlifting" or "fitness" turns the search into cargo straps.
     """
-    from app.agents.geo import _VOLUME_ROLE_SHORT
+    from app.agents.geo import _VOLUME_ROLE_SHORT, parse_discovery_query
 
     def _clean(text: str) -> str:
         return re.sub(r"\s+", " ", (text or "").strip())
@@ -816,6 +836,17 @@ def backup_query_ladder(query: str, place: str) -> List[str]:
             short = _VOLUME_ROLE_SHORT.get(words[-1].lower(), "")
             if short and short != words[-1].lower():
                 _add(" ".join(words[:-1] + [short]))
+    product, role, _parsed = parse_discovery_query(full)
+    product = _clean(product)
+    role = _clean(role)
+    if product and place_clean:
+        role_bit = f" {role}" if role else ""
+        _add(f'intitle:contact "{product}"{role_bit} {place_clean}')
+        _add(f'intitle:wholesale "{product}" {place_clean}')
+    elif product:
+        role_bit = f" {role}" if role else ""
+        _add(f'intitle:contact "{product}"{role_bit}')
+        _add(f'intitle:wholesale "{product}"')
     return ladder
 
 
@@ -1066,6 +1097,7 @@ async def run_paginated_discovery(
         place = parsed["location"]
     _country_name, hunt_iso = hunt_country(place)
     web.search_region = yahoo_region_for_iso(hunt_iso)
+    web.search_iso = hunt_iso
     del _country_name
 
     intent_specs = _build_intents_from_prompt(user_prompt, place)
@@ -1141,7 +1173,7 @@ async def run_paginated_discovery(
     if settings.SERPER_API_KEY:
         _note(stats, "Google search is on (Serper).")
     else:
-        _note(stats, "No Google key (SERPER_API_KEY). This hunt searches with DuckDuckGo and Yahoo.")
+        _note(stats, "No Google key (SERPER_API_KEY). This hunt searches with Mojeek, Bing, DuckDuckGo and Yahoo.")
     _note(
         stats,
         f"Starting {len(intent_rows)} search(es). Limit {budget.leads_per_run} new leads, {budget.max_pages_per_intent} pages per search.",
@@ -1228,6 +1260,7 @@ async def run_paginated_discovery(
         intent_id: str = "",
         source: str = "search",
         location_seed: str = "",
+        seed_email: str = "",
         site_index: int = 0,
         site_count: int = 0,
     ) -> Optional[Dict[str, Any]]:
@@ -1329,6 +1362,11 @@ async def run_paginated_discovery(
                 email = found["email"]
                 email_status = "email_found"
                 email_source = (found.get("sources") or ["website"])[0]
+                stats.emails_found += 1
+            elif (seed_email or "").strip():
+                email = seed_email.strip()
+                email_status = "email_found"
+                email_source = "osm"
                 stats.emails_found += 1
 
             product, role, _p = __import__(
@@ -1770,6 +1808,7 @@ async def run_paginated_discovery(
                     "intent_id": intent.id or "",
                     "source": source,
                     "location_seed": cand.address or "",
+                    "seed_email": cand.email or "",
                 })
             session.commit()
         return jobs
@@ -2078,6 +2117,7 @@ async def run_paginated_discovery(
         intent_id = intent.id or ""
         _n, intent_iso = hunt_country(intent.location or place)
         web.search_region = yahoo_region_for_iso(intent_iso)
+        web.search_iso = intent_iso
         del _n
 
         page = intent.current_page
@@ -2188,6 +2228,9 @@ async def run_paginated_discovery(
             "brave": "Brave, not Google",
             "tavily": "Tavily, not Google",
             "duckduckgo": "DuckDuckGo, not Google",
+            "yahoo": "Yahoo, not Google",
+            "bing": "Bing, not Google",
+            "mojeek": "Mojeek, not Google",
         }.get(provider, "No search provider")
         if fallback:
             stats.google_requests += 1
@@ -2201,7 +2244,12 @@ async def run_paginated_discovery(
                 continue
             searched = str(report.get("searched_query") or intent.query)
             label = "first results" if ddg_batch <= 1 else f"More results {ddg_batch}"
-            engine_name = {"duckduckgo": "DuckDuckGo", "yahoo": "Yahoo"}.get(provider, provider or "Search")
+            engine_name = {
+                "duckduckgo": "DuckDuckGo",
+                "yahoo": "Yahoo",
+                "bing": "Bing",
+                "mojeek": "Mojeek",
+            }.get(provider, provider or "Search")
             _note(stats, f"{engine_name}, not Google — {label}: {searched}")
             if provider == "yahoo" and not ddg_html_noted:
                 ddg_html_noted = True
@@ -2231,7 +2279,7 @@ async def run_paginated_discovery(
                     state["ladder"] = ladder
                     state["ladder_i"] = index
                     state["active_query"] = ladder[index]
-                    state["fields"] = {"engine": "yahoo", "page": "1"}
+                    state["fields"] = None
                     state["batch"] = 1
                     state["retried"] = False
                     state["exhausted"] = False
@@ -2411,6 +2459,22 @@ async def run_paginated_discovery(
                             _bump_funnel(stats, intent.search_intent, "unique_domains")
                         seen_domains_this_hunt.add(domain)
                         stats.unique_domains = len(seen_domains_this_hunt)
+                    continue
+
+                score = serp_listing_score(
+                    domain,
+                    title,
+                    snippet,
+                    intent.location,
+                    categories=list(profile.categories or []),
+                )
+                if score == "NOISE":
+                    session.add(serp)
+                    _bump_funnel(stats, intent.search_intent, "junk_filtered")
+                    _note(
+                        stats,
+                        f"Skipped “{(title or domain or 'result')[:80]}” — no shop or product signal",
+                    )
                     continue
 
                 sheet_name = classified.get("company_name") or ""
@@ -2628,7 +2692,7 @@ async def run_paginated_discovery(
             index = int(state.get("ladder_i") or 0) + 1
             if index < len(ladder):
                 backup_states[intent_id] = {
-                    "fields": {"engine": "yahoo", "page": "1"},
+                    "fields": None,
                     "batch": 1,
                     "exhausted": False,
                     "active_query": ladder[index],
@@ -2868,6 +2932,7 @@ def _source_step(source: str, plan: Dict[str, Any], query: str, cursor: str, web
         directory_urls_for_plan,
         osm_step,
         places_step,
+        wikidata_step,
     )
     from app.services.buyer_lists import (
         exhibitor_step,
@@ -2923,6 +2988,13 @@ def _source_step(source: str, plan: Dict[str, Any], query: str, cursor: str, web
             country_label=(plan.get("country") or "").title(),
             cursor=cursor,
         )
+    if source == "wikidata":
+        return wikidata_step(
+            product=plan.get("product") or "",
+            iso=plan.get("iso") or "",
+            country_label=(plan.get("country") or "").title(),
+            cursor=cursor,
+        )
     raise ValueError(f"Unknown list source {source}")
 
 
@@ -2942,6 +3014,8 @@ def source_cursor_key(source: str, query: str, plan: Optional[Dict[str, Any]] = 
         return _query_key(f"dir {plan.get('iso')} {plan.get('family')}")
     if source == "osm":
         return _query_key(f"osm {plan.get('iso')} {plan.get('city')} {plan.get('family')}")
+    if source == "wikidata":
+        return _query_key(f"wd {plan.get('iso')} {plan.get('family')}")
     if source == "stockists":
         from app.services.buyer_lists import stockist_brands
 
@@ -2955,7 +3029,7 @@ def source_cursor_key(source: str, query: str, plan: Optional[Dict[str, Any]] = 
 def _source_cursor_worth_retry(row: HuntSourceCursor) -> bool:
     """A finished source that never handed over a company should run again."""
     return row.source in {
-        "companies_house", "directory", "osm", "stockists", "exhibitors",
+        "companies_house", "directory", "osm", "wikidata", "stockists", "exhibitors",
     } and int(row.candidates or 0) == 0
 
 

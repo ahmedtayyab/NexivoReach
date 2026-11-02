@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     GOOGLE_PLACES_MONTHLY_CAP: int = 900
     # OpenStreetMap via the public Overpass API. No key. Retailer, gym and club hunts only.
     OSM_SOURCE_ENABLED: bool = True
+    # Wikidata SPARQL. No key. Distributor/wholesaler hunts — OSM does not map those.
+    WIKIDATA_SOURCE_ENABLED: bool = True
     # Public trade-directory pages (Europages, eSources). No key, never billed.
     DIRECTORY_SOURCE_ENABLED: bool = True
     # Brand stockist / authorised-dealer locators. Independent shops, not the brand.

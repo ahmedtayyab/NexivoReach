@@ -200,6 +200,9 @@ def test_backup_ladder_keeps_the_product_words():
     assert "wraps weightlifting distributors" not in [item.lower() for item in wraps]
     canada = backup_query_ladder("gym knee sleeves wholesale Canada", "Canada")
     assert all(item.endswith("Canada") for item in canada)
+    assert any(item.startswith("intitle:contact") and "Ohio" in item for item in knee)
+    assert any(item.startswith("intitle:wholesale") and "Ohio" in item for item in knee)
+    assert any(item.startswith("intitle:contact") and item.endswith("Canada") for item in canada)
     assert resume_backup_query("straps distributors", hooks) == 0
     assert resume_backup_query(hooks[0], hooks) == 0
     # An old cursor that dropped the country starts the kept-place ladder over.
@@ -287,8 +290,14 @@ def test_backup_uses_yahoo_when_duckduckgo_returns_nothing():
         calls["yahoo_pages"].append(page)
         return [{"title": "RDX", "href": "https://wholesale.rdxsports.com/knee", "body": "wholesale"}]
 
+    def _empty_engine(query, page):
+        del query, page
+        return {"hits": [], "next_form": None, "provider": "none", "error": "", "fallback": True}
+
     tool._duckduckgo_more = _ddg  # type: ignore[method-assign]
     tool._yahoo_hits = _yahoo  # type: ignore[method-assign]
+    tool._mojeek_page = _empty_engine  # type: ignore[method-assign]
+    tool._bing_page = _empty_engine  # type: ignore[method-assign]
     report = tool.search_backup_page("gym knee sleeves distributors Ohio")
     assert report["provider"] == "yahoo"
     assert report["error"] == ""
@@ -314,6 +323,110 @@ def test_yahoo_region_follows_the_hunt_country():
     assert yahoo_region_for_iso("CA") == "ca-en"
     assert yahoo_region_for_iso("US") == "us-en"
     assert yahoo_region_for_iso("") == "us-en"
+
+
+def test_bing_market_follows_the_hunt_country():
+    from app.tools.web_search import bing_mkt_for_iso
+
+    assert bing_mkt_for_iso("CA") == "en-CA"
+    assert bing_mkt_for_iso("GB") == "en-GB"
+    assert bing_mkt_for_iso("AE") == "en-AE"
+    assert bing_mkt_for_iso("") == "en-US"
+
+
+def test_parse_bing_rss_skips_bing_hosts():
+    from app.tools.web_search import parse_bing_rss
+
+    xml = """<?xml version="1.0"?>
+    <rss version="2.0"><channel>
+      <item><title>Gym Shop</title><link>https://gymshop.ca/bands</link>
+        <description>Resistance band wholesale</description></item>
+      <item><title>Bing</title><link>https://www.bing.com/search?q=bands</link>
+        <description>Search</description></item>
+    </channel></rss>"""
+    hits = parse_bing_rss(xml)
+    assert len(hits) == 1
+    assert hits[0]["href"] == "https://gymshop.ca/bands"
+    assert "wholesale" in hits[0]["body"].lower()
+
+
+def test_parse_mojeek_html_and_next_page():
+    from app.tools.web_search import parse_mojeek_html
+
+    html = """
+    <ul>
+      <li><h2><a class="ob" href="https://bandshop.ca/">Band Shop</a></h2>
+          <p class="s">Wholesale resistance bands in Canada</p></li>
+      <li><a class="ob" href="https://www.mojeek.com/search?q=x">Mojeek</a></li>
+      <li><h2><a class="ob" href="https://bandshop.ca/about">Dup host</a></h2></li>
+    </ul>
+    <a class="next" href="/search?q=x&amp;s=10">Next</a>
+    """
+    hits, has_next = parse_mojeek_html(html)
+    assert has_next is True
+    assert [h["href"] for h in hits] == ["https://bandshop.ca/"]
+    assert "wholesale" in hits[0]["body"].lower()
+
+
+def test_first_backup_batch_dedupes_engines_by_host():
+    from app.tools.web_search import WebSearchTool
+
+    tool = WebSearchTool()
+    tool.search_iso = "CA"
+
+    def _page(href):
+        def _inner(query, page):
+            del query, page
+            return {
+                "hits": [{"title": "Shop", "href": href, "body": "wholesale bands"}],
+                "next_form": {"engine": "x", "page": "2"},
+                "provider": "x",
+                "error": "",
+                "fallback": True,
+            }
+        return _inner
+
+    tool._mojeek_page = _page("https://shop.ca/a")  # type: ignore[method-assign]
+    tool._bing_page = _page("https://www.shop.ca/b")  # type: ignore[method-assign]
+    tool._duckduckgo_more = lambda q, form=None: {  # type: ignore[method-assign]
+        "hits": [{"title": "Other", "href": "https://other.ca/", "body": "gym shop"}],
+        "next_form": {"engine": "duckduckgo", "page": "2"},
+        "provider": "duckduckgo",
+        "error": "",
+        "fallback": True,
+    }
+    tool._yahoo_page = _page("https://third.ca/")  # type: ignore[method-assign]
+    report = tool.search_backup_page("resistance bands distributors Canada")
+    hrefs = [h["href"] for h in report["hits"]]
+    assert hrefs == ["https://shop.ca/a", "https://other.ca/", "https://third.ca/"]
+    assert report["next_form"]["engine"] == "mojeek"
+    assert report["next_form"]["page"] == "2"
+
+
+def test_country_serp_without_trade_signal_is_noise():
+    from app.services.paginated_discovery import serp_listing_score
+
+    assert serp_listing_score(
+        "phys.libretexts.org",
+        "9.4: Resistivity and Resistance",
+        "Ohm's law",
+        "Canada",
+        categories=["resistance bands"],
+    ) == "NOISE"
+    assert serp_listing_score(
+        "randomblog.com",
+        "Our story",
+        "Welcome to the site",
+        "Canada",
+        categories=["resistance bands"],
+    ) == "NOISE"
+    assert serp_listing_score(
+        "bandwholesale.ca",
+        "Resistance band wholesale — Canada",
+        "Distributors of gym bands",
+        "Canada",
+        categories=["resistance bands"],
+    ) == "HOT"
 
 
 @pytest.mark.asyncio

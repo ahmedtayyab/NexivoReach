@@ -103,6 +103,7 @@ class BusinessCandidate:
     address: str = ""
     source: str = ""
     ref: str = ""
+    email: str = ""
 
 
 @dataclass
@@ -212,6 +213,8 @@ def source_plan_for_intent(query: str, place: str) -> Dict[str, Any]:
         sources.append("companies_house")
     if settings.OSM_SOURCE_ENABLED and family in ("retail", "gym", "club") and (iso or city):
         sources.append("osm")
+    if settings.WIKIDATA_SOURCE_ENABLED and family == "channel" and iso:
+        sources.append("wikidata")
     if settings.DIRECTORY_SOURCE_ENABLED:
         sources.append("directory")
     return {
@@ -689,6 +692,7 @@ def companies_house_step(
 # so this source makes one call per hunt line and is never on the critical path twice.
 OVERPASS_ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
 )
@@ -718,17 +722,32 @@ OSM_TILE_LIMIT = 80
 
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+PHOTON_URL = "https://photon.komoot.io/api/"
+WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
+WIKIDATA_PAGE = 40
+_OSM_CLOSED = ("disused", "abandoned", "demolished", "razed", "removed", "closed")
 
 
 def geocode_bbox(city: str, iso: str = "", client: Optional[httpx.Client] = None) -> Tuple[float, float, float, float]:
-    """(south, west, north, east) for a city from Nominatim. Zeros when unknown."""
+    """(south, west, north, east) for a city. Nominatim first, Photon if that misses."""
     if not (city or "").strip():
         return (0.0, 0.0, 0.0, 0.0)
+    own = client is None
+    client = client or httpx.Client(timeout=12.0, headers={"User-Agent": USER_AGENT})
+    try:
+        box = _nominatim_bbox(city, iso, client)
+        if any(box):
+            return box
+        return _photon_bbox(city, iso, client)
+    finally:
+        if own:
+            client.close()
+
+
+def _nominatim_bbox(city: str, iso: str, client: httpx.Client) -> Tuple[float, float, float, float]:
     params: Dict[str, Any] = {"q": city, "format": "json", "limit": 1}
     if iso:
         params["countrycodes"] = iso.lower()
-    own = client is None
-    client = client or httpx.Client(timeout=12.0, headers={"User-Agent": USER_AGENT})
     try:
         res = client.get(NOMINATIM_URL, params=params)
         if res.status_code != 200:
@@ -744,9 +763,31 @@ def geocode_bbox(city: str, iso: str = "", client: Optional[httpx.Client] = None
     except Exception as exc:
         log.warning("Nominatim lookup failed for %s: %s", city, exc)
         return (0.0, 0.0, 0.0, 0.0)
-    finally:
-        if own:
-            client.close()
+
+
+def _photon_bbox(city: str, iso: str, client: httpx.Client) -> Tuple[float, float, float, float]:
+    q = f"{city}, {iso}" if iso else city
+    try:
+        res = client.get(PHOTON_URL, params={"q": q, "limit": 1})
+        if res.status_code != 200:
+            return (0.0, 0.0, 0.0, 0.0)
+        feats = (res.json() or {}).get("features") or []
+        if not feats:
+            return (0.0, 0.0, 0.0, 0.0)
+        props = feats[0].get("properties") or {}
+        ext = props.get("extent") or []
+        if len(ext) == 4:
+            west, north, east, south = (float(v) for v in ext)
+            if south < north and west < east:
+                return (south, west, north, east)
+        coords = (feats[0].get("geometry") or {}).get("coordinates") or []
+        if len(coords) >= 2:
+            lon, lat = float(coords[0]), float(coords[1])
+            return (lat - 0.09, lon - 0.14, lat + 0.09, lon + 0.14)
+        return (0.0, 0.0, 0.0, 0.0)
+    except Exception as exc:
+        log.warning("Photon lookup failed for %s: %s", city, exc)
+        return (0.0, 0.0, 0.0, 0.0)
 
 
 def osm_grid_cells(
@@ -817,6 +858,8 @@ def parse_overpass_payload(payload: Dict[str, Any], country_label: str = "") -> 
     seen_hosts: set[str] = set()
     for el in payload.get("elements") or []:
         tags = el.get("tags") or {}
+        if _osm_is_closed(tags):
+            continue
         website = str(tags.get("website") or tags.get("contact:website") or "").strip()
         name = _clean(str(tags.get("name") or ""))
         if not website or not name:
@@ -834,14 +877,24 @@ def parse_overpass_payload(payload: Dict[str, Any], country_label: str = "") -> 
         address = ", ".join(p for p in parts if p)
         if country_label and country_label.lower() not in address.lower():
             address = f"{address}, {country_label}" if address else country_label
+        email = str(tags.get("email") or tags.get("contact:email") or "").strip()
         out.append(BusinessCandidate(
             name=name,
             website=website,
             address=address,
             source="osm",
             ref=f"{el.get('type', '')}/{el.get('id', '')}",
+            email=email,
         ))
     return out
+
+
+def _osm_is_closed(tags: Dict[str, Any]) -> bool:
+    if any(str(tags.get(k) or "").lower() in {"yes", "true", "1"} for k in _OSM_CLOSED):
+        return True
+    if any(k.startswith("disused:") or k.startswith("abandoned:") for k in tags):
+        return True
+    return False
 
 
 def osm_step(
@@ -933,6 +986,141 @@ def osm_step(
                 last_error = str(exc)
                 continue
         step.note = f"OpenStreetMap did not answer: {last_error}"
+        return step
+    finally:
+        if own:
+            client.close()
+
+
+# ---------------------------------------------------------------------------
+# Wikidata SPARQL (no key). Channel hunts — OSM does not map wholesalers.
+# ---------------------------------------------------------------------------
+
+_WIKIDATA_TRADE = (
+    "distributor", "wholesale", "wholesaler", "importer", "import",
+    "supplier", "dealer", "sport", "sports", "fitness", "gym", "boxing",
+)
+
+
+def _wikidata_tokens(product: str) -> List[str]:
+    out: List[str] = []
+    for word in re.findall(r"[A-Za-z]{4,}", product or ""):
+        low = word.lower()
+        if low not in out:
+            out.append(low)
+    for word in _WIKIDATA_TRADE:
+        if word not in out:
+            out.append(word)
+    return out[:12]
+
+
+def wikidata_sparql(product: str, iso: str, offset: int = 0, limit: int = WIKIDATA_PAGE) -> str:
+    """Official website (P856) + country ISO (P297). No P31/P279* — that times out."""
+    iso2 = (iso or "").strip().upper()
+    if not iso2:
+        return ""
+    pattern = "|".join(re.escape(t) for t in _wikidata_tokens(product))
+    off = max(0, int(offset or 0))
+    lim = max(1, min(int(limit or WIKIDATA_PAGE), 80))
+    return (
+        "SELECT DISTINCT ?item ?itemLabel ?website WHERE {\n"
+        "  ?item wdt:P856 ?website .\n"
+        "  ?item wdt:P17 ?country .\n"
+        f'  ?country wdt:P297 "{iso2}" .\n'
+        "  ?item rdfs:label ?itemLabel .\n"
+        '  FILTER(LANG(?itemLabel) = "en")\n'
+        f'  FILTER(REGEX(?itemLabel, "({pattern})", "i"))\n'
+        "}\n"
+        f"LIMIT {lim} OFFSET {off}"
+    )
+
+
+def parse_wikidata_bindings(payload: Dict[str, Any], country_label: str = "") -> List[BusinessCandidate]:
+    bindings = ((payload or {}).get("results") or {}).get("bindings") or []
+    out: List[BusinessCandidate] = []
+    seen: set[str] = set()
+    for row in bindings:
+        website = str(((row.get("website") or {}).get("value") or "")).strip()
+        name = _clean(str(((row.get("itemLabel") or {}).get("value") or "")))
+        if not website or not name:
+            continue
+        if not website.lower().startswith("http"):
+            website = f"https://{website}"
+        host = _host(website)
+        if not host or host in seen or "wikidata.org" in host:
+            continue
+        seen.add(host)
+        item = str(((row.get("item") or {}).get("value") or "")).strip()
+        out.append(BusinessCandidate(
+            name=name,
+            website=website,
+            address=country_label,
+            source="wikidata",
+            ref=item.rsplit("/", 1)[-1] if item else "",
+        ))
+    return out
+
+
+def _wikidata_offset(cursor: str) -> int:
+    if not (cursor or "").strip():
+        return 0
+    try:
+        data = json.loads(cursor)
+        if isinstance(data, dict):
+            return max(0, int(data.get("o") or 0))
+    except Exception:
+        pass
+    try:
+        return max(0, int(cursor))
+    except (TypeError, ValueError):
+        return 0
+
+
+def wikidata_step(
+    *,
+    product: str,
+    iso: str,
+    country_label: str,
+    cursor: str = "",
+    client: Optional[httpx.Client] = None,
+) -> SourceStep:
+    """One SPARQL page of companies in this country whose English label matches the trade."""
+    step = SourceStep(source="wikidata", query=f"{product} in {iso}", exhausted=True)
+    ql = wikidata_sparql(product, iso, _wikidata_offset(cursor))
+    if not ql:
+        step.note = "Wikidata: no country on this hunt line."
+        return step
+    own = client is None
+    client = client or httpx.Client(timeout=20.0, headers={"User-Agent": USER_AGENT})
+    try:
+        res = client.get(
+            WIKIDATA_SPARQL_URL,
+            params={"query": ql, "format": "json"},
+            headers={"Accept": "application/sparql-results+json", "User-Agent": USER_AGENT},
+        )
+        step.requests_used = 1
+        if res.status_code in (429, 502, 503, 504):
+            step.note = f"Wikidata answered {res.status_code}."
+            return step
+        if res.status_code >= 400:
+            step.note = f"Wikidata answered {res.status_code}."
+            return step
+        cands = parse_wikidata_bindings(res.json(), country_label)
+        offset = _wikidata_offset(cursor)
+        if len(cands) >= WIKIDATA_PAGE:
+            step.next_cursor = json.dumps({"o": offset + len(cands)})
+            step.exhausted = False
+        else:
+            step.next_cursor = ""
+            step.exhausted = True
+        step.candidates = cands
+        step.note = (
+            f"Wikidata listed {len(cands)} companies with websites in "
+            f"{country_label or iso}."
+        )
+        return step
+    except Exception as exc:
+        step.note = f"Wikidata did not answer: {exc}"
         return step
     finally:
         if own:

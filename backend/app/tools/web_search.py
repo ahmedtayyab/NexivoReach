@@ -10,7 +10,7 @@ import time
 import xml.etree.ElementTree as ET
 from functools import partial
 from typing import List, Dict, Any, Optional
-from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -54,6 +54,42 @@ YAHOO_REGION_BY_ISO = {
 
 def yahoo_region_for_iso(iso: str) -> str:
     return YAHOO_REGION_BY_ISO.get((iso or "").strip().upper(), "us-en")
+
+
+# Bing RSS `mkt` for the hunt country. Yahoo/DDG are the same Bing index;
+# Mojeek is independent. Market must follow the hunt, not the server IP.
+BING_MKT_BY_ISO = {
+    "GB": "en-GB", "CA": "en-CA", "US": "en-US", "AU": "en-AU",
+    "NZ": "en-NZ", "IE": "en-IE", "IN": "en-IN", "SG": "en-SG",
+    "AE": "en-AE", "SA": "en-SA", "PK": "en-PK", "ZA": "en-ZA",
+    "DE": "de-DE", "FR": "fr-FR", "ES": "es-ES", "IT": "it-IT",
+    "MX": "es-MX", "BR": "pt-BR", "NL": "nl-NL", "TR": "tr-TR",
+    "MY": "en-MY", "QA": "en-QA",
+}
+
+
+def bing_mkt_for_iso(iso: str) -> str:
+    return BING_MKT_BY_ISO.get((iso or "").strip().upper(), "en-US")
+
+
+def _hit_host(url: str) -> str:
+    host = (urlparse(url or "").hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def dedupe_search_hits(hits: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Keep the first listing per registrable host."""
+    seen: set[str] = set()
+    out: List[Dict[str, str]] = []
+    for hit in hits:
+        host = _hit_host(str(hit.get("href") or ""))
+        if not host or host in seen:
+            continue
+        seen.add(host)
+        out.append(hit)
+    return out
 
 
 async def run_search(func, *args, timeout: float = 16.0):
@@ -388,6 +424,60 @@ def duckduckgo_result_url(href: str) -> str:
     return raw
 
 
+def parse_bing_rss(xml_text: str) -> List[Dict[str, str]]:
+    """Organic links from Bing's public RSS search feed. No API key."""
+    text = (xml_text or "").lstrip("\ufeff").strip()
+    if not text or (not text.startswith("<?xml") and "<rss" not in text[:200].lower()):
+        return []
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return []
+    items = root.findall(".//{*}item") or root.findall("channel/item")
+    hits: List[Dict[str, str]] = []
+    for item in items:
+        link_el = item.find("{*}link")
+        title_el = item.find("{*}title")
+        desc_el = item.find("{*}description")
+        href = (link_el.text or "").strip() if link_el is not None else ""
+        title = (title_el.text or "").strip() if title_el is not None else ""
+        raw_desc = (desc_el.text or "") if desc_el is not None else ""
+        body = BeautifulSoup(raw_desc, "html.parser").get_text(" ", strip=True)
+        if not href.startswith("http") or "bing.com" in (urlparse(href).hostname or ""):
+            continue
+        hits.append({"title": title, "href": href, "body": body})
+    return hits
+
+
+def parse_mojeek_html(html: str) -> tuple:
+    """(hits, has_next_page) from a Mojeek HTML results page."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    hits: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for a in soup.select("a.ob[href]"):
+        href = str(a.get("href") or "").strip()
+        if not href.startswith("http") or "mojeek.com" in href:
+            continue
+        host = _hit_host(href)
+        if not host or host in seen:
+            continue
+        seen.add(host)
+        container = a.find_parent("li") or a.find_parent("div") or a.parent
+        title_tag = None
+        snippet_tag = None
+        if container:
+            title_tag = container.select_one("h2") or container.select_one("h3")
+            snippet_tag = container.select_one("p.s") or container.select_one("p")
+        title = (title_tag.get_text(" ", strip=True) if title_tag else a.get_text(" ", strip=True))
+        body = snippet_tag.get_text(" ", strip=True) if snippet_tag else ""
+        hits.append({"title": title, "href": href, "body": body})
+    has_next = bool(
+        soup.select_one("a.next[href]")
+        or soup.select_one('a[rel="next"][href]')
+    )
+    return hits, has_next
+
+
 def parse_duckduckgo_html(html: str) -> Dict[str, Any]:
     """Results on this page, plus the More results form that loads the next batch."""
     soup = BeautifulSoup(html or "", "html.parser")
@@ -453,6 +543,7 @@ class WebSearchTool:
         self.catalog_truncated: bool = False
         # Free-search region (Yahoo / DuckDuckGo). Hunt sets this from the country.
         self.search_region: str = "us-en"
+        self.search_iso: str = ""
 
     def name(self) -> str:
         return "WebSearchTool"
@@ -727,22 +818,81 @@ class WebSearchTool:
         page: int = 1,
         form: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        """Free search when Google credits are gone. DuckDuckGo first, then Yahoo."""
+        """Free search when Google credits are gone.
+
+        Mojeek crawls its own index. Bing RSS and Yahoo/DuckDuckGo are the
+        same Bing family — they still help for volume, but they are not a
+        second Google. Later batches follow the saved engine form.
+        """
         del page  # Later batches use the saved form, not a Google page number.
-        if _is_yahoo_form(form):
+        form = form or None
+        engine = str((form or {}).get("engine") or "")
+        if engine == "bing":
+            return self._bing_page(query, int((form or {}).get("page") or 1))
+        if engine == "mojeek":
+            return self._mojeek_page(query, int((form or {}).get("page") or 1))
+        if _is_yahoo_form(form) or engine == "yahoo":
             return self._yahoo_page(query, int((form or {}).get("page") or 1))
-        if getattr(self, "_ddg_down", False):
-            return self._yahoo_page(query, 1)
-        report = self._duckduckgo_more(query, form=form)
-        if report.get("hits") or (form and form.get("vqd")):
-            return report
-        self._ddg_down = True
-        yahoo = self._yahoo_page(query, 1)
-        if yahoo.get("hits"):
-            return yahoo
-        if report.get("error"):
-            return report
-        return yahoo
+        if form and (form.get("vqd") or engine == "duckduckgo"):
+            return self._duckduckgo_more(query, form=form)
+        if getattr(self, "_ddg_down", False) and engine in ("", "duckduckgo"):
+            # Keep the old Yahoo-only resume when DDG already failed this process.
+            return self._first_backup_batch(query, skip_ddg=True)
+        return self._first_backup_batch(query, skip_ddg=False)
+
+    def _first_backup_batch(self, query: str, *, skip_ddg: bool) -> Dict[str, Any]:
+        merged: List[Dict[str, str]] = []
+        next_form: Optional[Dict[str, str]] = None
+        provider = "yahoo"
+        last_error = ""
+        deadline = time.monotonic() + 14.0
+
+        def _have() -> int:
+            return len(dedupe_search_hits(merged))
+
+        def _take(name: str, report: Optional[Dict[str, Any]]) -> None:
+            nonlocal next_form, provider, last_error
+            if not report:
+                return
+            hits = list(report.get("hits") or [])
+            merged.extend(hits)
+            if report.get("error"):
+                last_error = str(report.get("error") or "")
+            if hits and report.get("next_form") and not next_form:
+                nf = dict(report.get("next_form") or {})
+                nf["engine"] = name
+                next_form = nf
+                provider = str(report.get("provider") or name)
+
+        _take("mojeek", self._mojeek_page(query, 1))
+        if _have() < 8 and time.monotonic() < deadline:
+            _take("bing", self._bing_page(query, 1))
+        if not skip_ddg and _have() < 8 and time.monotonic() < deadline:
+            ddg = self._duckduckgo_more(query, form=None)
+            if not ddg.get("hits"):
+                self._ddg_down = True
+            _take("duckduckgo", ddg)
+        elif skip_ddg:
+            self._ddg_down = True
+        if _have() < 8 and time.monotonic() < deadline:
+            _take("yahoo", self._yahoo_page(query, 1))
+
+        hits = dedupe_search_hits(merged)
+        if hits:
+            return {
+                "hits": hits[:20],
+                "next_form": next_form,
+                "provider": provider,
+                "error": "",
+                "fallback": True,
+            }
+        return {
+            "hits": [],
+            "next_form": None,
+            "provider": provider,
+            "error": last_error,
+            "fallback": True,
+        }
 
     def _duckduckgo_more(self, query: str, form: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         # A saved More results button has to be posted. The first batch uses the
@@ -878,6 +1028,102 @@ class WebSearchTool:
             return hits
         finally:
             _YAHOO_GATE.release()
+
+    def _bing_page(self, query: str, page: int) -> Dict[str, Any]:
+        page = max(1, int(page or 1))
+        try:
+            hits = self._bing_rss_hits(query, page)
+        except Exception as exc:
+            log.warning("Bing RSS search failed page %s: %s", page, exc)
+            keep = {"engine": "bing", "page": str(page)} if page > 1 else None
+            return {
+                "hits": [],
+                "next_form": keep,
+                "provider": "bing",
+                "error": f"Bing search failed: {exc}",
+                "fallback": True,
+            }
+        if not hits:
+            return {
+                "hits": [],
+                "next_form": None,
+                "provider": "bing",
+                "error": "",
+                "fallback": True,
+            }
+        return {
+            "hits": hits,
+            "next_form": {"engine": "bing", "page": str(page + 1)},
+            "provider": "bing",
+            "error": "",
+            "fallback": True,
+        }
+
+    def _bing_rss_hits(self, query: str, page: int) -> List[Dict[str, str]]:
+        first = 1 + (max(1, int(page or 1)) - 1) * 10
+        mkt = bing_mkt_for_iso(getattr(self, "search_iso", "") or "")
+        url = (
+            "https://www.bing.com/search"
+            f"?q={quote_plus(query)}"
+            f"&format=RSS&first={first}&count=10"
+            f"&mkt={mkt}&setlang={mkt}"
+        )
+        lang = mkt.split("-")[0] if mkt else "en"
+        with httpx.Client(timeout=6.0, follow_redirects=True, headers={
+            **HEADERS,
+            "Accept": "application/rss+xml, application/xml, text/xml, */*",
+            "Accept-Language": f"{lang},{mkt};q=0.9,en;q=0.8",
+        }) as client:
+            res = client.get(url)
+            res.raise_for_status()
+            return parse_bing_rss(res.text)
+
+    def _mojeek_page(self, query: str, page: int) -> Dict[str, Any]:
+        page = max(1, int(page or 1))
+        try:
+            hits, has_next = self._mojeek_hits(query, page)
+        except Exception as exc:
+            log.warning("Mojeek search failed page %s: %s", page, exc)
+            keep = {"engine": "mojeek", "page": str(page)} if page > 1 else None
+            return {
+                "hits": [],
+                "next_form": keep,
+                "provider": "mojeek",
+                "error": f"Mojeek search failed: {exc}",
+                "fallback": True,
+            }
+        if not hits:
+            return {
+                "hits": [],
+                "next_form": None,
+                "provider": "mojeek",
+                "error": "",
+                "fallback": True,
+            }
+        return {
+            "hits": hits,
+            "next_form": {"engine": "mojeek", "page": str(page + 1)} if has_next else None,
+            "provider": "mojeek",
+            "error": "",
+            "fallback": True,
+        }
+
+    def _mojeek_hits(self, query: str, page: int) -> tuple:
+        start = (max(1, int(page or 1)) - 1) * 10
+        url = (
+            "https://www.mojeek.com/search"
+            f"?q={quote_plus(query)}&lang=en&hp=0&arc=none"
+        )
+        if start:
+            url += f"&s={start}"
+        with httpx.Client(timeout=6.0, follow_redirects=True, headers={
+            **HEADERS,
+            "Referer": "https://www.mojeek.com/",
+            "Sec-Fetch-Site": "same-origin",
+        }) as client:
+            res = client.get(url)
+            res.raise_for_status()
+        return parse_mojeek_html(res.text)
 
     def _serper(self, query: str, page: int = 1, num: int = 20) -> List[Dict[str, str]]:
         if not settings.SERPER_API_KEY:
