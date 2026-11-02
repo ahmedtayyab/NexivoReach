@@ -53,6 +53,7 @@ from app.services.app_settings import (
 )
 from app.services.business_sources import (
     BusinessCandidate,
+    hunt_city,
     hunt_country,
     places_budget_allows,
     places_requests_this_month,
@@ -125,11 +126,39 @@ def listing_conflicts_hunt_country(
     place = (hunt_place or "").strip()
     if not place:
         return False
-    _, iso = hunt_country(place)
+    country, iso = hunt_country(place)
     other = domain_country_iso(domain)
     if iso and other and other != iso:
         return True
-    return location_conflicts_with_targets(f"{title} {snippet}", [place])
+    # "Toronto, Canada" is two targets. Passing the raw string made "Toronto"
+    # look like a foreign country because it is a Canada geo-hint alias.
+    parts = [p.strip() for p in re.split(r"[,/|]", place) if p.strip()]
+    if country and country not in {p.lower() for p in parts}:
+        parts.append(country)
+    return location_conflicts_with_targets(f"{title} {snippet}", parts or [place])
+
+
+def listing_mentions_hunt_city(
+    title: str,
+    snippet: str,
+    domain: str,
+    hunt_place: str,
+) -> bool:
+    """Country-only hunts need no city proof. City hunts need the city on the listing."""
+    from app.agents.geo import place_aliases
+
+    country, _iso = hunt_country(hunt_place)
+    city = hunt_city(hunt_place, country)
+    if not city:
+        return True
+    blob = f"{title} {snippet} {domain}".lower()
+    for alias in place_aliases(city):
+        token = (alias or "").strip().lower()
+        if len(token) < 3:
+            continue
+        if token in blob:
+            return True
+    return False
 
 
 def listing_is_keepable_for_hunt(
@@ -143,6 +172,10 @@ def listing_is_keepable_for_hunt(
 
     Most shops in the UAE, Mexico, Singapore, etc. use .com and never say the
     country in a 160-character snippet. Requiring a ccTLD dropped those hunts.
+
+    A city hunt is stricter: the listing itself must name the city. A country
+    SERP hit with no city evidence is not keepable — the homepage and location
+    check have to confirm it.
     """
     from app.agents.geo import looks_unrelated_business
 
@@ -151,6 +184,8 @@ def listing_is_keepable_for_hunt(
     if listing_conflicts_hunt_country(domain, title, snippet, hunt_place):
         return False
     if looks_unrelated_business(f"{title}\n{snippet}", list(categories or [])):
+        return False
+    if not listing_mentions_hunt_city(title, snippet, domain, hunt_place):
         return False
     return True
 
@@ -212,6 +247,13 @@ def _enrich_contacts_isolated(
                 email = hunter["email"]
                 source = "hunter"
                 contacts = list(hunter.get("contacts") or []) + contacts
+        if email:
+            from app.tools.contact_finder import domain_mx_nxdomain
+
+            mail_host = email.partition("@")[2]
+            if mail_host and domain_mx_nxdomain(mail_host):
+                email = ""
+                source = ""
         return {
             "email": email,
             "phone": phone,
@@ -1241,27 +1283,38 @@ async def run_paginated_discovery(
             )
 
             # Email only after we know this is a lead, so junk sites do not eat the clock.
-            if decision == "QUALIFIED_BUSINESS" and not email:
-                _note(stats, f"Looking up email for {domain}")
-                extra = await call_with_deadline(
-                    asyncio.to_thread(
-                        _enrich_contacts_isolated,
-                        website,
-                        found.get("html") or "",
-                        site_text,
-                        [found.get("email")] if found.get("email") else [],
-                        phone,
-                    ),
-                    8.0,
-                    {},
-                ) or {}
-                if extra.get("email"):
-                    email = extra["email"]
-                    email_status = "email_found"
-                    email_source = extra.get("source") or "site"
-                    contacts = list(extra.get("contacts") or []) or contacts
-                    phone = extra.get("phone") or phone
-                    stats.emails_found += 1
+            if decision == "QUALIFIED_BUSINESS":
+                if email:
+                    from app.tools.contact_finder import domain_mx_nxdomain
+
+                    mail_host = email.partition("@")[2]
+                    if mail_host and domain_mx_nxdomain(mail_host):
+                        email = ""
+                        email_status = "email_not_found"
+                        email_source = ""
+                        if stats.emails_found > 0:
+                            stats.emails_found -= 1
+                if not email:
+                    _note(stats, f"Looking up email for {domain}")
+                    extra = await call_with_deadline(
+                        asyncio.to_thread(
+                            _enrich_contacts_isolated,
+                            website,
+                            found.get("html") or "",
+                            site_text,
+                            [found.get("email")] if found.get("email") else [],
+                            phone,
+                        ),
+                        8.0,
+                        {},
+                    ) or {}
+                    if extra.get("email"):
+                        email = extra["email"]
+                        email_status = "email_found"
+                        email_source = extra.get("source") or "site"
+                        contacts = list(extra.get("contacts") or []) or contacts
+                        phone = extra.get("phone") or phone
+                        stats.emails_found += 1
 
             with _db() as session:
                 mem = session.exec(
@@ -1776,9 +1829,11 @@ async def run_paginated_discovery(
 
             _note(stats, f"{SOURCE_LABELS.get(src, src).capitalize()}: {row.query}")
             try:
+                # OSM tiles need the Overpass round-trip; 28s cut them off mid-query.
+                source_deadline = 50.0 if src == "osm" else 28.0
                 step = await call_with_deadline(
                     asyncio.to_thread(_source_step, src, plan, row.query, cursor_row.cursor, web),
-                    28.0,
+                    source_deadline,
                     None,
                 )
             except Exception as exc:
@@ -2769,6 +2824,7 @@ def _source_step(source: str, plan: Dict[str, Any], query: str, cursor: str, web
             city=plan.get("city") or "",
             iso=plan.get("iso") or "",
             country_label=(plan.get("country") or "").title(),
+            cursor=cursor,
         )
     raise ValueError(f"Unknown list source {source}")
 

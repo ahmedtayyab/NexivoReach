@@ -1,7 +1,10 @@
 from app.tools.contact_finder import (
+    _MX_NXDOMAIN_CACHE,
     _clean_email,
     _extract_from_html,
     _rank_scored,
+    domain_mx_nxdomain,
+    first_deliverable_email,
     PAGE_CONTACT,
     PAGE_HOME,
     SRC_MAILTO,
@@ -14,6 +17,38 @@ def test_clean_email_filters_junk():
     assert _clean_email("foo@example.com") is None
     assert _clean_email("logo@cdn.com.png") is None
     assert _clean_email("noreply@brand.com") is None
+    assert _clean_email("youremail@brand.com") is None
+    assert _clean_email("sales@yourdomain.com") is None
+    assert _clean_email("test@brand.com") is None
+
+
+def test_nxdomain_mail_is_skipped(monkeypatch):
+    _MX_NXDOMAIN_CACHE.clear()
+    monkeypatch.setattr(
+        "app.tools.contact_finder.domain_mx_nxdomain",
+        lambda d, client=None: d == "no-such-mx.invalid",
+    )
+    assert first_deliverable_email(
+        ["info@no-such-mx.invalid", "sales@brand.com"]
+    ) == "sales@brand.com"
+    assert first_deliverable_email(["a@no-such-mx.invalid"]) == ""
+
+
+def test_domain_mx_nxdomain_reads_google_dns():
+    class _Res:
+        status_code = 200
+
+        def json(self):
+            return {"Status": 3}
+
+    class _Client:
+        def get(self, url, params=None):
+            assert params["name"] == "no-such.invalid"
+            return _Res()
+
+    _MX_NXDOMAIN_CACHE.clear()
+    assert domain_mx_nxdomain("no-such.invalid", client=_Client()) is True
+    assert _MX_NXDOMAIN_CACHE["no-such.invalid"] is True
 
 
 def test_extract_mailto_and_contact_links():

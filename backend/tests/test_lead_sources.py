@@ -234,6 +234,7 @@ def test_contact_finder_reads_email_from_homepage_html_without_crawling():
             use_browser=False,
             max_extra_pages=0,
             use_social=False,
+            check_mx=False,
         )
     )
     assert found["email"].lower() == "sales@localgymshop.co.uk"
@@ -294,6 +295,8 @@ def test_hunt_country_and_city():
     assert bs.hunt_country("Texas") == ("united states", "US")
     assert bs.hunt_city("Manchester, United Kingdom", "united kingdom") == "Manchester"
     assert bs.hunt_city("United Kingdom", "united kingdom") == ""
+    assert bs.hunt_city("Toronto, Canada", "canada") == "Toronto"
+    assert bs.hunt_city("Dubai, United Arab Emirates", "united arab emirates") == "Dubai"
 
 
 def test_source_plan_uses_companies_house_only_for_uk(monkeypatch):
@@ -575,13 +578,93 @@ def test_overpass_query_for_a_city_and_a_country():
     city = bs.overpass_query("retail", bbox=(53.69, -1.80, 53.95, -1.29))
     assert '["shop"="sports"]["website"](53.69000,-1.80000,53.95000,-1.29000);' in city
     assert '["shop"="fitness"]["contact:website"]' in city
+    assert '["shop"="bicycle"]' in city
+    assert '["shop"="martial_arts"]' in city
     assert "area[" not in city
     assert "~" not in city  # exact values keep Overpass on its index
     country = bs.overpass_query("gym", iso="GB")
     assert 'area["ISO3166-1"="GB"]["admin_level"="2"]' in country
     assert '["leisure"="fitness_centre"]["website"](area.a);' in country
+    assert '["amenity"="gym"]' in country
     assert bs.overpass_query("channel", bbox=(53.69, -1.80, 53.95, -1.29)) == ""
     assert bs.overpass_query("retail") == ""
+
+
+def test_osm_grid_splits_a_city_bbox():
+    cells = bs.osm_grid_cells((53.69, -1.80, 53.95, -1.29), n=3)
+    assert len(cells) == 9
+    assert cells[0][0] == pytest.approx(53.69)
+    assert cells[0][1] == pytest.approx(-1.80)
+    assert cells[-1][2] == pytest.approx(53.95)
+    assert cells[-1][3] == pytest.approx(-1.29)
+    assert cells[0][2] < cells[-1][2]
+
+
+def test_osm_city_step_uses_one_tile_and_keeps_cursor():
+    class _Client:
+        def __init__(self):
+            self.posted = []
+
+        def get(self, *args, **kwargs):
+            class _Res:
+                status_code = 200
+
+                def json(self):
+                    return [{"boundingbox": ["53.69", "53.95", "-1.80", "-1.29"]}]
+
+            return _Res()
+
+        def post(self, url, data=None):
+            self.posted.append((data or {}).get("data") or "")
+
+            class _Res:
+                status_code = 200
+
+                def json(self):
+                    return {"elements": []}
+
+            return _Res()
+
+    client = _Client()
+    step = bs.osm_step(
+        family="retail",
+        city="Leeds",
+        iso="GB",
+        country_label="United Kingdom",
+        cursor="",
+        client=client,
+    )
+    assert step.exhausted is False
+    cur = json.loads(step.next_cursor)
+    assert cur["i"] == 1
+    assert cur["n"] == 3
+    assert len(cur["bbox"]) == 4
+    assert client.posted
+    assert "53.95000,-1.29000" not in client.posted[0]
+    assert "(53.69000,-1.80000," in client.posted[0]
+
+    last = bs.osm_step(
+        family="retail",
+        city="Leeds",
+        iso="GB",
+        country_label="United Kingdom",
+        cursor=json.dumps({"i": 8, "n": 3, "bbox": [53.69, -1.80, 53.95, -1.29]}),
+        client=client,
+    )
+    assert last.exhausted is True
+    assert last.next_cursor == ""
+
+    country = bs.osm_step(
+        family="gym",
+        city="",
+        iso="GB",
+        country_label="United Kingdom",
+        cursor="",
+        client=client,
+    )
+    assert country.exhausted is True
+    assert country.next_cursor == ""
+    assert 'area["ISO3166-1"="GB"]' in client.posted[-1]
 
 
 def test_overpass_payload_to_candidates():

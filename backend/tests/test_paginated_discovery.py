@@ -110,6 +110,34 @@ def test_geo_targeted_dotcom_listing_is_keepable_in_a_new_country():
     )
 
 
+def test_city_hunt_is_not_keepable_from_country_serp_alone():
+    from app.services.paginated_discovery import listing_is_keepable_for_hunt
+
+    # Country SERP keepable must not stand in for a city. Homepage + verify run.
+    assert not listing_is_keepable_for_hunt(
+        "randomshop.com",
+        "Wholesale lifting gear",
+        "Gym equipment for sale",
+        "Toronto, Canada",
+        categories=["knee sleeves"],
+    )
+    assert listing_is_keepable_for_hunt(
+        "torontogymgear.com",
+        "Toronto Gym Gear",
+        "Wholesale lifting gear",
+        "Toronto, Canada",
+        categories=["knee sleeves"],
+    )
+    # Country-only hunts still keep a .com that never names the country.
+    assert listing_is_keepable_for_hunt(
+        "dubaigymgear.com",
+        "Gym Gear — knee sleeves",
+        "Wholesale lifting gear",
+        "United Arab Emirates",
+        categories=["knee sleeves"],
+    )
+
+
 def test_backup_ladder_keeps_the_product_words():
     from app.services.paginated_discovery import backup_query_ladder, resume_backup_query
 

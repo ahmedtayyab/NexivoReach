@@ -44,10 +44,15 @@ JUNK_EMAIL_LOCAL = (
     "example", "email", "domain", "sentry", "wixpress", "webpack",
     "noreply", "no-reply", "donotreply", "do-not-reply", "mailer-daemon",
     "postmaster", "abuse", "webmaster",
+    "youremail", "your-email", "your.name", "yourname", "firstname",
+    "lastname", "first.last", "username", "placeholder", "sample",
+    "emailaddress", "dummy", "test", "testing",
 )
 JUNK_EMAIL_DOMAINS = (
-    "example.com", "email.com", "domain.com", "yoursite.com",
-    "sentry.io", "wixpress.com", "cloudflare.com", "schema.org",
+    "example.com", "example.org", "example.net", "email.com", "domain.com",
+    "yoursite.com", "yourdomain.com", "yourdomain.net", "testdomain.com",
+    "placeholder.com", "company.com", "sentry.io", "wixpress.com",
+    "cloudflare.com", "schema.org",
     "google.com", "googleapis.com", "gstatic.com",
     "facebook.com", "instagram.com", "twitter.com", "linkedin.com",
     "github.com", "gravatar.com", "wix.com", "squarespace.com",
@@ -251,6 +256,63 @@ def _clean_email(raw: str) -> Optional[str]:
     if tld in ("js", "css", "map", "json", "xml", "learn", "test"):
         return None
     return email
+
+
+_MX_NXDOMAIN_CACHE: Dict[str, bool] = {}
+_DNS_GOOGLE = "https://dns.google/resolve"
+# RFC 1035 RCODE 3
+_NXDOMAIN = 3
+
+
+def domain_mx_nxdomain(domain: str, client: Optional[httpx.Client] = None) -> bool:
+    """True when public DNS says this mail domain does not exist.
+
+    Empty MX with a live A record is still deliverable (RFC 5321). Only NXDOMAIN
+    is dropped. Lookup failures keep the address — a DNS blip is not proof.
+    """
+    host = (domain or "").strip().lower().rstrip(".")
+    if not host:
+        return False
+    cached = _MX_NXDOMAIN_CACHE.get(host)
+    if cached is not None:
+        return cached
+    own = client is None
+    client = client or httpx.Client(timeout=4.0)
+    try:
+        res = client.get(_DNS_GOOGLE, params={"name": host, "type": "MX"})
+        data = res.json() if res.status_code == 200 else {}
+        nx = int(data.get("Status") or 0) == _NXDOMAIN
+        _MX_NXDOMAIN_CACHE[host] = nx
+        return nx
+    except Exception:
+        return False
+    finally:
+        if own:
+            client.close()
+
+
+def filter_deliverable_emails(
+    emails: List[str],
+    client: Optional[httpx.Client] = None,
+) -> List[str]:
+    """Keep addresses whose mail domain is not NXDOMAIN, in rank order."""
+    out: List[str] = []
+    for email in emails:
+        addr = (email or "").strip()
+        if not addr or "@" not in addr:
+            continue
+        host = addr.partition("@")[2]
+        if host and not domain_mx_nxdomain(host, client=client):
+            out.append(addr)
+    return out
+
+
+def first_deliverable_email(
+    emails: List[str],
+    client: Optional[httpx.Client] = None,
+) -> str:
+    kept = filter_deliverable_emails(emails, client=client)
+    return kept[0] if kept else ""
 
 
 def _local_pref(email: str) -> int:
@@ -854,6 +916,7 @@ async def discover_contacts(
     use_browser: bool = True,
     max_extra_pages: Optional[int] = None,
     use_social: bool = True,
+    check_mx: bool = True,
 ) -> Dict[str, Any]:
     """
     Return public contacts found on the site.
@@ -1054,8 +1117,9 @@ async def discover_contacts(
                             if p not in phones:
                                 phones.append(p)
 
-    # Facebook / social pass when the company site still has no email
-    emails_so_far = _rank_scored(all_hits, site_domain)
+    # Facebook / social pass when the company site still has no deliverable email
+    ranked = _rank_scored(all_hits, site_domain)
+    emails_so_far = filter_deliverable_emails(ranked) if check_mx else ranked
     if use_social and not emails_so_far and social_urls:
         fb = next(
             (
@@ -1102,6 +1166,8 @@ async def discover_contacts(
             pass
 
     emails = _rank_scored(all_hits, site_domain)
+    if check_mx:
+        emails = filter_deliverable_emails(emails)
     for e in emails[:5]:
         contacts.append({
             "type": "email",

@@ -131,8 +131,22 @@ def has_local_office_presence(text: str, places: List[str]) -> bool:
     return False
 
 
+# Country nicknames/abbreviations. Cities listed on COUNTRY_ALIASES (Toronto, Dubai)
+# are not countries — they are how a country hunt still matches those words.
+_COUNTRY_NICKNAMES = frozenset({
+    "usa", "u.s.", "u.s.a.", "america",
+    "uk", "britain", "england", "scotland", "wales",
+    "uae",
+    "saudi", "ksa",
+    "deutschland",
+    "holland",
+    "nz",
+    "prc",
+})
+
+
 def _is_country_place(place: str) -> bool:
-    """True for country names/aliases, not for a US state or city."""
+    """True for country names/nicknames, not for a US state or city."""
     low = (place or "").strip().lower()
     if not low:
         return False
@@ -143,10 +157,7 @@ def _is_country_place(place: str) -> bool:
             return False
     if low in COUNTRY_ALIASES:
         return True
-    for aliases in COUNTRY_ALIASES.values():
-        if low in aliases:
-            return True
-    return False
+    return low in _COUNTRY_NICKNAMES
 
 
 def _locality_places(places: List[str]) -> List[str]:

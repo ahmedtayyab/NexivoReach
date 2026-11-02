@@ -695,10 +695,26 @@ OVERPASS_ENDPOINTS = (
 OVERPASS_TIMEOUT_SEC = 60.0
 # Exact tag values only. A regex filter makes Overpass scan every object in the area.
 _OSM_SELECTORS: Dict[str, Tuple[str, ...]] = {
-    "retail": ('["shop"="sports"]', '["shop"="fitness"]', '["shop"="outdoor"]'),
-    "gym": ('["leisure"="fitness_centre"]',),
-    "club": ('["club"="sport"]', '["leisure"="sports_centre"]'),
+    "retail": (
+        '["shop"="sports"]',
+        '["shop"="fitness"]',
+        '["shop"="outdoor"]',
+        '["shop"="bicycle"]',
+        '["shop"="martial_arts"]',
+        '["shop"="hunting"]',
+    ),
+    "gym": (
+        '["leisure"="fitness_centre"]',
+        '["leisure"="sports_centre"]',
+        '["amenity"="gym"]',
+    ),
+    "club": (
+        '["club"="sport"]',
+        '["leisure"="sports_centre"]',
+    ),
 }
+OSM_GRID_N = 3
+OSM_TILE_LIMIT = 80
 
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
@@ -731,6 +747,38 @@ def geocode_bbox(city: str, iso: str = "", client: Optional[httpx.Client] = None
     finally:
         if own:
             client.close()
+
+
+def osm_grid_cells(
+    bbox: Tuple[float, float, float, float],
+    n: int = OSM_GRID_N,
+) -> List[Tuple[float, float, float, float]]:
+    """Split a Nominatim city box into n×n tiles (south, west, north, east)."""
+    south, west, north, east = bbox
+    if n <= 1 or not any(bbox) or south >= north or west >= east:
+        return [bbox]
+    dlat = (north - south) / n
+    dlon = (east - west) / n
+    cells: List[Tuple[float, float, float, float]] = []
+    for i in range(n):
+        for j in range(n):
+            cells.append((
+                south + i * dlat,
+                west + j * dlon,
+                south + (i + 1) * dlat,
+                west + (j + 1) * dlon,
+            ))
+    return cells
+
+
+def _osm_cursor_payload(raw: str) -> Dict[str, Any]:
+    try:
+        data = json.loads(raw or "")
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
 
 
 def overpass_query(
@@ -802,20 +850,58 @@ def osm_step(
     city: str,
     iso: str,
     country_label: str,
+    cursor: str = "",
     client: Optional[httpx.Client] = None,
 ) -> SourceStep:
-    """One Overpass query. The result is the whole list, so the step is final."""
+    """One Overpass query. City hunts walk an n×n bbox grid via HuntSourceCursor."""
     step = SourceStep(source="osm", query=f"{family} in {city or iso}", exhausted=True)
     own = client is None
     client = client or httpx.Client(timeout=OVERPASS_TIMEOUT_SEC, headers={"User-Agent": USER_AGENT})
     try:
-        bbox = geocode_bbox(city, iso, client=client) if city else (0.0, 0.0, 0.0, 0.0)
-        if city and not any(bbox):
-            step.note = f"OpenStreetMap could not place “{city}” on the map."
-            return step
-        ql = overpass_query(family, bbox=bbox, iso=iso)
+        payload = _osm_cursor_payload(cursor)
+        tile_index = 0
+        tile_count = 1
+        place_label = city or country_label or iso
+        if city:
+            bbox_raw = payload.get("bbox")
+            if isinstance(bbox_raw, list) and len(bbox_raw) == 4:
+                try:
+                    bbox = tuple(float(v) for v in bbox_raw)
+                except (TypeError, ValueError):
+                    bbox = (0.0, 0.0, 0.0, 0.0)
+            else:
+                bbox = geocode_bbox(city, iso, client=client)
+            if not any(bbox):
+                step.note = f"OpenStreetMap could not place “{city}” on the map."
+                return step
+            n = int(payload.get("n") or OSM_GRID_N)
+            n = max(1, min(n, 4))
+            tiles = osm_grid_cells(bbox, n)
+            tile_count = len(tiles)
+            try:
+                tile_index = int(payload.get("i") or 0)
+            except (TypeError, ValueError):
+                tile_index = 0
+            if tile_index < 0 or tile_index >= tile_count:
+                step.note = "OpenStreetMap city grid finished."
+                return step
+            ql = overpass_query(family, bbox=tiles[tile_index], iso="", limit=OSM_TILE_LIMIT)
+            next_i = tile_index + 1
+            if next_i < tile_count:
+                pending_cursor = json.dumps({"i": next_i, "n": n, "bbox": list(bbox)})
+                pending_exhausted = False
+            else:
+                pending_cursor = ""
+                pending_exhausted = True
+        else:
+            bbox = (0.0, 0.0, 0.0, 0.0)
+            ql = overpass_query(family, bbox=bbox, iso=iso)
+            pending_cursor = ""
+            pending_exhausted = True
         if not ql:
             step.note = "OpenStreetMap: nothing to ask for this kind of buyer."
+            step.exhausted = True
+            step.next_cursor = ""
             return step
         last_error = ""
         for endpoint in OVERPASS_ENDPOINTS:
@@ -830,7 +916,18 @@ def osm_step(
                     continue
                 cands = parse_overpass_payload(res.json(), country_label)
                 step.candidates = cands
-                step.note = f"OpenStreetMap listed {len(cands)} mapped {family} businesses with websites in {city or country_label or iso}."
+                step.next_cursor = pending_cursor
+                step.exhausted = pending_exhausted
+                if city:
+                    step.note = (
+                        f"OpenStreetMap tile {tile_index + 1}/{tile_count} listed "
+                        f"{len(cands)} mapped {family} businesses with websites in {place_label}."
+                    )
+                else:
+                    step.note = (
+                        f"OpenStreetMap listed {len(cands)} mapped {family} businesses "
+                        f"with websites in {place_label}."
+                    )
                 return step
             except Exception as exc:
                 last_error = str(exc)
