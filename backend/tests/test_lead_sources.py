@@ -95,6 +95,7 @@ def test_directory_page_is_recognised():
     page = classify_page("https://www.europages.co.uk/companies/united%20kingdom/wholesaler/sport.html", "Sport Wholesaler UK")
     assert page["page_kind"] == "directory"
     assert page["burn_domain"] is False
+    assert classify_page("https://www.yelp.ca/biz/some-gym-toronto", "Gym")["page_kind"] == "directory"
 
 
 def test_company_homepage_is_a_company():
@@ -932,6 +933,9 @@ def test_wikidata_sparql_avoids_subclass_walk():
     assert "P856" in ql
     assert "OFFSET 40" in ql
     assert "resistance" in ql.lower() or "bands" in ql.lower()
+    assert "wholesale" in ql.lower() or "distributor" in ql.lower()
+    assert "fitness" not in ql.lower()
+    assert "sport|" not in ql.lower()
 
 
 def test_wikidata_bindings_to_candidates():
@@ -950,6 +954,10 @@ def test_wikidata_bindings_to_candidates():
                 {
                     "itemLabel": {"value": "Dup"},
                     "website": {"value": "https://www.gymwholesale.ca/about"},
+                },
+                {
+                    "itemLabel": {"value": "Encyclopedia"},
+                    "website": {"value": "https://en.wikipedia.org/wiki/Gym"},
                 },
             ],
         },

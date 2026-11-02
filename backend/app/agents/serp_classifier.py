@@ -61,8 +61,10 @@ GIANT_HOSTS = (
 # Business directories. Companies linked from the page are worth reading; the page itself is not a lead.
 DIRECTORY_HOSTS = (
     "europages.com", "europages.co.uk", "kompass.com", "yell.com",
-    "yelp.com", "yelp.co.uk", "thomasnet.com", "yellowpages.com",
-    "yellowpages.co.uk", "esources.co.uk", "thewholesaler.co.uk", "wholesaledeals.co.uk",
+    "yelp.com", "yelp.co.uk", "yelp.ca", "yelp.com.au",
+    "thomasnet.com", "yellowpages.com", "yellowpages.ca", "yellowpages.com.au",
+    "yellowpages.co.uk", "canpages.ca", "411.ca",
+    "esources.co.uk", "thewholesaler.co.uk", "wholesaledeals.co.uk",
     "cylex-uk.co.uk", "cylex.co.uk", "hotfrog.com", "hotfrog.co.uk", "freeindex.co.uk",
     "scoot.co.uk", "192.com", "manta.com", "bbb.org", "globalsources.com", "tradekey.com",
     "exportersindia.com", "ec21.com", "wlw.de", "wlw.co.uk", "ensun.io", "4imprint.com",

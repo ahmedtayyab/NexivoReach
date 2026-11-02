@@ -189,6 +189,21 @@ def looks_like_reference_listing(title: str, snippet: str, domain: str) -> bool:
     return False
 
 
+def hunt_offer_categories(query: str, profile_categories: Optional[List[str]] = None) -> List[str]:
+    """Product on this hunt line first, then the seller profile categories."""
+    from app.agents.geo import parse_discovery_query
+
+    out: List[str] = []
+    product, _role, _place = parse_discovery_query(query or "")
+    if (product or "").strip():
+        out.append(product.strip())
+    for cat in profile_categories or []:
+        text = (cat or "").strip()
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
 def listing_has_trade_signal(
     title: str,
     snippet: str,
@@ -294,13 +309,9 @@ def serp_listing_score(
     hunt_place: str,
     categories: Optional[List[str]] = None,
 ) -> str:
-    """HOT = save without a homepage. WARM = open the site. NOISE = skip."""
+    """HOT = save without a homepage. WARM = open the site. NOISE = skip the listing."""
     if looks_like_reference_listing(title, snippet, domain):
         return "NOISE"
-    if not listing_has_trade_signal(title, snippet, domain, categories):
-        country, _iso = hunt_country(hunt_place)
-        if not hunt_city(hunt_place, country):
-            return "NOISE"
     if listing_is_keepable_for_hunt(domain, title, snippet, hunt_place, categories):
         return "HOT"
     return "WARM"
@@ -1277,12 +1288,13 @@ async def run_paginated_discovery(
             contacts: List[Dict[str, Any]] = []
             email_status = "email_not_found"
             email_source = ""
-            serp_local = listing_is_keepable_for_hunt(
+            cats = hunt_offer_categories(discovery_query, profile.categories)
+            serp_local = source == "search" and listing_is_keepable_for_hunt(
                 domain,
                 title,
                 snippet,
                 location_hint,
-                categories=list(profile.categories or []),
+                categories=cats,
             )
             found = dict(_EMPTY_ENRICH)
             loc_check: Dict[str, Any] = {
@@ -2466,7 +2478,7 @@ async def run_paginated_discovery(
                     title,
                     snippet,
                     intent.location,
-                    categories=list(profile.categories or []),
+                    categories=hunt_offer_categories(intent.query, profile.categories),
                 )
                 if score == "NOISE":
                     session.add(serp)

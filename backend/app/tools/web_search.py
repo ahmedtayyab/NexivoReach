@@ -170,6 +170,25 @@ HEADERS = {
 }
 
 
+def search_http_get(url: str, *, timeout: float, headers: Optional[Dict[str, str]] = None) -> httpx.Response:
+    """GET a search-engine URL. On Render, relay through the scrape proxy so Bing/Mojeek are not empty."""
+    hdrs = {**HEADERS, **(headers or {})}
+    proxy = (settings.SCRAPE_PROXY_URL or "").strip()
+    token = (settings.SCRAPE_PROXY_TOKEN or "").strip()
+    if proxy:
+        proxy_headers = dict(hdrs)
+        if token:
+            proxy_headers["X-Proxy-Token"] = token
+        with httpx.Client(timeout=timeout, follow_redirects=True, headers=proxy_headers) as client:
+            res = client.get(proxy, params={"url": url})
+            res.raise_for_status()
+            return res
+    with httpx.Client(timeout=timeout, follow_redirects=True, headers=hdrs) as client:
+        res = client.get(url)
+        res.raise_for_status()
+        return res
+
+
 def _registrable_domain(url: str) -> str:
     host = (urlparse(url).hostname or "").lower()
     if host.startswith("www."):
@@ -1069,14 +1088,15 @@ class WebSearchTool:
             f"&mkt={mkt}&setlang={mkt}"
         )
         lang = mkt.split("-")[0] if mkt else "en"
-        with httpx.Client(timeout=6.0, follow_redirects=True, headers={
-            **HEADERS,
-            "Accept": "application/rss+xml, application/xml, text/xml, */*",
-            "Accept-Language": f"{lang},{mkt};q=0.9,en;q=0.8",
-        }) as client:
-            res = client.get(url)
-            res.raise_for_status()
-            return parse_bing_rss(res.text)
+        res = search_http_get(
+            url,
+            timeout=8.0,
+            headers={
+                "Accept": "application/rss+xml, application/xml, text/xml, */*",
+                "Accept-Language": f"{lang},{mkt};q=0.9,en;q=0.8",
+            },
+        )
+        return parse_bing_rss(res.text)
 
     def _mojeek_page(self, query: str, page: int) -> Dict[str, Any]:
         page = max(1, int(page or 1))
@@ -1116,13 +1136,14 @@ class WebSearchTool:
         )
         if start:
             url += f"&s={start}"
-        with httpx.Client(timeout=6.0, follow_redirects=True, headers={
-            **HEADERS,
-            "Referer": "https://www.mojeek.com/",
-            "Sec-Fetch-Site": "same-origin",
-        }) as client:
-            res = client.get(url)
-            res.raise_for_status()
+        res = search_http_get(
+            url,
+            timeout=8.0,
+            headers={
+                "Referer": "https://www.mojeek.com/",
+                "Sec-Fetch-Site": "same-origin",
+            },
+        )
         return parse_mojeek_html(res.text)
 
     def _serper(self, query: str, page: int = 1, num: int = 20) -> List[Dict[str, str]]:

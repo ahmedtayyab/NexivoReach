@@ -325,6 +325,45 @@ def test_yahoo_region_follows_the_hunt_country():
     assert yahoo_region_for_iso("") == "us-en"
 
 
+def test_search_http_get_uses_the_scrape_proxy(monkeypatch):
+    import httpx
+
+    from app.tools import web_search
+
+    monkeypatch.setattr(web_search.settings, "SCRAPE_PROXY_URL", "https://worker.test/")
+    monkeypatch.setattr(web_search.settings, "SCRAPE_PROXY_TOKEN", "tok")
+    seen = {}
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            seen["headers"] = kwargs.get("headers") or {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, params=None):
+            seen["url"] = url
+            seen["params"] = params or {}
+
+            class _Res:
+                text = "<rss></rss>"
+                status_code = 200
+
+                def raise_for_status(self):
+                    return None
+
+            return _Res()
+
+    monkeypatch.setattr(httpx, "Client", _FakeClient)
+    web_search.search_http_get("https://www.mojeek.com/search?q=bands", timeout=6.0)
+    assert seen["url"] == "https://worker.test/"
+    assert seen["params"]["url"] == "https://www.mojeek.com/search?q=bands"
+    assert seen["headers"].get("X-Proxy-Token") == "tok"
+
+
 def test_bing_market_follows_the_hunt_country():
     from app.tools.web_search import bing_mkt_for_iso
 
@@ -403,9 +442,13 @@ def test_first_backup_batch_dedupes_engines_by_host():
     assert report["next_form"]["page"] == "2"
 
 
-def test_country_serp_without_trade_signal_is_noise():
-    from app.services.paginated_discovery import serp_listing_score
+def test_country_serp_skips_textbooks_but_opens_plain_shops():
+    from app.services.paginated_discovery import hunt_offer_categories, serp_listing_score
 
+    assert hunt_offer_categories(
+        "resistance bands distributors Canada",
+        ["knee sleeves"],
+    )[0] == "resistance bands"
     assert serp_listing_score(
         "phys.libretexts.org",
         "9.4: Resistivity and Resistance",
@@ -413,13 +456,14 @@ def test_country_serp_without_trade_signal_is_noise():
         "Canada",
         categories=["resistance bands"],
     ) == "NOISE"
+    # A company result without a shop/product word still gets a homepage, not a skip.
     assert serp_listing_score(
-        "randomblog.com",
-        "Our story",
-        "Welcome to the site",
+        "mapleleafathletics.ca",
+        "Maple Leaf Athletics",
+        "Home",
         "Canada",
         categories=["resistance bands"],
-    ) == "NOISE"
+    ) == "WARM"
     assert serp_listing_score(
         "bandwholesale.ca",
         "Resistance band wholesale — Canada",

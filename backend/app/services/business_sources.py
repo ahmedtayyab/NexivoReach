@@ -998,28 +998,32 @@ def osm_step(
 
 _WIKIDATA_TRADE = (
     "distributor", "wholesale", "wholesaler", "importer", "import",
-    "supplier", "dealer", "sport", "sports", "fitness", "gym", "boxing",
+    "supplier", "dealer",
+)
+_WIKIDATA_SKIP_HOSTS = (
+    "wikipedia.org", "wikimedia.org", "wikidata.org",
+    "facebook.com", "instagram.com", "twitter.com", "x.com", "youtube.com",
+    "linkedin.com", "crunchbase.com",
 )
 
 
-def _wikidata_tokens(product: str) -> List[str]:
+def _wikidata_product_tokens(product: str) -> List[str]:
     out: List[str] = []
-    for word in re.findall(r"[A-Za-z]{4,}", product or ""):
+    for word in re.findall(r"[A-Za-z]{3,}", product or ""):
         low = word.lower()
-        if low not in out:
+        if low not in _WIKIDATA_TRADE and low not in out:
             out.append(low)
-    for word in _WIKIDATA_TRADE:
-        if word not in out:
-            out.append(word)
-    return out[:12]
+    return out[:8]
 
 
 def wikidata_sparql(product: str, iso: str, offset: int = 0, limit: int = WIKIDATA_PAGE) -> str:
     """Official website (P856) + country ISO (P297). No P31/P279* — that times out."""
     iso2 = (iso or "").strip().upper()
-    if not iso2:
+    tokens = _wikidata_product_tokens(product)
+    if not iso2 or not tokens:
         return ""
-    pattern = "|".join(re.escape(t) for t in _wikidata_tokens(product))
+    prod = "|".join(re.escape(t) for t in tokens)
+    trade = "|".join(re.escape(t) for t in _WIKIDATA_TRADE)
     off = max(0, int(offset or 0))
     lim = max(1, min(int(limit or WIKIDATA_PAGE), 80))
     return (
@@ -1029,7 +1033,8 @@ def wikidata_sparql(product: str, iso: str, offset: int = 0, limit: int = WIKIDA
         f'  ?country wdt:P297 "{iso2}" .\n'
         "  ?item rdfs:label ?itemLabel .\n"
         '  FILTER(LANG(?itemLabel) = "en")\n'
-        f'  FILTER(REGEX(?itemLabel, "({pattern})", "i"))\n'
+        f'  FILTER(REGEX(?itemLabel, "({prod})", "i"))\n'
+        f'  FILTER(REGEX(?itemLabel, "({trade})", "i"))\n'
         "}\n"
         f"LIMIT {lim} OFFSET {off}"
     )
@@ -1047,7 +1052,7 @@ def parse_wikidata_bindings(payload: Dict[str, Any], country_label: str = "") ->
         if not website.lower().startswith("http"):
             website = f"https://{website}"
         host = _host(website)
-        if not host or host in seen or "wikidata.org" in host:
+        if not host or host in seen or _host_in(host, _WIKIDATA_SKIP_HOSTS):
             continue
         seen.add(host)
         item = str(((row.get("item") or {}).get("value") or "")).strip()
