@@ -83,6 +83,7 @@ def heuristic_relevance(
     snippet: str,
     site_text: str,
     categories: Optional[List[str]] = None,
+    category_terms: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Cheap fallback when no LLM is configured — still softer than the old pipeline."""
     graded = website_relevance(
@@ -93,6 +94,7 @@ def heuristic_relevance(
         snippet=snippet,
         site_text=site_text,
         categories=categories,
+        category_terms=category_terms,
     )
     level = graded.get("level") or "irrelevant"
     if level == "irrelevant":
@@ -125,6 +127,16 @@ RETAIL_SIGNAL_RE = re.compile(
     r"checkout|retail\s+price|customer\s+reviews?)\b",
     re.I,
 )
+COMMERCE_SIGNAL_RE = re.compile(
+    r"\b(add\s+to\s+cart|shop\s+now|shop\s+online|our\s+products?|product\s+catalogu?e?|"
+    r"request\s+a\s+quote|get\s+a\s+quote|free\s+shipping|checkout|wholesale|dealers?|"
+    r"distributors?|suppliers?|store\s+hours|visit\s+(?:our|us)|our\s+(?:store|showroom|clinic|gym|facility)|"
+    r"book\s+(?:an?\s+)?(?:appointment|consultation|class|session|trial)|book\s+(?:now|online)|"
+    r"our\s+(?:services|treatments|programs|team|practitioners|therapists)|new\s+patients?|"
+    r"memberships?|"
+    r"in\s+stock|order\s+online|buy\s+online)\b",
+    re.I,
+)
 CHANNEL_BUYERS = {"distributor", "distributors", "wholesaler", "wholesalers", "importer", "importers", "dealer", "dealers"}
 
 
@@ -146,12 +158,19 @@ def website_relevance(
     snippet: str,
     site_text: str,
     categories: Optional[List[str]] = None,
+    category_terms: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Stage-2 relevance after website inspection.
     Levels: high | medium | low | irrelevant
     Email is NOT part of this decision.
+
+    `category_terms` are the words a buyer of this kind uses on its site
+    (physiotherapy, martial arts…). A business that never names the exact
+    product still counts when its site is plainly a shop, clinic or supplier
+    in that category.
     """
+    terms = [t for t in (category_terms or []) if t]
     cats = list(categories or [])
     if product and product not in cats:
         cats = [product, *cats]
@@ -174,7 +193,7 @@ def website_relevance(
         "distributor", "wholesaler", "importer", "dealer",
     }
 
-    if looks_unrelated_business(blob, cats):
+    if looks_unrelated_business(blob, cats, terms):
         return {
             "level": "irrelevant",
             "relevant": False,
@@ -233,6 +252,20 @@ def website_relevance(
             "reason": "Wholesale or distributor language, with a product from this hunt on the page.",
             "evidence": "B2B role and a category word.",
         }
+    if terms and (site_text or "").strip():
+        from app.services.intent_expansion import category_term_hits
+
+        hits = category_term_hits(blob, terms)
+        commerce = b2b or retail or bool(COMMERCE_SIGNAL_RE.search(blob))
+        if (len(hits) >= 2 and commerce) or len(hits) >= 4:
+            return {
+                "level": "medium" if b2b else "low",
+                "relevant": True,
+                "confidence": 0.62 if b2b else 0.5,
+                "reason": f"Business in the buyer category ({', '.join(hits[:3])}).",
+                "evidence": f"Category terms: {', '.join(hits[:5])}.",
+                "tier": "category",
+            }
     if not (site_text or "").strip():
         # Nothing was read from the site. Not a lead yet, and not ruled out either.
         return {
@@ -258,6 +291,7 @@ def serp_triage(
     *,
     categories: Optional[List[str]] = None,
     buyers: Optional[List[str]] = None,
+    category_terms: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Trust Google organic results. Only drop clearly wrong industries.
@@ -274,7 +308,7 @@ def serp_triage(
 
     blob = f"{name}\n{title}\n{snippet}"
     # Hard rejects only — keyword "smarts" were not beating Google and still let junk through
-    if looks_unrelated_business(blob, cats):
+    if looks_unrelated_business(blob, cats, list(category_terms or [])):
         return {
             "verdict": "reject",
             "confidence": 0.9,

@@ -21,6 +21,8 @@ log = logging.getLogger(__name__)
 
 # A search that ignores its own timeout must not fill the process thread pool.
 _SEARCH_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=3, thread_name_prefix="web-search")
+# Engines of one batch run side by side here, not in _SEARCH_POOL (that would deadlock).
+_LANE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=12, thread_name_prefix="search-lane")
 _YAHOO_GATE = threading.BoundedSemaphore(1)
 SERPER_WAIT_SEC = 16.0
 
@@ -81,6 +83,61 @@ def bing_next_page_form(page: int) -> Optional[Dict[str, str]]:
     if page >= BING_MAX_PAGES:
         return None
     return {"engine": "bing", "page": str(page + 1)}
+
+
+_TOPIC_STOP = {
+    "the", "and", "for", "with", "from", "near", "best", "top", "online", "buy",
+    "shop", "shops", "store", "stores", "company", "companies", "business",
+    "businesses", "distributor", "distributors", "wholesaler", "wholesalers",
+    "wholesale", "importer", "importers", "supplier", "suppliers", "dealer",
+    "dealers", "retailer", "retailers", "stockist", "stockists", "contact",
+    "email", "list", "directory", "local", "custom", "bulk", "price", "prices",
+}
+
+
+def query_topic_stems(query: str) -> List[str]:
+    """Product / category stems of a search query. Place and trade-role words are
+    left out so a page about the country alone does not count as on topic."""
+    try:
+        from app.services.business_sources import COUNTRY_ISO
+
+        places = {w for name in COUNTRY_ISO for w in re.findall(r"[a-z]{3,}", name.lower())}
+    except Exception:
+        places = set()
+    text = re.sub(r"(^|\s)-\S+", " ", (query or "").lower())
+    stems: List[str] = []
+    for word in re.findall(r"[a-z0-9]{3,}", text):
+        if word in _TOPIC_STOP or word in places:
+            continue
+        stem = word[:-1] if word.endswith("s") and len(word) > 4 else word
+        if stem not in stems:
+            stems.append(stem)
+    return stems
+
+
+def keep_on_topic_hits(
+    hits: List[Dict[str, str]],
+    query: str,
+    *,
+    min_share: float = 0.3,
+) -> List[Dict[str, str]]:
+    """Bing RSS and Mojeek answer a weak query with unrelated pages (forums, Windows
+    help). If few hits mention the query's product words, drop the whole page."""
+    if not hits:
+        return []
+    stems = query_topic_stems(query)
+    if not stems:
+        return hits
+    keep: List[Dict[str, str]] = []
+    for hit in hits:
+        blob = " ".join(
+            str(hit.get(k) or "") for k in ("title", "body", "href")
+        ).lower()
+        if any(stem in blob for stem in stems):
+            keep.append(hit)
+    if len(keep) < max(1, int(len(hits) * min_share)):
+        return []
+    return keep
 
 
 def _hit_host(url: str) -> str:
@@ -865,62 +922,158 @@ class WebSearchTool:
             return self._yahoo_page(query, int((form or {}).get("page") or 1))
         if form and (form.get("vqd") or engine == "duckduckgo"):
             return self._duckduckgo_more(query, form=form)
-        if getattr(self, "_ddg_down", False) and engine in ("", "duckduckgo"):
-            # Keep the old Yahoo-only resume when DDG already failed this process.
-            return self._first_backup_batch(query, skip_ddg=True)
-        return self._first_backup_batch(query, skip_ddg=False)
+        return self._multi_batch(query, form if engine == "multi" else None)
 
-    def _first_backup_batch(self, query: str, *, skip_ddg: bool) -> Dict[str, Any]:
-        merged: List[Dict[str, str]] = []
-        next_form: Optional[Dict[str, str]] = None
-        provider = "yahoo"
-        last_error = ""
-        deadline = time.monotonic() + 14.0
+    # --- Multi-engine batch -------------------------------------------------
+    # One free engine returns ~7-10 hits a page and often a blank page. Four
+    # engines side by side, each walking its own pages, give a batch of 20-40
+    # distinct sites and keep going after one engine runs dry.
 
-        def _have() -> int:
-            return len(dedupe_search_hits(merged))
+    _MULTI_ORDER = ("yahoo", "duckduckgo", "mojeek", "bing")
+    _YAHOO_MAX_PAGES = 10
+    _LANE_BLOCK_SECONDS = 300.0
 
-        def _take(name: str, report: Optional[Dict[str, Any]]) -> None:
-            nonlocal next_form, provider, last_error
-            if not report:
-                return
-            hits = list(report.get("hits") or [])
-            merged.extend(hits)
-            if report.get("error"):
-                last_error = str(report.get("error") or "")
-            if hits and report.get("next_form") and not next_form:
-                nf = dict(report.get("next_form") or {})
-                nf["engine"] = name
-                next_form = nf
-                provider = str(report.get("provider") or name)
+    def _lane_blocked(self, name: str) -> bool:
+        until = (getattr(self, "_lane_block_until", None) or {}).get(name, 0.0)
+        return time.monotonic() < until
 
-        _take("mojeek", self._mojeek_page(query, 1))
-        if _have() < 8 and time.monotonic() < deadline:
-            _take("bing", self._bing_page(query, 1))
-        if not skip_ddg and _have() < 8 and time.monotonic() < deadline:
-            ddg = self._duckduckgo_more(query, form=None)
-            if not ddg.get("hits"):
-                self._ddg_down = True
-            _take("duckduckgo", ddg)
-        elif skip_ddg:
+    def _lane_result(self, name: str, hits: List[Dict[str, str]]) -> None:
+        strikes = getattr(self, "_lane_strikes", None)
+        if strikes is None:
+            strikes = self._lane_strikes = {}
+        blocks = getattr(self, "_lane_block_until", None)
+        if blocks is None:
+            blocks = self._lane_block_until = {}
+        if hits:
+            strikes[name] = 0
+            return
+        strikes[name] = strikes.get(name, 0) + 1
+        if strikes[name] >= 4:
+            blocks[name] = time.monotonic() + self._LANE_BLOCK_SECONDS
+            strikes[name] = 0
+
+    def _lane_yahoo(self, query: str, page: int) -> Dict[str, Any]:
+        # Yahoo answers some pages blank and the next one full; skip up to 2 blanks.
+        used = page
+        busy = False
+        for current in range(page, min(page + 3, self._YAHOO_MAX_PAGES + 1)):
+            used = current
+            try:
+                rows = self._yahoo_hits(query, current)
+            except Exception as exc:
+                rows = []
+                if "still answering" in str(exc):
+                    busy = True
+                    break
+            if rows:
+                return {"hits": rows, "next": used + 1, "dead": used >= self._YAHOO_MAX_PAGES}
+        return {"hits": [], "next": page if busy else used + 1, "dead": not busy}
+
+    def _lane_duckduckgo(self, query: str) -> Dict[str, Any]:
+        report = self._duckduckgo_more(query, form=None)
+        hits = list(report.get("hits") or [])
+        if not hits:
             self._ddg_down = True
-        if _have() < 8 and time.monotonic() < deadline:
-            _take("yahoo", self._yahoo_page(query, 1))
+        return {"hits": hits, "next": 0, "dead": True}
+
+    def _lane_mojeek(self, query: str, page: int) -> Dict[str, Any]:
+        report = self._mojeek_page(query, page)
+        hits = list(report.get("hits") or [])
+        more = bool(report.get("next_form")) and bool(hits)
+        return {"hits": hits, "next": page + 1, "dead": not more or page >= 6}
+
+    def _lane_bing(self, query: str, page: int) -> Dict[str, Any]:
+        report = self._bing_page(query, page)
+        hits = list(report.get("hits") or [])
+        more = bool(report.get("next_form")) and bool(hits)
+        return {"hits": hits, "next": page + 1, "dead": not more}
+
+    def _multi_batch(self, query: str, form: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        state = dict(form or {})
+        first = not form
+        dead = {d for d in str(state.get("dead") or "").split(",") if d}
+
+        def _page(key: str) -> int:
+            try:
+                return max(1, int(state.get(key) or 1))
+            except (TypeError, ValueError):
+                return 1
+
+        jobs: Dict[str, Any] = {}
+        if "yahoo" not in dead:
+            jobs["yahoo"] = partial(self._lane_yahoo, query, _page("y"))
+        if first and not getattr(self, "_ddg_down", False):
+            jobs["duckduckgo"] = partial(self._lane_duckduckgo, query)
+        if "mojeek" not in dead and not self._lane_blocked("mojeek"):
+            jobs["mojeek"] = partial(self._lane_mojeek, query, _page("m"))
+        if "bing" not in dead and not self._lane_blocked("bing"):
+            jobs["bing"] = partial(self._lane_bing, query, _page("b"))
+
+        futures = {name: _LANE_POOL.submit(fn) for name, fn in jobs.items()}
+        concurrent.futures.wait(list(futures.values()), timeout=16.0)
+
+        results: Dict[str, Dict[str, Any]] = {}
+        error = ""
+        for name, fut in futures.items():
+            if not fut.done():
+                results[name] = {"hits": [], "next": None, "dead": False}
+                continue
+            try:
+                results[name] = fut.result()
+            except Exception as exc:  # a lane must never take the batch down
+                error = f"{name} search failed: {exc}"
+                results[name] = {"hits": [], "next": None, "dead": True}
+
+        merged: List[Dict[str, str]] = []
+        counts: List[str] = []
+        best_name, best_count = "yahoo", 0
+        for name in self._MULTI_ORDER:
+            res = results.get(name)
+            if not res:
+                continue
+            hits = list(res.get("hits") or [])
+            if name in ("mojeek", "bing"):
+                self._lane_result(name, hits)
+            merged.extend(hits)
+            if hits:
+                counts.append(f"{name} {len(hits)}")
+                if len(hits) > best_count:
+                    best_name, best_count = name, len(hits)
+
+        key_by_lane = {"yahoo": "y", "mojeek": "m", "bing": "b"}
+        next_state: Dict[str, str] = {"engine": "multi"}
+        for name, key in key_by_lane.items():
+            res = results.get(name)
+            if res is None:
+                if name not in dead:
+                    next_state[key] = state.get(key) or "1"
+                continue
+            if res.get("dead"):
+                dead.add(name)
+            elif res.get("next"):
+                next_state[key] = str(res["next"])
+            else:
+                next_state[key] = state.get(key) or "1"
+        dead.add("duckduckgo")
+        next_state["dead"] = ",".join(sorted(dead))
+        alive = [n for n in key_by_lane if n not in dead and not self._lane_blocked(n)]
+        next_form = next_state if alive else None
 
         hits = dedupe_search_hits(merged)
-        if hits:
+        if not hits:
             return {
-                "hits": hits[:20],
+                "hits": [],
                 "next_form": next_form,
-                "provider": provider,
-                "error": "",
+                "provider": best_name,
+                "error": error,
                 "fallback": True,
             }
         return {
-            "hits": [],
-            "next_form": None,
-            "provider": provider,
-            "error": last_error,
+            "hits": hits[:40],
+            "next_form": next_form,
+            "provider": best_name,
+            "engines": " + ".join(counts),
+            "error": "",
             "fallback": True,
         }
 
@@ -1062,7 +1215,7 @@ class WebSearchTool:
     def _bing_page(self, query: str, page: int) -> Dict[str, Any]:
         page = max(1, int(page or 1))
         try:
-            hits = self._bing_rss_hits(query, page)
+            hits = keep_on_topic_hits(self._bing_rss_hits(query, page), query)
         except Exception as exc:
             log.warning("Bing RSS search failed page %s: %s", page, exc)
             keep = {"engine": "bing", "page": str(page)} if page > 1 else None
@@ -1113,6 +1266,7 @@ class WebSearchTool:
         page = max(1, int(page or 1))
         try:
             hits, has_next = self._mojeek_hits(query, page)
+            hits = keep_on_topic_hits(hits, query)
         except Exception as exc:
             log.warning("Mojeek search failed page %s: %s", page, exc)
             keep = {"engine": "mojeek", "page": str(page)} if page > 1 else None

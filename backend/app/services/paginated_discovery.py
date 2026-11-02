@@ -371,20 +371,30 @@ def serp_listing_score(
     snippet: str,
     hunt_place: str,
     categories: Optional[List[str]] = None,
+    category_terms: Optional[List[str]] = None,
 ) -> str:
-    """HOT = save without a homepage. WARM = open the site. NOISE = skip the listing."""
+    """HOT = save without a homepage. WARM = open the site. NOISE = skip the listing.
+
+    `category_terms` are words of the buyer category (physiotherapy, martial arts…).
+    A listing that uses them is opened (WARM) even when it never names the exact
+    product, because most buyers do not.
+    """
     from app.agents.geo import looks_unrelated_business
+    from app.services.intent_expansion import category_term_hits
 
     cats = list(categories or [])
+    terms = list(category_terms or [])
     if looks_like_reference_listing(title, snippet, domain):
         return "NOISE"
-    if looks_unrelated_business(f"{title}\n{snippet}", cats):
+    if looks_unrelated_business(f"{title}\n{snippet}", cats, terms):
         return "NOISE"
     if listing_is_keepable_for_hunt(domain, title, snippet, hunt_place, categories):
         return "HOT"
     if listing_has_shop_language(title, snippet) or listing_mentions_hunt_product(
         title, snippet, domain, categories
     ):
+        return "WARM"
+    if terms and category_term_hits(f"{title} {snippet} {domain}", terms):
         return "WARM"
     return "NOISE"
 
@@ -727,6 +737,21 @@ def _update_job(job_id: str, **fields: Any) -> None:
 
 
 @dataclass
+class IntentPlan:
+    """What one search row is judged against.
+
+    exact:    a line the user typed. Product-faithful.
+    expanded: a `buyer type x city` line the AI derived from the exact lines.
+              Judged on the hunted product OR the words of the buyer category.
+    """
+    kind: str = "exact"
+    product: str = ""
+    role: str = ""
+    offer_cats: List[str] = field(default_factory=list)
+    terms: List[str] = field(default_factory=list)
+
+
+@dataclass
 class HuntBudget:
     leads_per_run: int = field(default_factory=lambda: hunt_leads_per_run())
     max_pages_per_intent: int = field(default_factory=lambda: hunt_max_pages_per_intent())
@@ -811,6 +836,7 @@ SOURCE_LABELS = {
     "places": "Google Places",
     "companies_house": "Companies House",
     "osm": "OpenStreetMap",
+    "overture": "Overture Maps",
     "wikidata": "Wikidata",
     "stockists": "brand stockists",
     "exhibitors": "trade-show exhibitors",
@@ -1077,6 +1103,21 @@ def _progress_pct(stats: HuntStats, budget: HuntBudget, intents_done: int, inten
     return max(5, min(95, raw))
 
 
+_PHONE_PREFIX_RE = re.compile(r"^[\d\-\+\(\)\.\s]{6,}(?:e-?mail:?)?", re.I)
+
+
+def _clean_scraped_email(email: str) -> str:
+    """'647-352-0322emailinfo@x.com' is a phone number and a label glued onto 'info@x.com'."""
+    text = (email or "").strip()
+    local, at, host = text.partition("@")
+    if not at:
+        return text
+    cleaned = _PHONE_PREFIX_RE.sub("", local)
+    if cleaned != local and len(cleaned) < 2:
+        return ""
+    return f"{cleaned}@{host}"
+
+
 def lead_save_decision(
     *,
     relevant: bool,
@@ -1207,56 +1248,95 @@ async def run_paginated_discovery(
     # Persist intent cursors — resume next_page from workspace HuntSearchCursor
     intent_rows: List[DiscoverySearchIntent] = []
     ddg_resume_by_query: Dict[str, Dict[str, Any]] = {}
-    with _db() as session:
-        for spec in intent_specs:
-            cursor = _load_or_create_cursor(
-                session,
-                business_id=business_id,
-                search_intent=spec["search_intent"],
-                location=spec["location"],
-                query=spec["query"],
+    intent_plans: Dict[str, IntentPlan] = {}
+    expanded_ids: set[str] = set()
+
+    def _cursor_progress(session: Session, spec: Dict[str, str]) -> str:
+        """'fresh' (never searched), 'resume' (partly walked) or 'done'."""
+        cur = session.exec(
+            select(HuntSearchCursor).where(
+                HuntSearchCursor.business_id == business_id,
+                HuntSearchCursor.query_key == _query_key(spec["query"]),
             )
-            start_page = max(1, int(cursor.next_page or 1))
-            ddg_resume_by_query[_query_key(spec["query"])] = _parse_ddg_cursor(
-                getattr(cursor, "ddg_next", "") or ""
-            )
-            # A line marked finished after page 2 never reaches the leads that
-            # are still on Google pages 3–10. Reopen those and keep going.
-            if cursor.status == "exhausted" and start_page <= 3:
-                cursor.status = "active"
-                cursor.updated_at = _now()
-                session.add(cursor)
-            initial_status = "exhausted" if cursor.status == "exhausted" else "active"
-            row = DiscoverySearchIntent(
-                id=f"intent-{uuid4().hex[:12]}",
-                job_id=job_id,
-                business_id=business_id,
-                search_intent=spec["search_intent"],
-                location=spec["location"],
-                query=spec["query"],
-                current_page=start_page,
-                pages_processed=0,
-                results_processed=0,
-                new_domains=0,
-                relevant_leads=0,
-                status=initial_status,
-                stop_reason="previously_exhausted" if initial_status == "exhausted" else "",
-                created_at=_now(),
-                updated_at=_now(),
-            )
-            session.add(row)
-            intent_rows.append(row)
-            intent_leads_this_run[row.id or ""] = 0
-        session.commit()
-        for row in intent_rows:
-            session.refresh(row)
-            intent_leads_this_run[row.id or ""] = 0
-            if row.stop_reason == "previously_exhausted":
-                stats.stop_reasons[row.search_intent] = "previously_exhausted"
-                _note(
-                    stats,
-                    f"Not searching “{row.query}”. It was already finished on an earlier hunt. Start over to run it from page 1.",
+        ).first()
+        if not cur:
+            return "fresh"
+        if cur.status == "exhausted" or _parse_ddg_cursor(getattr(cur, "ddg_next", "") or "").get("exhausted"):
+            return "done"
+        return "resume"
+
+    def _create_intent_rows(
+        specs: List[Dict[str, str]],
+        *,
+        expanded: bool = False,
+        max_rows: int = 0,
+    ) -> List[DiscoverySearchIntent]:
+        made: List[DiscoverySearchIntent] = []
+        with _db() as session:
+            ordered = list(specs)
+            if expanded:
+                # New cities and types first; searches an earlier hunt only half
+                # walked come after, so every run reaches new businesses.
+                states = {spec["query"]: _cursor_progress(session, spec) for spec in ordered}
+                ordered = [s for s in ordered if states[s["query"]] == "fresh"] + [
+                    s for s in ordered if states[s["query"]] == "resume"
+                ]
+            for spec in ordered:
+                if expanded and max_rows and len(made) >= max_rows:
+                    break
+                cursor = _load_or_create_cursor(
+                    session,
+                    business_id=business_id,
+                    search_intent=spec["search_intent"],
+                    location=spec["location"],
+                    query=spec["query"],
                 )
+                start_page = max(1, int(cursor.next_page or 1))
+                ddg_resume_by_query[_query_key(spec["query"])] = _parse_ddg_cursor(
+                    getattr(cursor, "ddg_next", "") or ""
+                )
+                # A line marked finished after page 2 never reaches the leads that
+                # are still on Google pages 3–10. Reopen those and keep going.
+                if not expanded and cursor.status == "exhausted" and start_page <= 3:
+                    cursor.status = "active"
+                    cursor.updated_at = _now()
+                    session.add(cursor)
+                initial_status = "exhausted" if cursor.status == "exhausted" else "active"
+                row = DiscoverySearchIntent(
+                    id=f"intent-{uuid4().hex[:12]}",
+                    job_id=job_id,
+                    business_id=business_id,
+                    search_intent=spec["search_intent"],
+                    location=spec["location"],
+                    query=spec["query"],
+                    current_page=start_page,
+                    pages_processed=0,
+                    results_processed=0,
+                    new_domains=0,
+                    relevant_leads=0,
+                    status=initial_status,
+                    stop_reason="previously_exhausted" if initial_status == "exhausted" else "",
+                    created_at=_now(),
+                    updated_at=_now(),
+                )
+                session.add(row)
+                made.append(row)
+            session.commit()
+            for row in made:
+                session.refresh(row)
+                intent_leads_this_run[row.id or ""] = 0
+                if expanded:
+                    expanded_ids.add(row.id or "")
+                elif row.stop_reason == "previously_exhausted":
+                    stats.stop_reasons[row.search_intent] = "previously_exhausted"
+                    _note(
+                        stats,
+                        f"Not searching “{row.query}”. It was already finished on an earlier hunt. Start over to run it from page 1.",
+                    )
+        return made
+
+    intent_rows.extend(_create_intent_rows(intent_specs))
+    exact_rows = list(intent_rows)
 
     if settings.SERPER_API_KEY:
         _note(stats, "Google search is on (Serper).")
@@ -1269,6 +1349,114 @@ async def run_paginated_discovery(
     for row in intent_rows:
         if row.status != "exhausted":
             _note(stats, f"Will search: {row.query} (starting at Google page {row.current_page})")
+
+    # ---- Intent expansion ------------------------------------------------
+    # The exact lines run first. One niche phrase finds only a handful of sites,
+    # because buyers go by many names, so the AI names the kinds of businesses
+    # that buy this product and the hunt searches those types city by city.
+    from app.agents.geo import parse_discovery_query as _pdq
+    from app.services.business_sources import hunt_city as _hunt_city
+
+    expansion: Optional[Any] = None
+    exp_country_name, _exp_iso = hunt_country(place)
+    exp_city = _hunt_city(place, exp_country_name)
+    exact_products = list(dict.fromkeys(
+        p for spec in intent_specs for p in hunt_offer_categories(spec["query"], [])
+    )) or [c for c in (profile.categories or [])[:3]]
+    first_role = ""
+    for spec in intent_specs:
+        first_role = (_pdq(spec["query"])[1] or "").strip()
+        if first_role:
+            break
+    if settings.HUNT_INTENT_EXPANSION:
+        from app.providers.factory import get_ai_provider
+        from app.services.intent_expansion import expand_hunt_intent
+
+        _note(
+            stats,
+            "Working out what kinds of businesses buy this, so the hunt is not limited to the exact words you typed.",
+        )
+        expand_kwargs: Dict[str, Any] = {
+            "lines": [spec["query"] for spec in intent_specs],
+            "seller_brief": "; ".join(list(profile.categories or [])[:8]),
+            "seller_categories": list(profile.categories or []),
+            "place": place,
+            "country_name": exp_country_name,
+            "city": exp_city,
+            "channel": bool(re.search(
+                r"distribut|wholesal|import|stockist|supplier",
+                " ".join(spec["query"] for spec in intent_specs),
+                re.I,
+            )),
+        }
+        try:
+            expansion = await call_with_deadline(
+                asyncio.to_thread(expand_hunt_intent, get_ai_provider(), **expand_kwargs),
+                40.0,
+                None,
+            )
+        except Exception as exc:
+            log.warning("Intent expansion failed: %s", exc)
+            expansion = None
+        if expansion is None:
+            expansion = expand_hunt_intent(None, **expand_kwargs)
+        if expansion and expansion.usable():
+            how = "the AI model" if expansion.source == "ai" else "built-in rules (no AI answer)"
+            _note(
+                stats,
+                f"Understood the hunt with {how}. Businesses that buy it: "
+                + ", ".join(expansion.buyer_types[:8])
+                + ".",
+            )
+            if expansion.locations:
+                _note(stats, "Cities to cover: " + ", ".join(expansion.locations[:12]) + ".")
+    exp_terms: List[str] = list(expansion.terms) if expansion else []
+    for row in exact_rows:
+        row_product, row_role, _row_place = _pdq(row.query)
+        intent_plans[row.id or ""] = IntentPlan(
+            kind="exact",
+            product=row_product,
+            role=row_role,
+            offer_cats=hunt_offer_categories(row.query, profile.categories),
+            terms=exp_terms,
+        )
+    if expansion and expansion.usable() and exact_rows:
+        from app.services.intent_expansion import build_category_queries
+
+        cap = max(1, int(settings.HUNT_CATEGORY_QUERIES or 48))
+        category_specs = build_category_queries(
+            expansion,
+            country_name=exp_country_name,
+            country_level=not exp_city,
+            max_queries=cap * 3,
+            skip=[spec["query"] for spec in intent_specs],
+        )
+        category_rows = _create_intent_rows(category_specs, expanded=True, max_rows=cap)
+        intent_rows.extend(category_rows)
+        for row in category_rows:
+            intent_plans[row.id or ""] = IntentPlan(
+                kind="expanded",
+                product=exact_products[0] if exact_products else "",
+                role=first_role,
+                offer_cats=list(exact_products),
+                terms=exp_terms,
+            )
+        if category_rows:
+            _note(
+                stats,
+                f"After your exact lines, this hunt searches {len(category_rows)} more "
+                "(business type × city) so it reaches shops, clinics and suppliers that never use your exact words.",
+            )
+
+    def _plan_cats(row: DiscoverySearchIntent) -> List[str]:
+        plan = intent_plans.get(row.id or "")
+        if plan and plan.offer_cats:
+            return list(plan.offer_cats)
+        return hunt_offer_categories(row.query, profile.categories)
+
+    def _plan_terms(row: DiscoverySearchIntent) -> List[str]:
+        plan = intent_plans.get(row.id or "")
+        return list(plan.terms) if plan else []
 
     _update_job(
         job_id,
@@ -1292,6 +1480,7 @@ async def run_paginated_discovery(
     rr_index = 0
     focus_id = ""
     focus_pages = 0
+    lists_run_mid_hunt = False
 
     def _budget_hit(reason_holder: List[str]) -> bool:
         elapsed = time.time() - start
@@ -1365,7 +1554,13 @@ async def run_paginated_discovery(
             contacts: List[Dict[str, Any]] = []
             email_status = "email_not_found"
             email_source = ""
-            cats = hunt_offer_categories(discovery_query, profile.categories)
+            plan = intent_plans.get(intent_id or "")
+            cats = (
+                list(plan.offer_cats)
+                if plan and plan.offer_cats
+                else hunt_offer_categories(discovery_query, profile.categories)
+            )
+            cat_terms = list(plan.terms) if plan else []
             serp_local = source == "search" and listing_is_keepable_for_hunt(
                 domain,
                 title,
@@ -1434,6 +1629,18 @@ async def run_paginated_discovery(
                     phones=[phone] if phone else [],
                     website=website,
                 )
+            if plan and plan.kind == "expanded" and loc_check.get("should_reject"):
+                # This line searched one city. A page that names that city is in it,
+                # even when a partner clinic or a stray state name sits in the footer.
+                search_city = (location_hint or "").split(",")[0].strip().lower()
+                if search_city and search_city in f"{title} {snippet} {site_text}".lower():
+                    loc_check["should_reject"] = False
+                    loc_check["location_verdict"] = "UNCERTAIN"
+            if source in ("osm", "overture") and loc_check.get("should_reject"):
+                # The map placed this business inside the hunted city. A stray
+                # "Oregon" or "Milan" on its page does not move it.
+                loc_check["should_reject"] = False
+                loc_check["location_verdict"] = "UNCERTAIN"
             verdict = str(loc_check.get("location_verdict") or "UNCERTAIN")
             if verdict == "MATCH":
                 _bump_funnel(stats, search_intent, "location_match")
@@ -1448,6 +1655,8 @@ async def run_paginated_discovery(
             email_status = "email_not_found"
             email_source = ""
             if found.get("email"):
+                found["email"] = _clean_scraped_email(found["email"]) or ""
+            if found.get("email"):
                 email = found["email"]
                 email_status = "email_found"
                 email_source = (found.get("sources") or ["website"])[0]
@@ -1455,7 +1664,7 @@ async def run_paginated_discovery(
             elif (seed_email or "").strip():
                 email = seed_email.strip()
                 email_status = "email_found"
-                email_source = "osm"
+                email_source = source if source in ("osm", "overture") else "osm"
                 stats.emails_found += 1
 
             product, role, _p = __import__(
@@ -1463,6 +1672,11 @@ async def run_paginated_discovery(
             ).parse_discovery_query(discovery_query)
             if not product:
                 product = (profile.categories[0] if profile.categories else "") or ""
+            if plan and plan.kind != "exact":
+                # A "physiotherapy supply stores Calgary" line: judge against the
+                # hunted product and the buyer category, not the search phrase.
+                product = plan.product or product
+                role = plan.role or role
             if not role:
                 role = (profile.buyers[0] if profile.buyers else "distributors") or "distributors"
 
@@ -1474,6 +1688,7 @@ async def run_paginated_discovery(
                 snippet=snippet,
                 site_text=site_text,
                 categories=cats,
+                category_terms=cat_terms,
             )
 
             row = {
@@ -1488,7 +1703,7 @@ async def run_paginated_discovery(
                 "phone": phone,
                 "source": "web",
             }
-            triage = serp_triage(row, categories=cats, buyers=profile.buyers)
+            triage = serp_triage(row, categories=cats, buyers=profile.buyers, category_terms=cat_terms)
             level = graded.get("level") or "irrelevant"
             relevant = bool(graded.get("relevant")) and level != "irrelevant"
             page_loaded = bool((site_text or "").strip())
@@ -1499,11 +1714,46 @@ async def run_paginated_discovery(
                 triage=triage,
                 site_text=site_text,
             )
+            blocked_local = False
+            if (
+                not page_loaded
+                and plan
+                and plan.kind == "expanded"
+                and source == "search"
+                and not serp_local
+            ):
+                # A shop or clinic the engine listed for this city, whose site refuses
+                # bots: the listing itself names the city and the business type.
+                from app.services.intent_expansion import category_term_hits
+
+                blocked_local = (
+                    serp_listing_score(domain, title, snippet, location_hint, categories=cats, category_terms=cat_terms)
+                    != "NOISE"
+                    and (
+                        listing_mentions_hunt_product(title, snippet, domain, cats)
+                        or bool(category_term_hits(f"{title} {snippet} {domain}", cat_terms))
+                    )
+                    and listing_mentions_hunt_city(title, snippet, domain, location_hint)
+                    and not listing_conflicts_hunt_country(domain, title, snippet, location_hint)
+                )
+            if (
+                source == "overture"
+                and page_loaded
+                and not relevant
+                and graded.get("decision") == "REJECT_UNRELATED_BUSINESS"
+            ):
+                # The map files this business under the buyer's trade (gym, physiotherapy,
+                # sporting goods). A homepage that never names the product is expected.
+                relevant = True
+                level = "low"
+                graded = {**graded, "reason": "Listed under this trade on Overture Maps."}
+            if not page_loaded and source == "overture" and (seed_email or "").strip():
+                blocked_local = True
             decision = lead_save_decision(
                 relevant=relevant,
                 should_reject=bool(loc_check.get("should_reject")),
                 page_loaded=page_loaded,
-                serp_local_trade=serp_local,
+                serp_local_trade=serp_local or blocked_local,
             )
 
             # Email only after we know this is a lead, so junk sites do not eat the clock.
@@ -1976,8 +2226,53 @@ async def run_paginated_discovery(
 
     source_steps_this_run: Dict[Tuple[str, str], int] = {}
     source_plans: List[Tuple[DiscoverySearchIntent, Dict[str, Any]]] = [
-        (row, source_plan_for_intent(row.query, row.location)) for row in intent_rows
+        (row, source_plan_for_intent(row.query, row.location)) for row in exact_rows
     ]
+    if expansion and expansion.usable() and exact_rows and settings.OSM_SOURCE_ENABLED:
+        # Mapped shops, clinics and gyms city by city. Many have a site and a
+        # mapped email, and none of them depend on a search engine answering.
+        osm_families = [f for f in expansion.osm_families if f in ("retail", "gym", "club", "rehab")][:3]
+        osm_cities = (
+            [exp_city] if exp_city
+            else list(expansion.locations)[: max(0, int(settings.HUNT_OSM_CITIES or 0))]
+        )
+        have = {(p.get("city") or "", p.get("family") or "") for _r, p in source_plans if "osm" in p["sources"]}
+        anchor_row = exact_rows[0]
+        if settings.OVERTURE_SOURCE_ENABLED:
+            from app.services.business_sources import overture_categories_for
+
+            ov_cats = overture_categories_for(list(expansion.osm_families), list(expansion.buyer_types))
+            ov_cities = (
+                [exp_city] if exp_city
+                else list(expansion.locations)[: max(0, int(settings.HUNT_OVERTURE_CITIES or 0))]
+            )
+            if ov_cats and ov_cities:
+                _note(
+                    stats,
+                    f"Overture Maps: listing {len(ov_cats)} kinds of business (for example "
+                    + ", ".join(c.replace("_", " ") for c in ov_cats[:5])
+                    + f") in {len(ov_cities)} cities.",
+                )
+                for ov_city in reversed(ov_cities):
+                    base = source_plan_for_intent(
+                        anchor_row.query,
+                        f"{ov_city}, {exp_country_name}" if exp_country_name else ov_city,
+                    )
+                    source_plans.insert(
+                        0,
+                        (anchor_row, {**base, "family": "overture", "city": ov_city,
+                                      "sources": ["overture"], "overture_categories": ov_cats}),
+                    )
+        for osm_city in osm_cities:
+            for fam in osm_families:
+                if (osm_city, fam) in have:
+                    continue
+                base = source_plan_for_intent(
+                    anchor_row.query,
+                    f"{osm_city}, {exp_country_name}" if exp_country_name else osm_city,
+                )
+                source_plans.append((anchor_row, {**base, "family": fam, "city": osm_city, "sources": ["osm"]}))
+                have.add((osm_city, fam))
     sources_in_use = sorted({src for _row, plan in source_plans for src in plan["sources"]})
     if sources_in_use:
         _note(
@@ -2008,11 +2303,17 @@ async def run_paginated_discovery(
         if max_steps_per_source <= 0:
             return
         deadline = time.time() + max(20.0, float(max_sec or 0) or 90.0)
+        def _step_key(row_id: str, plan: Dict[str, Any], src: str) -> Tuple[str, str]:
+            # Each city and trade is its own walk on OpenStreetMap.
+            if src in ("osm", "overture"):
+                return (row_id, f"{src}:{plan.get('city')}:{plan.get('family')}")
+            return (row_id, src)
+
         queue: List[Tuple[DiscoverySearchIntent, Dict[str, Any], str]] = [
             (row, plan, src)
             for row, plan in source_plans
             for src in plan["sources"]
-            if source_steps_this_run.get((row.id or "", src), 0) < max_steps_per_source
+            if source_steps_this_run.get(_step_key(row.id or "", plan, src), 0) < max_steps_per_source
         ]
         exhausted_noted: set[Tuple[str, str]] = set()
         while queue:
@@ -2027,7 +2328,7 @@ async def run_paginated_discovery(
                 _note(stats, _STOP_TEXT.get(hit_reasons[0], hit_reasons[0]))
                 return
             row, plan, src = queue.pop(0)
-            key = (row.id or "", src)
+            key = _step_key(row.id or "", plan, src)
             cursor_row = _load_source_cursor(business_id, src, row.query, row.location, plan=plan)
             if cursor_row.status == "exhausted" and _source_cursor_worth_retry(cursor_row):
                 cursor_row = _reopen_source_cursor(cursor_row)
@@ -2052,10 +2353,13 @@ async def run_paginated_discovery(
                     queue = [(r, p, s) for r, p, s in queue if s != "places"]
                     continue
 
-            _note(stats, f"{SOURCE_LABELS.get(src, src).capitalize()}: {row.query}")
+            if src in ("osm", "overture") and plan.get("city"):
+                _note(stats, f"{SOURCE_LABELS.get(src, src).capitalize()}: {plan.get('family')} businesses in {plan.get('city')}")
+            else:
+                _note(stats, f"{SOURCE_LABELS.get(src, src).capitalize()}: {row.query}")
             try:
                 # OSM tiles need the Overpass round-trip; 28s cut them off mid-query.
-                source_deadline = 50.0 if src == "osm" else 28.0
+                source_deadline = {"osm": 50.0, "overture": 170.0}.get(src, 28.0)
                 step = await call_with_deadline(
                     asyncio.to_thread(_source_step, src, plan, row.query, cursor_row.cursor, web),
                     source_deadline,
@@ -2109,7 +2413,8 @@ async def run_paginated_discovery(
             _query_key(row.query),
             {"fields": None, "batch": 1, "exhausted": False, "active_query": ""},
         )
-        ladder = backup_query_ladder(row.query, row.location)
+        # A derived line has one rung. The exact lines carry the backup rungs.
+        ladder = [row.query] if (row.id or "") in expanded_ids else backup_query_ladder(row.query, row.location)
         active = str(parsed.get("active_query") or "").strip()
         index = resume_backup_query(active, ladder)
         if active and ladder and active.lower() != ladder[index].lower():
@@ -2135,7 +2440,11 @@ async def run_paginated_discovery(
                 "already_finished": True,
                 "searched_query": state.get("active_query") or query,
             }
-        search_query = quote_backup_search_query(str(state.get("active_query") or query))
+        if intent_key in expanded_ids:
+            # "physiotherapy supply stores Calgary" is already a business-type search.
+            search_query = f"{state.get('active_query') or query} -wikipedia -dictionary"
+        else:
+            search_query = quote_backup_search_query(str(state.get("active_query") or query))
         try:
             report = await run_search(
                 web.search_backup_page, search_query, 1, state.get("fields"), timeout=16.0,
@@ -2154,7 +2463,7 @@ async def run_paginated_discovery(
         return report
     _note(stats, "Searching the web for companies.")
     places_on_hunt = sorted({
-        (row.location or "").strip() for row in intent_rows if (row.location or "").strip()
+        (row.location or "").strip() for row in exact_rows if (row.location or "").strip()
     })
     place_bit = ", ".join(places_on_hunt) if places_on_hunt else "the country on each hunt line"
     _note(
@@ -2191,6 +2500,29 @@ async def run_paginated_discovery(
         if not active:
             _note(stats, "Every search has stopped.")
             break
+
+        # Phase 1 is the exact lines. When they are spent, run the extra lists
+        # (OpenStreetMap shops, clinics, gyms by city) once, then sweep the
+        # business-type × city searches. The lists must not wait for the end of
+        # a long sweep or they never get their turn.
+        if expanded_ids:
+            exact_active = [r for r in active if (r.id or "") not in expanded_ids]
+            if exact_active:
+                active = exact_active
+            elif not lists_run_mid_hunt and (time.time() - start) >= 0.15 * float(budget.max_runtime_sec or 0):
+                lists_run_mid_hunt = True
+                _note(
+                    stats,
+                    "Pausing the web searches to read mapped businesses by city (Overture Maps, OpenStreetMap), then going back.",
+                )
+                await _run_list_sources(
+                    max(1, int(settings.HUNT_SOURCE_STEPS_PER_INTENT or 1)),
+                    max_sec=max(
+                        float(settings.HUNT_LIST_SOURCE_SECONDS or 90),
+                        0.35 * float(budget.max_runtime_sec or 0),
+                    ),
+                )
+                continue
 
         # Stay on one search for several pages. Eight page-1 giant lists
         # never reach the independent shops on later Yahoo batches.
@@ -2233,6 +2565,20 @@ async def run_paginated_discovery(
                 )
             _persist_intent(intent)
             continue
+
+        if serper_credits_out and expanded_ids:
+            # Breadth beats depth on free search: a new type or city reaches
+            # new shops, the fifth batch of one search mostly repeats.
+            batch_cap = int(
+                (settings.HUNT_CATEGORY_BATCHES if intent_id in expanded_ids else settings.HUNT_EXACT_BATCHES)
+                or 0
+            )
+            if batch_cap > 0 and int(intent.pages_processed or 0) >= batch_cap:
+                intent.status = "quota"
+                intent.stop_reason = "batch_cap"
+                stats.stop_reasons[intent.search_intent] = "batch_cap"
+                _persist_intent(intent)
+                continue
 
         current_q = intent.query
         intents_done = sum(1 for r in intent_rows if r.status != "active")
@@ -2339,8 +2685,11 @@ async def run_paginated_discovery(
                 "bing": "Bing",
                 "mojeek": "Mojeek",
             }.get(provider, provider or "Search")
-            _note(stats, f"{engine_name}, not Google — {label}: {searched}")
-            if provider == "yahoo" and not ddg_html_noted:
+            if report.get("engines"):
+                _note(stats, f"Free search ({report['engines']}) — {label}: {searched}")
+            else:
+                _note(stats, f"{engine_name}, not Google — {label}: {searched}")
+            if provider == "yahoo" and not ddg_html_noted and not report.get("engines"):
                 ddg_html_noted = True
                 _note(stats, "DuckDuckGo did not answer. This run uses Yahoo instead. It is not Google.")
             elif report.get("html_down") and not ddg_html_noted:
@@ -2522,8 +2871,9 @@ async def run_paginated_discovery(
                         "discovery_query": intent.query,
                         "website": url,
                     },
-                    categories=hunt_offer_categories(intent.query, profile.categories),
+                    categories=_plan_cats(intent),
                     buyers=profile.buyers,
+                    category_terms=_plan_terms(intent),
                 )
                 if triage.get("verdict") == "reject":
                     session.add(serp)
@@ -2555,7 +2905,8 @@ async def run_paginated_discovery(
                     title,
                     snippet,
                     intent.location,
-                    categories=hunt_offer_categories(intent.query, profile.categories),
+                    categories=_plan_cats(intent),
+                    category_terms=_plan_terms(intent),
                 )
                 if score == "NOISE":
                     session.add(serp)
@@ -3109,6 +3460,16 @@ def _source_step(source: str, plan: Dict[str, Any], query: str, cursor: str, web
             cursor=cursor,
             searcher=_lookup,
         )
+    if source == "overture":
+        from app.services.business_sources import overture_step
+
+        return overture_step(
+            city=plan.get("city") or "",
+            iso=plan.get("iso") or "",
+            country_label=(plan.get("country") or "").title(),
+            categories=list(plan.get("overture_categories") or []),
+            cursor=cursor,
+        )
     if source == "osm":
         return osm_step(
             family=plan.get("family") or "",
@@ -3143,6 +3504,10 @@ def source_cursor_key(source: str, query: str, plan: Optional[Dict[str, Any]] = 
         return _query_key(f"dir {plan.get('iso')} {plan.get('family')}")
     if source == "osm":
         return _query_key(f"osm {plan.get('iso')} {plan.get('city')} {plan.get('family')}")
+    if source == "overture":
+        cats = ",".join(sorted(plan.get("overture_categories") or []))
+        digest = hashlib.md5(cats.encode()).hexdigest()[:8]
+        return _query_key(f"ov {plan.get('iso')} {plan.get('city')} {digest}")
     if source == "wikidata":
         return _query_key(f"wd {plan.get('iso')} {plan.get('family')}")
     if source == "stockists":
@@ -3158,7 +3523,7 @@ def source_cursor_key(source: str, query: str, plan: Optional[Dict[str, Any]] = 
 def _source_cursor_worth_retry(row: HuntSourceCursor) -> bool:
     """A finished source that never handed over a company should run again."""
     return row.source in {
-        "companies_house", "directory", "osm", "wikidata", "stockists", "exhibitors",
+        "companies_house", "directory", "osm", "overture", "wikidata", "stockists", "exhibitors",
     } and int(row.candidates or 0) == 0
 
 

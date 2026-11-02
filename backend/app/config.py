@@ -110,8 +110,17 @@ class Settings(BaseSettings):
     # absolute page ceiling. A cursor at page 11 still fetches page 11 next time.
     HUNT_LEADS_PER_RUN: int = 100
     HUNT_MAX_PAGES_PER_INTENT: int = 15
-    HUNT_MAX_TOTAL_PAGES: int = 150
-    HUNT_MAX_GOOGLE_REQUESTS: int = 200
+    HUNT_MAX_TOTAL_PAGES: int = 600
+    HUNT_MAX_GOOGLE_REQUESTS: int = 800
+    # Intent expansion: the exact hunt lines run first, then the AI names the kinds of
+    # businesses that buy this product and the hunt searches `type x city`.
+    HUNT_INTENT_EXPANSION: bool = True
+    HUNT_CATEGORY_QUERIES: int = 48  # type x city searches opened per run
+    HUNT_CATEGORY_BATCHES: int = 2  # result batches per type x city search per run
+    HUNT_EXACT_BATCHES: int = 4  # result batches per exact line before the sweep starts
+    HUNT_OSM_CITIES: int = 5
+    OVERTURE_SOURCE_ENABLED: bool = True  # free open business data, no key
+    HUNT_OVERTURE_CITIES: int = 8  # cities swept on OpenStreetMap for shops / clinics / gyms
     HUNT_MAX_DOMAINS: int = 2000
     HUNT_MAX_ENRICHMENTS: int = 800
     HUNT_MAX_RUNTIME_SEC: int = 2700  # 45 minutes

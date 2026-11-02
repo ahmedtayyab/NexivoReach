@@ -716,6 +716,11 @@ _OSM_SELECTORS: Dict[str, Tuple[str, ...]] = {
         '["club"="sport"]',
         '["leisure"="sports_centre"]',
     ),
+    "rehab": (
+        '["shop"="medical_supply"]',
+        '["healthcare"="physiotherapist"]',
+        '["healthcare"="rehabilitation"]',
+    ),
 }
 OSM_GRID_N = 3
 OSM_TILE_LIMIT = 80
@@ -1259,3 +1264,277 @@ def directory_step(
     finally:
         if own:
             client.close()
+
+
+# ---------------------------------------------------------------------------
+# Overture Maps places (free, no key)
+# ---------------------------------------------------------------------------
+# Overture publishes tens of millions of businesses worldwide as open parquet
+# files. Every record has a category, and most have a website; many have an
+# email. One query by city box + category lists the businesses of that kind in
+# the city, which is what a search engine cannot do.
+
+OVERTURE_STAC_URL = "https://stac.overturemaps.org/catalog.json"
+OVERTURE_FALLBACK_RELEASE = "2026-10-21.0"
+OVERTURE_PAGE = 40
+OVERTURE_CACHE_TTL_SEC = 7 * 86400
+OVERTURE_MIN_CONFIDENCE = 0.2
+_OVERTURE_CLOSED = ("closed", "permanently_closed", "temporarily_closed")
+_OVERTURE_SOCIAL_HOSTS = (
+    "facebook.com", "instagram.com", "linktr.ee", "twitter.com", "x.com", "youtube.com",
+    "linkedin.com", "tiktok.com", "pinterest.com", "yelp.com", "yelp.ca", "google.com",
+    "goo.gl", "g.page", "wa.me", "whatsapp.com", "eventbrite.com", "meetup.com",
+)
+
+# Overture taxonomy names for the trades this product sells into.
+OVERTURE_GROUPS: Dict[str, Tuple[str, ...]] = {
+    "gym": (
+        "gym", "fitness_trainer", "yoga_studio", "pilates_studio", "boot_camp",
+        "health_and_wellness_club", "sport_or_fitness_facility", "gymnastics_center",
+        "crossfit_gym", "personal_trainer",
+    ),
+    "combat": (
+        "martial_arts_club", "boxing_gym", "boxing_class", "kickboxing_club", "muay_thai_club",
+        "chinese_martial_arts_club", "fencing_club", "judo_club", "karate_club",
+        "taekwondo_club", "wrestling_club", "jiu_jitsu_club",
+    ),
+    "rehab": (
+        "physical_therapy", "chiropractic", "sports_medicine", "rehabilitation_center",
+        "occupational_therapy", "orthopedics", "massage_therapy", "medical_supply_store",
+        "b2b_hospital_equipment_and_supplies", "orthopedic_shoe_store",
+    ),
+    "retail": (
+        "sporting_goods_store", "fitness_exercise_store", "sportswear_store", "outdoor_store",
+        "hunting_and_fishing_store", "uniform_store",
+    ),
+    "club": (
+        "sports_school", "sport_or_recreation_club", "amateur_sport_team", "school_sport_team",
+        "sport_league", "amateur_sport_league", "adventure_sports_center",
+    ),
+}
+_OVERTURE_GENERIC_WORDS = {
+    "store", "stores", "shop", "shops", "service", "services", "supplier", "suppliers",
+    "supply", "supplies", "wholesaler", "wholesalers", "distributor", "distributors",
+    "retailer", "retailers", "equipment", "center", "centers", "centre", "centres",
+    "clinic", "clinics", "studio", "studios", "business", "businesses", "company",
+    "companies", "and", "the", "for", "stockist", "stockists", "importer", "importers",
+}
+
+_overture_release_cache: Dict[str, Any] = {}
+_overture_mem_cache: Dict[str, List[Dict[str, Any]]] = {}
+
+
+def overture_release() -> str:
+    """Latest Overture release (older ones are removed from the bucket)."""
+    cached = _overture_release_cache.get("v")
+    if cached and time.time() - float(_overture_release_cache.get("t") or 0) < 6 * 3600:
+        return str(cached)
+    release = OVERTURE_FALLBACK_RELEASE
+    try:
+        res = httpx.get(OVERTURE_STAC_URL, timeout=10.0, headers={"User-Agent": USER_AGENT})
+        if res.status_code == 200:
+            release = str(res.json().get("latest") or release)
+    except Exception as exc:
+        log.warning("Overture release lookup failed: %s", exc)
+    _overture_release_cache.update({"v": release, "t": time.time()})
+    return release
+
+
+def _overture_all_categories() -> List[str]:
+    from pathlib import Path
+
+    path = Path(__file__).with_name("data") / "overture_categories.txt"
+    try:
+        return [ln.strip() for ln in path.read_text(encoding="utf8").splitlines() if ln.strip()]
+    except Exception:
+        return []
+
+
+def overture_categories_for(families: List[str], buyer_types: List[str], limit: int = 40) -> List[str]:
+    """Overture category names for the trades named by the hunt."""
+    out: List[str] = []
+    for fam in families or []:
+        for cat in OVERTURE_GROUPS.get(fam, ()):
+            if cat not in out:
+                out.append(cat)
+    if out:
+        return out[:limit]
+    # Not a sports seller: match the buyer-type words to category names.
+    words: List[str] = []
+    for text in buyer_types or []:
+        for w in re.findall(r"[a-z]{4,}", text.lower()):
+            w = w[:-1] if w.endswith("s") and len(w) > 4 else w
+            if w not in _OVERTURE_GENERIC_WORDS and w not in words:
+                words.append(w)
+    for cat in _overture_all_categories():
+        parts = [p[:-1] if p.endswith("s") and len(p) > 4 else p for p in cat.split("_")]
+        if any(w in parts for w in words) and cat not in out:
+            out.append(cat)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _overture_cache_path(release: str, bbox: Tuple[float, float, float, float], categories: List[str]):
+    import hashlib
+    import tempfile
+    from pathlib import Path
+
+    key = hashlib.md5(
+        ("v2" + release + json.dumps([round(v, 4) for v in bbox]) + ",".join(sorted(categories))).encode()
+    ).hexdigest()[:16]
+    folder = Path(tempfile.gettempdir()) / "nexivo_overture"
+    folder.mkdir(parents=True, exist_ok=True)
+    return key, folder / f"{key}.json"
+
+
+def _overture_query(release: str, bbox: Tuple[float, float, float, float], categories: List[str]) -> List[Dict[str, Any]]:
+    import duckdb
+
+    south, west, north, east = bbox
+    cats = ",".join("'" + c.replace("'", "") + "'" for c in categories)
+    path = f"s3://overturemaps-us-west-2/release/{release}/theme=places/type=place/*"
+    con = duckdb.connect()
+    try:
+        con.execute("INSTALL httpfs; LOAD httpfs; SET s3_region='us-west-2'; SET threads=4;")
+        con.execute("SET memory_limit='600MB';")
+        closed = ",".join(f"'{c}'" for c in _OVERTURE_CLOSED)
+        base = f"""
+            SELECT names.primary AS name, {{CAT}} AS cat, websites[1] AS website, emails[1] AS email,
+                   phones[1] AS phone, addresses[1].freeform AS street, addresses[1].locality AS city,
+                   addresses[1].region AS region, confidence, id
+            FROM read_parquet('{path}', hive_partitioning=1)
+            WHERE bbox.xmin BETWEEN {west} AND {east} AND bbox.ymin BETWEEN {south} AND {north}
+              AND {{CAT}} IN ({cats})
+              AND websites[1] IS NOT NULL
+              AND brand.names.primary IS NULL
+              AND coalesce(operating_status, 'open') NOT IN ({closed})
+              AND coalesce(confidence, 0) >= {OVERTURE_MIN_CONFIDENCE}
+        """
+        try:
+            return _overture_rows(con.execute(base.replace("{CAT}", "taxonomy.primary")).fetchall())
+        except duckdb.BinderException:
+            # Older releases name the field categories.primary.
+            return _overture_rows(con.execute(base.replace("{CAT}", "categories.primary")).fetchall())
+    finally:
+        con.close()
+
+
+def _overture_rows(rows: List[tuple]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "name": r[0] or "", "cat": r[1] or "", "website": r[2] or "", "email": r[3] or "",
+            "phone": r[4] or "", "street": r[5] or "", "city": r[6] or "", "region": r[7] or "",
+            "confidence": float(r[8] or 0), "id": r[9] or "",
+        }
+        for r in rows
+    ]
+
+
+_TWO_PART_TLDS = {"co.uk", "org.uk", "com.au", "co.nz", "co.za", "com.br", "com.mx", "co.in", "com.sg", "com.my", "com.tr", "ae.org"}
+
+
+def _registrable(host: str) -> str:
+    """locations.sportinglife.ca -> sportinglife.ca, so one chain counts once."""
+    parts = host.split(".")
+    if len(parts) >= 3 and ".".join(parts[-2:]) in _TWO_PART_TLDS:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:]) if len(parts) >= 2 else host
+
+
+def overture_candidates(
+    bbox: Tuple[float, float, float, float],
+    categories: List[str],
+    country_label: str = "",
+) -> List[BusinessCandidate]:
+    """Every listed business of these kinds in the box, best first. Cached on disk."""
+    release = overture_release()
+    key, cache_file = _overture_cache_path(release, bbox, categories)
+    rows = _overture_mem_cache.get(key)
+    if rows is None and cache_file.exists() and time.time() - cache_file.stat().st_mtime < OVERTURE_CACHE_TTL_SEC:
+        try:
+            rows = json.loads(cache_file.read_text(encoding="utf8"))
+        except Exception:
+            rows = None
+    if rows is None:
+        rows = _overture_query(release, bbox, categories)
+        try:
+            cache_file.write_text(json.dumps(rows), encoding="utf8")
+        except Exception as exc:
+            log.warning("Overture cache write failed: %s", exc)
+    _overture_mem_cache[key] = rows
+
+    # One row per website. Rows with an email first, then the surest records.
+    rows = sorted(rows, key=lambda r: (0 if r.get("email") else 1, -float(r.get("confidence") or 0)))
+    out: List[BusinessCandidate] = []
+    seen: set[str] = set()
+    for r in rows:
+        website = str(r.get("website") or "").strip()
+        host = _host(website)
+        if not host or any(host == h or host.endswith("." + h) for h in _OVERTURE_SOCIAL_HOSTS):
+            continue
+        company = _registrable(host)
+        if company in seen:
+            continue
+        seen.add(company)
+        parts = [r.get("street"), r.get("city"), r.get("region"), country_label]
+        out.append(BusinessCandidate(
+            name=_clean(str(r.get("name") or "")),
+            website=website,
+            address=", ".join(str(p) for p in parts if p),
+            source="overture",
+            ref=str(r.get("id") or ""),
+            email=str(r.get("email") or "").strip(),
+        ))
+    return out
+
+
+def overture_step(
+    *,
+    city: str,
+    iso: str,
+    country_label: str,
+    categories: List[str],
+    cursor: str = "",
+    client: Optional[httpx.Client] = None,
+) -> SourceStep:
+    """One page of businesses of these kinds in one city."""
+    step = SourceStep(source="overture", query=f"{', '.join(categories[:3])} in {city or iso}", exhausted=True)
+    if not categories:
+        step.note = "Overture Maps: no matching business categories for this hunt."
+        return step
+    payload = _osm_cursor_payload(cursor)
+    bbox_raw = payload.get("bbox")
+    bbox = (0.0, 0.0, 0.0, 0.0)
+    if isinstance(bbox_raw, list) and len(bbox_raw) == 4:
+        try:
+            bbox = tuple(float(v) for v in bbox_raw)  # type: ignore[assignment]
+        except (TypeError, ValueError):
+            bbox = (0.0, 0.0, 0.0, 0.0)
+    if not any(bbox):
+        bbox = geocode_bbox(city, iso, client=client)
+        if not any(bbox):
+            step.note = f"Overture Maps could not place “{city}” on the map."
+            return step
+        s, w, n, e = bbox
+        pad_lat, pad_lon = (n - s) * 0.1, (e - w) * 0.1
+        bbox = (s - pad_lat, w - pad_lon, n + pad_lat, e + pad_lon)
+    try:
+        offset = max(0, int(payload.get("o") or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        cands = overture_candidates(bbox, categories, country_label)
+    except Exception as exc:
+        step.note = f"Overture Maps did not answer: {exc}"
+        return step
+    page = cands[offset:offset + OVERTURE_PAGE]
+    new_offset = offset + len(page)
+    step.candidates = page
+    step.exhausted = new_offset >= len(cands)
+    step.next_cursor = "" if step.exhausted else json.dumps({"o": new_offset, "bbox": list(bbox)})
+    step.note = (
+        f"Overture Maps lists {len(cands)} businesses with websites in {city or iso}; "
+        f"reading {offset + 1}–{new_offset}."
+    )
+    return step

@@ -932,16 +932,26 @@ RELATED_TRADE_WORDS = frozenset({
 })
 
 
-def looks_unrelated_business(blob: str, categories: List[str]) -> bool:
+def looks_unrelated_business(
+    blob: str,
+    categories: List[str],
+    extra_terms: Optional[List[str]] = None,
+) -> bool:
     """
     True when name/title/snippet/site clearly belongs to a different industry
     (jewelry, dental, real estate…) and nothing ties it to the hunted trade.
+    `extra_terms` are words the buyer type uses (physiotherapy, orthopedic…) and
+    keep such a business from being thrown out as "medical".
     """
     text = (blob or "").lower()
     if not text.strip():
         return False
     if not UNRELATED_INDUSTRY_RE.search(text):
         return False
+    for term in extra_terms or []:
+        t = (term or "").strip().lower()
+        if len(t) >= 4 and re.search(rf"(?<![a-z0-9]){re.escape(t)}", text):
+            return False
     phrases = product_phrases_from_profile_categories(categories) or [
         re.sub(r"\s+", " ", (c or "").strip().lower()) for c in (categories or []) if c
     ]
@@ -1052,14 +1062,14 @@ def parse_discovery_query(query: str) -> tuple[str, str, str]:
         return product, role, place
 
     m = re.search(
-        r"^(?P<product>.+?)\s+(?P<role>distributors?|wholesalers?|importers?|retailers?|dealers?)"
+        r"^(?P<product>.+?)\s+(?P<role>distributors?|wholesalers?|importers?|retailers?|dealers?|suppliers?|stockists?)"
         r"(?:\s+(?:in\s+)?(?P<place>.+))?$",
         raw,
         re.I,
     )
     if not m:
         m = re.search(
-            r"^(?P<product>.+?)\s+(?P<role>buyers?|gyms?|clinics?|brands?)"
+            r"^(?P<product>.+?)\s+(?P<role>buyers?|gyms?|clinics?|brands?|stores?|shops?|studios?|clubs?)"
             r"(?:\s+(?:in\s+)?(?P<place>.+))?$",
             raw,
             re.I,

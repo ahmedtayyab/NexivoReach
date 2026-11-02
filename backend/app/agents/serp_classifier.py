@@ -72,6 +72,12 @@ DIRECTORY_HOSTS = (
     "exportersindia.com", "ec21.com", "wlw.de", "wlw.co.uk", "ensun.io", "4imprint.com",
     "elevatearena.com", "fibo.com", "ispovo.com", "bodypower.com",
     "deviceinformed.com",
+    "chamberofcommerce.com", "us-business.info", "allpages.com", "directory.chron.com",
+    "accio.com", "poweraptor.com", "boxing-manufacturers.com", "superpages.com",
+    "mapquest.com", "local.com", "citysearch.com", "findprivateclinics.ca",
+    "sportsclinicfinder.com", "canadanear.com", "cortico.health", "healthgrades.com",
+    "zocdoc.com", "psychologytoday.com", "birdeye.com", "nextdoor.com",
+    "loc8nearme.com", "unilocal.net", "cylex.us.com", "cylex.ca", "n49.com", "salesgenie.com",
 )
 _STOCKIST_PATH = re.compile(
     r"/(stockists?|dealers?|distributors?|where-to-buy|find[-_]a[-_]dealer|"

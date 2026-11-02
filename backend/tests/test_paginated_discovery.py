@@ -319,17 +319,25 @@ def test_backup_uses_yahoo_when_duckduckgo_returns_nothing():
     assert report["provider"] == "yahoo"
     assert report["error"] == ""
     assert report["hits"][0]["href"] == "https://wholesale.rdxsports.com/knee"
-    assert report["next_form"]["page"] == "2"
+    assert report["next_form"]["engine"] == "multi"
+    assert report["next_form"]["y"] == "2"
     again = tool.search_backup_page("fitness knee sleeves importers Ohio")
     assert again["provider"] == "yahoo"
     assert calls["ddg"] == 1
     assert calls["yahoo_pages"] == [1, 1]
     continued = tool.search_backup_page(
         "gym knee sleeves distributors Ohio",
-        form={"engine": "yahoo", "page": "2"},
+        form=report["next_form"],
     )
     assert calls["yahoo_pages"] == [1, 1, 2]
-    assert continued["next_form"]["page"] == "3"
+    assert continued["next_form"]["y"] == "3"
+    # An old saved Yahoo-only cursor still resumes.
+    legacy = tool.search_backup_page(
+        "gym knee sleeves distributors Ohio",
+        form={"engine": "yahoo", "page": "2"},
+    )
+    assert calls["yahoo_pages"][-1] == 2
+    assert legacy["next_form"]["page"] == "3"
 
 
 def test_yahoo_region_follows_the_hunt_country():
@@ -460,12 +468,64 @@ def test_first_backup_batch_dedupes_engines_by_host():
         "error": "",
         "fallback": True,
     }
-    tool._yahoo_page = _page("https://third.ca/")  # type: ignore[method-assign]
+    tool._yahoo_hits = lambda q, p: [  # type: ignore[method-assign]
+        {"title": "Third", "href": "https://third.ca/", "body": "bands shop"}
+    ]
     report = tool.search_backup_page("resistance bands distributors Canada")
     hrefs = [h["href"] for h in report["hits"]]
-    assert hrefs == ["https://shop.ca/a", "https://other.ca/", "https://third.ca/"]
-    assert report["next_form"]["engine"] == "mojeek"
-    assert report["next_form"]["page"] == "2"
+    assert hrefs == ["https://third.ca/", "https://other.ca/", "https://shop.ca/a"]
+    form = report["next_form"]
+    assert form["engine"] == "multi"
+    assert (form["y"], form["m"], form["b"]) == ("2", "2", "2")
+    assert "yahoo" in report["engines"] and "mojeek" in report["engines"]
+
+
+def test_yahoo_lane_skips_blank_pages_and_dead_engines_stop():
+    from app.tools.web_search import WebSearchTool
+
+    tool = WebSearchTool()
+    tool._ddg_down = True
+    asked = []
+
+    def _yahoo(query, page):
+        asked.append(page)
+        if page < 3:
+            return []
+        return [{"title": "Shop", "href": "https://shop.example/", "body": "bands"}]
+
+    empty = lambda q, p: {"hits": [], "next_form": None, "provider": "x", "error": "", "fallback": True}  # noqa: E731
+    tool._yahoo_hits = _yahoo  # type: ignore[method-assign]
+    tool._mojeek_page = empty  # type: ignore[method-assign]
+    tool._bing_page = empty  # type: ignore[method-assign]
+    report = tool.search_backup_page("resistance bands stores Toronto")
+    assert asked == [1, 2, 3]
+    assert [h["href"] for h in report["hits"]] == ["https://shop.example/"]
+    assert report["next_form"]["y"] == "4"
+    assert "mojeek" in report["next_form"]["dead"] and "bing" in report["next_form"]["dead"]
+
+    tool._yahoo_hits = lambda q, p: []  # type: ignore[method-assign]
+    done = tool.search_backup_page("resistance bands stores Toronto", form=report["next_form"])
+    assert done["hits"] == []
+    assert done["next_form"] is None
+
+
+def test_bing_and_mojeek_drop_pages_unrelated_to_the_query():
+    from app.tools.web_search import keep_on_topic_hits, query_topic_stems
+
+    assert "physiotherapy" in query_topic_stems("physiotherapy supply stores Calgary, Canada -wikipedia")
+    assert "canada" not in query_topic_stems("physiotherapy supply stores Calgary, Canada")
+    junk = [
+        {"title": "WhatsApp Web not loading", "href": "https://forum.example/a", "body": "chat help"},
+        {"title": "Windows Update error", "href": "https://support.example/b", "body": "fix"},
+        {"title": "YouTube Music", "href": "https://music.example/c", "body": "songs"},
+    ]
+    assert keep_on_topic_hits(junk, "physiotherapy supply stores Calgary") == []
+    mixed = [
+        {"title": "Calgary Physiotherapy Supply", "href": "https://physio.example/", "body": "braces"},
+        {"title": "Weather", "href": "https://weather.example/", "body": "rain"},
+    ]
+    kept = keep_on_topic_hits(mixed, "physiotherapy supply stores Calgary")
+    assert [h["href"] for h in kept] == ["https://physio.example/"]
 
 
 def test_country_serp_skips_textbooks_but_opens_plain_shops():
